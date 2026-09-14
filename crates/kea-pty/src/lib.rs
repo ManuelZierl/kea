@@ -193,8 +193,7 @@ mod tests {
                     // byte-transport test must act as its terminal peer. Real
                     // sessions use the live emulator's protocol reply instead.
                     #[cfg(windows)]
-                    if !answered_cursor_query
-                        && output.windows(4).any(|bytes| bytes == b"\x1b[6n")
+                    if !answered_cursor_query && output.windows(4).any(|bytes| bytes == b"\x1b[6n")
                     {
                         pty.send(b"\x1b[1;1R".to_vec()).unwrap();
                         answered_cursor_query = true;
