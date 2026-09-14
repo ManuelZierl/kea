@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 mod command_editor;
 mod document_view;
 mod input;
