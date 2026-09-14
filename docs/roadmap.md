@@ -1,8 +1,27 @@
 # Roadmap and acceptance checks
 
+## Product direction
+
+Kea is not primarily a replay terminal. The target is a document-native terminal: editable command input, persistent read-only output, structured command/output history, and full PTY/TUI compatibility when an application needs a terminal screen.
+
+Replay and time travel are consequences of retaining terminal state instead of treating the current mutable screen as the only truth.
+
+### Target interaction model
+
+- Command input behaves like an editor, not a shell line discipline.
+- Enter inserts a newline; an explicit configurable shortcut executes the command.
+- Executed input becomes a persistent command block with its output.
+- Output is read-only and remains inspectable after later commands or TUI redraws.
+- Interactive programs continue to run through a PTY and can still receive raw key input when appropriate.
+- All user-facing shortcuts are configurable.
+- Default shortcuts follow host-OS conventions where practical rather than inheriting terminal conventions blindly. In particular, copy should default to the OS-native copy shortcut (`Ctrl+C` on Linux/Windows, `Cmd+C` on macOS). Terminal interrupt must remain available through a separate configurable action/binding. Users may override either behavior.
+- Shortcut resolution belongs to the application/UI layer; `kea-core` must not encode platform keybindings.
+
 ## Implemented scope
 
 GPUI window, PTY shell/program launch, Alacritty screen, bounded output history, resize/exit events, separate read-only replay, event/time seeking, playback, return to live, optional persistence/reopening, whole-screen copy, paste, tests and a synthetic no-process demo.
+
+This is the compatibility/history foundation. The document-style command editor and structured command blocks are not implemented yet.
 
 ## Manual Ubuntu acceptance
 
@@ -16,10 +35,10 @@ Compilation and unit tests do not substitute for these application-specific chec
 
 ## Next capabilities
 
-**Desktop correctness:** full keyboard protocol negotiation, IME/AltGr/non-US layouts, mouse/focus events, selection, copy-when-selected, accessibility, measured font layout/shaping, clipping, ordinary scrollback. Explicitly validate OpenCode, shells, Vim, less, SSH and tmux. Add Windows/macOS desktop builds/packages.
+**Document UX:** make command input a real multiline editor; add configurable keybindings with OS-native defaults; introduce persistent command/output blocks; add optional shell metadata for cwd, exit status and command boundaries; make prior output naturally searchable, collapsible and copyable. Do not infer command boundaries from arbitrary prompt regexes.
 
-**Long sessions:** async cancellable seek, full-state checkpoints with equivalence/property tests, chunked indexed/compressed storage, retention policy, historical text indexing including within-chunk transient text, latency/CPU/memory/load benchmarks.
+**Desktop correctness:** full keyboard protocol negotiation, IME/AltGr/non-US layouts, mouse/focus events, selection, accessibility, measured font layout/shaping, clipping and ordinary scrollback behavior for interactive terminal blocks. Explicitly validate OpenCode, shells, Vim, less, SSH and tmux. Add Windows/macOS desktop builds/packages.
 
-**Document UX:** searchable historical states, deduplication with timestamps, bookmarks/diff, then the original editor-like multiline command input and optional shell integration. Do not infer command boundaries from arbitrary prompt regexes.
+**History as a consequence:** searchable historical states, transient-text indexing, bookmarks/diff, efficient snapshots/checkpoints, async cancellable seek, chunked indexed/compressed storage, retention policy, and latency/CPU/memory/load benchmarks.
 
-**Zed proposal:** measured overhead, privacy policy, fixtures and a small read-only timeline integration using Zed's existing PTY/renderer. No deep Zed dependency in the core; no claim that this independent experiment is an accepted Zed feature.
+**Zed proposal:** measured overhead, privacy policy, fixtures and a small integration using Zed's existing PTY/renderer. The long-term value proposition should be the document-native terminal model, with terminal history/replay as one enabling capability rather than the headline feature. No deep Zed dependency in the core; no claim that this independent experiment is an accepted Zed feature.
