@@ -1,0 +1,4 @@
+/target/
+*.kea
+*.log
+.DS_Store

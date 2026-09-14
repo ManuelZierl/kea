@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+kea-core = { path = "crates/kea-core" }
+kea-alacritty = { path = "crates/kea-alacritty" }
+kea-pty = { path = "crates/kea-pty" }
+alacritty_terminal = "=0.26.0"
+portable-pty = "=0.9.0"
+anyhow = "1.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
