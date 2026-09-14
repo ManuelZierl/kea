@@ -26,14 +26,15 @@ sleep 5
 # Five demo events; after playback finishes, step from event 5 to event 2.
 xdotool key --clearmodifiers F6 F6 F6
 sleep 0.5
-xdotool key --clearmodifiers ctrl+shift+c
+# Linux/Windows default copy is now the native Ctrl+C action.
+xdotool key --clearmodifiers ctrl+c
 sleep 0.5
 timeout 5s xclip -selection clipboard -o >smoke-artifacts/history.txt
 grep -q 'ERROR: connection failed' smoke-artifacts/history.txt
 import -window "$window" smoke-artifacts/history.png
 xdotool key --clearmodifiers F9
 sleep 0.5
-xdotool key --clearmodifiers ctrl+shift+c
+xdotool key --clearmodifiers ctrl+c
 sleep 0.5
 timeout 5s xclip -selection clipboard -o >smoke-artifacts/latest.txt
 grep -q 'Ready. The error has disappeared' smoke-artifacts/latest.txt
