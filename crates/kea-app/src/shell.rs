@@ -41,7 +41,7 @@ impl ShellFlavor {
             Self::PowerShell => {
                 let quoted = quote_powershell(input);
                 format!(
-                    "[Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $global:LASTEXITCODE=$null; Invoke-Expression {quoted}; $__kea_ok=$?; $__kea_native=$LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7)\r"
+                    "[Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $__kea_previous=$global:LASTEXITCODE; $global:LASTEXITCODE=$null; Invoke-Expression {quoted}; $__kea_ok=$?; $__kea_native=$global:LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; if ($null -eq $__kea_native) {{ $global:LASTEXITCODE=$__kea_previous }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7)\r"
                 )
             }
         };
@@ -148,6 +148,8 @@ mod tests {
         assert!(wrapper.contains("Invoke-Expression"));
         assert!(wrapper.contains("start;9"));
         assert!(wrapper.contains("done;9"));
+        assert!(wrapper.contains("$__kea_previous=$global:LASTEXITCODE"));
+        assert!(wrapper.contains("$global:LASTEXITCODE=$__kea_previous")); // preserves the previous native exit code
         assert!(wrapper.contains("''hello''"));
     }
 }

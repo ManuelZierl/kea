@@ -409,29 +409,44 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    if input.len() % 4 != 0 {
+    if !input.len().is_multiple_of(4) {
         return None;
     }
-    let mut out = Vec::with_capacity(input.len() / 4 * 3);
-    for chunk in input.as_bytes().chunks_exact(4) {
+    let (chunks, remainder) = input.as_bytes().as_chunks::<4>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(chunks.len() * 3);
+    for (index, chunk) in chunks.iter().enumerate() {
+        let last = index + 1 == chunks.len();
         let a = base64_value(chunk[0])?;
         let b = base64_value(chunk[1])?;
-        let c = if chunk[2] == b'=' {
-            0
-        } else {
-            base64_value(chunk[2])?
-        };
-        let d = if chunk[3] == b'=' {
-            0
-        } else {
-            base64_value(chunk[3])?
-        };
-        out.push((a << 2) | (b >> 4));
-        if chunk[2] != b'=' {
-            out.push((b << 4) | (c >> 2));
-        }
-        if chunk[3] != b'=' {
-            out.push((c << 6) | d);
+        match (chunk[2], chunk[3]) {
+            (b'=', b'=') => {
+                if !last || b & 0x0f != 0 {
+                    return None;
+                }
+                out.push((a << 2) | (b >> 4));
+            }
+            (b'=', _) => return None,
+            (c, b'=') => {
+                if !last {
+                    return None;
+                }
+                let c = base64_value(c)?;
+                if c & 0x03 != 0 {
+                    return None;
+                }
+                out.push((a << 2) | (b >> 4));
+                out.push((b << 4) | (c >> 2));
+            }
+            (c, d) => {
+                let c = base64_value(c)?;
+                let d = base64_value(d)?;
+                out.push((a << 2) | (b >> 4));
+                out.push((b << 4) | (c >> 2));
+                out.push((c << 6) | d);
+            }
         }
     }
     Some(out)
@@ -665,6 +680,13 @@ mod tests {
             String::from_utf8(base64_decode(&encoded).unwrap()).unwrap(),
             input
         );
+    }
+
+    #[test]
+    fn malformed_base64_markers_are_rejected() {
+        for malformed in ["=AAA", "AA=A", "AA==AAAA", "AB==", "AAB="] {
+            assert!(base64_decode(malformed).is_none(), "accepted {malformed}");
+        }
     }
 
     #[test]
