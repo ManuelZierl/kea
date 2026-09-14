@@ -175,7 +175,6 @@ mod tests {
     fn vertical_movement_preserves_character_column_where_possible() {
         let mut editor = CommandEditor::default();
         editor.insert("12345\nab\nABCDE");
-        editor.home();
         editor.up();
         assert_eq!(editor.rendered(), "12345\nab▏\nABCDE");
         editor.up();
