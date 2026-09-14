@@ -1,82 +1,108 @@
 # Architecture
 
-## Embedding boundaries
+## Product model
 
-`kea-core` has no dependencies beyond std. It defines events, bounded recordings, a versioned file format and the Projection trait. `kea-alacritty` supplies a projection using published Alacritty 0.26.0. `kea-pty` wraps portable-pty for the standalone program. `kea-session` coordinates live state, history and disk persistence without a UI dependency. `kea-app` owns GPUI, the local command editor, input modes and keybinding policy.
+Kea has one underlying terminal process but two UI projections:
 
-An eventual Zed host can use the core with its own pinned emulator, PTY, editor and renderer. The standalone session controller and GPUI app are reference hosts, not mandatory integration layers. No Zed code is copied; there is no extension or upstream PR yet.
+1. **Document view** for ordinary shell commands: editable input becomes a first-class command block and its output is persistent/read-only.
+2. **Terminal view** for software that requires a mutable terminal screen, including TUIs, REPLs and historical replay.
 
-## Document-native interaction
+The terminal/PTY remains the compatibility substrate. The document is not reconstructed from prompts or screen scraping.
 
-Kea does not treat immediate PTY key forwarding as the only input model.
+## Crate boundaries
 
-### Document mode
+`kea-core` has no dependencies beyond `std`. It defines the canonical ordered terminal event recording, bounded file format and the `Projection` replay interface.
 
-Document mode is the default in the standalone app. Keystrokes edit a local multiline UTF-8 buffer. Enter inserts a newline and an explicit semantic `execute` action submits the buffer to the PTY. Paste becomes editor text rather than an immediate process write.
+`kea-document` depends only on `kea-core`. It defines command blocks, lifecycle state, bounded retained output and the streaming parser for Kea's document boundary protocol. It has no GPUI, PTY, shell, OS or Zed dependency.
 
-This is currently an interaction layer above an ordinary PTY-backed shell, not yet a complete structured command model. Submission converts local newlines into terminal Enter events. It does not infer commands from prompt text, and the recording format does not pretend it can recover reliable command boundaries after the fact.
+`kea-alacritty` is a replaceable terminal projection. `kea-pty` owns the standalone PTY/ConPTY transport. `kea-session` coordinates live emulation, immutable history, persistence and an observation tap. `kea-app` owns GPUI, shell adapters, editor behavior and keybinding policy.
 
-Future structured command blocks should be explicit application state, enriched by optional shell integration for metadata such as cwd and exit status.
+An eventual Zed host should be able to reuse `kea-core` / `kea-document` while using Zed's own PTY, renderer, editor and actions.
 
-### Direct PTY mode
+## Canonical events vs derived document
 
-Programs such as OpenCode, Vim, REPLs, SSH and other TUIs need immediate terminal input. Direct mode forwards non-application keys through the terminal keyboard encoder. It is an explicit compatibility path, not the default interaction model.
+Raw terminal output bytes plus ordered resize/process-lifecycle events remain canonical. A document is a derived higher-level view.
 
-Users can toggle between Document and Direct modes. Direct mode also leaves modified Enter combinations such as `Ctrl+Enter` available to the child when they would otherwise represent the Document-mode execute action.
+Document mode sends an application-owned wrapper to the current shell. The wrapper emits private OSC boundary markers before and after evaluating the submitted command. Those marker bytes flow through the ordinary PTY output and are therefore part of the canonical recording. `kea-document` recognizes the markers and derives:
 
-## Input actions and keybindings
+- original submitted command text;
+- command ID;
+- queued/running/finished/aborted state;
+- start/finish timestamps and duration;
+- command exit status;
+- output bytes observed between start and completion.
 
-UI commands such as `copy`, `paste`, `execute`, `interrupt`, `toggle_direct`, history navigation and `go_live` are semantic actions. Physical shortcuts map onto those actions in `kea-app`; they do not belong to `kea-core`, `kea-session` or the recording format.
+This avoids a second authoritative database and lets an offline `.kea` recording reconstruct structured blocks without command re-execution.
 
-Current defaults follow host-OS conventions where practical:
+The v1 recording frame schema itself is unchanged; document markers are ordinary output payload bytes. See `document-protocol.md`.
 
-- Linux/Windows: `Ctrl+C` copy, `Ctrl+V` paste, `Ctrl+Shift+C` interrupt;
-- macOS: `Cmd+C` copy, `Cmd+V` paste, `Ctrl+C` interrupt;
-- `Ctrl+Enter` executes Document input by default;
-- `Ctrl+Shift+Space` toggles Document/Direct mode by default.
+## Shell adapters
 
-The user keymap can override or unbind semantic actions. Invalid or ambiguous configuration falls back to complete OS defaults rather than leaving a partially applied keymap.
+Boundary emission must be explicit. Never infer command completion from `$`, `>`, prompt text, idle time or terminal cursor position.
 
-Application actions are resolved before Direct-mode PTY forwarding. This separation is important for embedding Kea in Zed, where the host should normally supply Zed actions/keybindings instead of importing the standalone app's configuration system.
+The standalone application currently has adapters for POSIX-style shells and PowerShell. The adapter quotes the editor text as data, emits a start marker, evaluates it in the existing shell scope, captures the status, then emits a completion marker.
 
-## Live and historical projections
+Using the existing shell is important: `cd`, shell variables/functions and other session state can persist naturally. If the command launches a TUI, the user switches to Direct PTY mode and sends keys to the same process. When control returns to the shell, the completion marker closes the same command block.
 
-Live output is parsed by the live emulator and recorded in ingestion order. A rewind constructs or advances a separate historical emulator. The live emulator continues consuming output and sending supported protocol replies. Returning to LIVE reveals that current state rather than replaying commands or restoring a process snapshot.
+Unknown shells/programs are not guessed; Kea uses Direct PTY mode instead. Additional shell adapters can be added without changing `kea-core` or `kea-document`.
 
-Historical mode is visibly read-only and rejects process input. Historical emulators have no external-effects listener. Clipboard, title, bell, URL and window operations originating in recorded terminal output are ignored. User-initiated copying of a historical screen is separate from output-triggered clipboard access. Treat recordings as untrusted parser input, not inherently safe text documents.
+## Application-owned input and PTY echo
 
-Historical view does not resize the live PTY. Recorded sizes reconstruct old screens. A current window may crop an old screen; returning to live sends the current dimensions to the child.
+The shell wrapper is implementation input, not user-visible command content. `kea-session::send_hidden` therefore suppresses the wrapper's exact terminal-driver echo before feeding output into the live emulator/recording.
 
-## What is recorded
+The echo filter is deliberately fail-open. If a shell redraws the line instead of echoing the wrapper byte-for-byte, seeing the private start marker proves execution has begun and Kea releases buffered bytes rather than risking loss of actual command output. Correct output is more important than cosmetically hiding a wrapper echo.
 
-Opaque output bytes, dimensions and the directly spawned process's exit status. Raw editor keystrokes are not recorded. PTYs merge stdout/stderr: separate streams, individual command exit codes, working directories and command boundaries cannot reliably be reconstructed from these bytes alone. Optional shell integration can add explicit metadata later.
+The session observation tap receives the same post-filter PTY output that the live emulator receives. It is independent of recording retention so an in-memory document can keep command lifecycle state even if bounded terminal-history capture stops.
 
-Timestamps are monotonic microseconds measured at ingestion, with equal timestamps ordered by event index. Recordings preserve chunk boundaries. If a message is printed and erased inside one chunk, this version cannot seek to the intermediate instructions; future byte/parser-boundary indexing can address that. This is terminal-protocol history, not exact GPU-frame video.
+## Document retention
 
-## Limits and persistence
+The document projection is bounded separately from terminal history. Current limits are:
 
-The recording retains a bounded prefix: 32 MiB accounted data/overhead or 100,000 events. On quota exhaustion, capture stops with a warning while the live process continues. Allocator overhead, queues, grids, fonts, the document editor and GPU resources consume additional memory.
+- command text: 64 KiB;
+- output retained per command block: 4 MiB;
+- aggregate retained document text/output: 64 MiB;
+- block count: 10,000.
 
-Disk recording is explicit, create-only, and uses an ordered bounded worker. Files are created with Unix mode 0600 or inherited Windows ACLs. Each checksummed event is flushed from the userspace buffer; `sync_all` happens at orderly close, not every event. Power loss can lose recent frames. Incomplete final frames recover a complete prefix; corrupted complete frames fail. There is no encryption, authentication or redaction.
+A block that exceeds its output cap is explicitly marked truncated. A saturated document does not stop the underlying PTY. Limits are part of the model because a long-running terminal must not become an unbounded GUI heap.
 
-A full disk queue stops persistence with a visible warning rather than blocking rendering. In-memory history may continue. The reader enforces allocation, dimension, event-count and aggregate limits.
+## Document output projection
 
-## Process lifetime
+A block retains raw bytes between its boundary markers. The current GPUI document view renders a conservative text projection: it removes terminal control sequences and handles common carriage-return progress-line overwrites, newlines, tabs and backspaces.
 
-Input/output have separate bounded worker channels. Input submission never blocks the render loop. Child exit is polled separately from output EOF; the exit event is emitted only after final output is drained.
+This is intentionally not a claim that arbitrary TUI output is a linear text document. Complex interactive programs should be viewed through the terminal projection; their command block still records lifecycle/output but Direct PTY is the fidelity path.
 
-On Windows an owned ConPTY can keep the output pipe open after the child exits. The transport closes the master off the UI/reader thread after observing child termination, while its reader drains final output. The directly spawned child defines the Windows session lifetime. Unix EOF may wait for descendants holding the slave. Closing the GUI requests termination/reaping of the immediate child; detached descendants are not supervised as a job tree.
+## Keybindings and input modes
 
-Reference: [Microsoft ClosePseudoConsole documentation](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole).
+UI operations (`copy`, `paste`, `execute`, `interrupt`, history navigation, mode switching) are semantic actions. Physical shortcuts are mappings in the host UI, not in the recording or portable core.
+
+Document mode owns ordinary editing keys. Direct mode forwards terminal-protocol key sequences. Kea-level actions resolve before Direct-mode forwarding, except the configured Document execute action is intentionally left to the child while Direct mode is active.
+
+## Terminal history
+
+Live output is parsed by the live emulator and recorded in ingestion order. Historical navigation creates/advances a separate emulator. The live emulator continues consuming output while an old state is inspected. Returning to LIVE reveals current state; it never restores a process snapshot or re-executes a command.
+
+Historical emulators cannot emit external effects. Only the live emulator may issue required terminal protocol replies. Replay ignores clipboard, title, bell, URL and window side effects.
+
+## Persistence and trust
+
+Recording is explicit and create-only. Output and structured command text can contain secrets. Recordings are not encrypted or authenticated.
+
+The document OSC protocol is a structural interoperability mechanism, not a security boundary. A process capable of deliberately emitting Kea's private marker syntax could forge document markers. Consumers must not treat block metadata reconstructed from an untrusted recording as authenticated provenance.
+
+Incomplete final recording frames can recover a valid prefix; corrupt complete frames fail. Disk queue/storage failure is surfaced and persistence stops rather than blocking rendering.
 
 ## Seeking
 
-Forward playback advances a historical parser. Backward seek replays from zero. There are no fake cell-only checkpoints. Future checkpoints must include parser state, partial UTF-8/escapes, both buffers, terminal modes and other state affecting continuation, with equivalence tests against replay-from-zero. Recordings stay canonical; checkpoints remain disposable versioned caches.
-
-Async cancellable seeking, compression, historical text indexing and retention policy are future work. The format currently lacks an emulator/config fingerprint, so exact cross-engine rendering is not promised.
+Forward playback advances a historical terminal parser. Backward seek currently replays from zero. Future checkpoints must include complete parser state—partial escapes/UTF-8, buffers, modes, margins, tabs, cursor and colors—and remain disposable caches over canonical events.
 
 ## Zed direction
 
-The reusable architectural boundary is intentionally below standalone UI policy. A Zed integration should reuse Zed's editor, actions/keybindings, PTY ownership and renderer while consuming Kea's persistent-session concepts and, where appropriate, core recording/history machinery.
+The strongest upstream shape is not “replace Zed's terminal.” It is:
 
-Before proposing an upstream change, demonstrate the document interaction value, TUI compatibility and measured overhead, then discuss privacy/storage/dependency policy with maintainers. GPUI reuse lowers impedance but does not make integration a trivial transplant.
+- retain Zed's PTY/process ownership and terminal renderer;
+- use Zed's editor/action/keybinding model for command input;
+- derive persistent command/output blocks from explicit shell integration;
+- optionally retain ordered terminal events for historical projection;
+- keep portable state independent of GPUI/Zed.
+
+Before an upstream proposal, measure CPU/memory/storage overhead and validate privacy/retention behavior on real long-running sessions and agent workflows.

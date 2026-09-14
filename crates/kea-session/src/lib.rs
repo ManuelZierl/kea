@@ -7,6 +7,67 @@ use kea_core::{Kind, Projection, Recording, Size};
 use kea_pty::{Message, Pty};
 use std::{ffi::OsString, path::Path, time::Instant};
 
+#[derive(Clone, Debug)]
+pub enum Observed {
+    Output { at: u64, bytes: Vec<u8> },
+    Exit { at: u64, code: u32 },
+}
+
+#[derive(Debug, Default)]
+pub struct PumpResult {
+    pub changed: bool,
+    pub observed: Vec<Observed>,
+}
+
+#[derive(Debug)]
+struct EchoFilter {
+    needle: Vec<u8>,
+    pending: Vec<u8>,
+}
+
+impl EchoFilter {
+    fn new(needle: Vec<u8>) -> Self {
+        Self {
+            needle,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Returns visible bytes and whether the one hidden echo was fully removed.
+    fn push(&mut self, bytes: &[u8]) -> (Vec<u8>, bool) {
+        self.pending.extend_from_slice(bytes);
+        if let Some(at) = find_bytes(&self.pending, &self.needle) {
+            let mut visible = self.pending[..at].to_vec();
+            let mut rest = self.pending[at + self.needle.len()..].to_vec();
+            // PTYs commonly echo CR as CRLF. The CR is part of the hidden input;
+            // suppress the synthetic LF too so document execution leaves no blank line.
+            if rest.first() == Some(&b'\n') && self.needle.last() == Some(&b'\r') {
+                rest.remove(0);
+            }
+            visible.extend(rest);
+            self.pending.clear();
+            return (visible, true);
+        }
+
+        // Readline and other shells may redraw the typed wrapper instead of echoing
+        // its bytes verbatim. Once the private start marker appears, execution has
+        // definitely begun; fail open rather than buffering real command output or
+        // blocking future document submissions forever.
+        if find_bytes(&self.pending, b"\x1b]777;kea;start;").is_some() {
+            return (std::mem::take(&mut self.pending), true);
+        }
+
+        let keep = suffix_prefix_len(&self.pending, &self.needle);
+        let emit = self.pending.len().saturating_sub(keep);
+        let visible = self.pending.drain(..emit).collect();
+        (visible, false)
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
 pub struct Session {
     recording: Recording,
     live: Engine,
@@ -15,11 +76,13 @@ pub struct Session {
     journal: Option<Journal>,
     started: Instant,
     playing: Option<(Instant, u64)>,
+    hidden_echo: Option<EchoFilter>,
     capture_stopped: bool,
     persistence_stopped: bool,
     pub warning: Option<String>,
     pub exit_code: Option<u32>,
 }
+
 impl Session {
     pub fn spawn(command: &[OsString], size: Size, path: Option<&Path>) -> Result<Self> {
         let recording = Recording::new(size)?;
@@ -34,12 +97,14 @@ impl Session {
             journal,
             started,
             playing: None,
+            hidden_echo: None,
             capture_stopped: false,
             persistence_stopped: false,
             warning: None,
             exit_code: None,
         })
     }
+
     pub fn from_recording(recording: Recording) -> Result<Self> {
         let end = recording.events().len();
         let live = Engine::at(&recording, end)?;
@@ -52,12 +117,14 @@ impl Session {
             journal: None,
             started: Instant::now(),
             playing: None,
+            hidden_echo: None,
             capture_stopped: false,
             persistence_stopped: false,
             warning: None,
             exit_code: None,
         })
     }
+
     pub fn demo() -> Result<Self> {
         let mut r = Recording::new(Size::new(90, 22)?)?;
         r.append(0, Kind::Output(b"\x1b[2J\x1b[HKea - terminal history, not command re-execution\r\n\r\nA transient error will appear below, then be overwritten.\r\n\r\nWorking...".to_vec()))?;
@@ -79,26 +146,37 @@ impl Session {
         session.toggle_playback();
         Ok(session)
     }
+
     pub fn recording(&self) -> &Recording {
         &self.recording
     }
+
+    pub fn elapsed_micros(&self) -> u64 {
+        self.started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64
+    }
+
     pub fn is_history(&self) -> bool {
         self.history.is_some()
     }
+
     pub fn is_playing(&self) -> bool {
         self.playing.is_some()
     }
+
     pub fn is_running(&self) -> bool {
         self.pty.is_some() && self.exit_code.is_none()
     }
+
     pub fn input_allowed(&self) -> bool {
         self.is_running() && !self.is_history()
     }
+
     pub fn end(&self) -> usize {
         self.history
             .as_ref()
             .map_or(self.recording.events().len(), |(end, _)| *end)
     }
+
     pub fn position(&self) -> u64 {
         self.recording
             .events()
@@ -106,24 +184,44 @@ impl Session {
             .filter(|_| self.end() != 0)
             .map_or(0, |e| e.at)
     }
+
     pub fn screen(&self) -> Screen {
         self.history
             .as_ref()
             .map_or(&self.live, |(_, engine)| engine)
             .screen()
     }
+
     pub fn application_cursor(&self) -> bool {
         self.live.application_cursor()
     }
+
     pub fn bracketed_paste(&self) -> bool {
         self.live.bracketed_paste()
     }
+
     pub fn send(&self, bytes: Vec<u8>) -> Result<()> {
         if !self.input_allowed() {
             anyhow::bail!("History is read-only. Return to LIVE before sending input.");
         }
         self.pty.as_ref().context("terminal has ended")?.send(bytes)
     }
+
+    /// Send application-owned shell protocol input without painting or recording its
+    /// terminal-driver echo. The program's actual output is unaffected.
+    pub fn send_hidden(&mut self, bytes: Vec<u8>) -> Result<()> {
+        if !self.input_allowed() {
+            anyhow::bail!("History is read-only. Return to LIVE before sending input.");
+        }
+        if self.hidden_echo.is_some() {
+            anyhow::bail!("previous hidden terminal input has not been echoed yet");
+        }
+        let pty = self.pty.as_ref().context("terminal has ended")?;
+        pty.send(bytes.clone())?;
+        self.hidden_echo = Some(EchoFilter::new(bytes));
+        Ok(())
+    }
+
     pub fn resize(&mut self, size: Size) -> Result<()> {
         Size::new(size.columns, size.rows)?;
         if !self.input_allowed() || size == self.live.size() {
@@ -137,14 +235,17 @@ impl Session {
         self.record(Kind::Resize(size));
         Ok(())
     }
+
     pub fn go_live(&mut self) {
         self.history = None;
         self.playing = None;
     }
+
     pub fn seek(&mut self, end: usize) -> Result<()> {
         self.playing = None;
         self.seek_inner(end)
     }
+
     fn seek_inner(&mut self, end: usize) -> Result<()> {
         if end > self.recording.events().len() {
             anyhow::bail!("seek outside recording");
@@ -165,6 +266,7 @@ impl Session {
         self.history = Some((end, Engine::at(&self.recording, end)?));
         Ok(())
     }
+
     pub fn step(&mut self, delta: isize) -> Result<()> {
         self.seek(
             self.end()
@@ -172,9 +274,11 @@ impl Session {
                 .min(self.recording.events().len()),
         )
     }
+
     pub fn seek_time(&mut self, at: u64) -> Result<()> {
         self.seek(self.recording.end_at(at))
     }
+
     pub fn toggle_playback(&mut self) {
         if self.playing.take().is_some() {
             return;
@@ -187,11 +291,16 @@ impl Session {
         }
         self.playing = Some((Instant::now(), self.position()));
     }
+
     fn record(&mut self, kind: Kind) {
+        let at = self.elapsed_micros();
+        self.record_at(at, kind);
+    }
+
+    fn record_at(&mut self, at: u64, kind: Kind) {
         if self.capture_stopped {
             return;
         }
-        let at = self.started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
         if let Err(error) = self.recording.append(at, kind) {
             self.capture_stopped = true;
             self.warning = Some(format!("HISTORY STOPPED: {error}. Live terminal continues; retained history is incomplete."));
@@ -214,57 +323,113 @@ impl Session {
             }
         }
     }
+
+    fn accept_output(&mut self, at: u64, bytes: Vec<u8>, observed: &mut Vec<Observed>) -> bool {
+        if bytes.is_empty() {
+            return false;
+        }
+        self.live.output(&bytes);
+        self.record_at(at, Kind::Output(bytes.clone()));
+        observed.push(Observed::Output { at, bytes });
+        for reply in self.live.drain_replies() {
+            if let Some(pty) = &self.pty {
+                if let Err(error) = pty.send(reply.into_bytes()) {
+                    self.warning = Some(error.to_string());
+                }
+            }
+        }
+        true
+    }
+
+    fn filter_hidden_echo(&mut self, bytes: Vec<u8>) -> Vec<u8> {
+        let Some(filter) = &mut self.hidden_echo else {
+            return bytes;
+        };
+        let (visible, done) = filter.push(&bytes);
+        if done {
+            self.hidden_echo = None;
+        }
+        visible
+    }
+
+    /// Bounded work per frame plus an unrecorded observation tap for document-mode
+    /// structure. The tap keeps command lifecycle tracking working even if history
+    /// recording hits its retention limit.
+    pub fn pump_observed(&mut self) -> PumpResult {
+        self.pump_inner(true)
+    }
+
     /// Bounded work per frame. The PTY keeps running while a historical view is selected.
     pub fn pump(&mut self) -> bool {
-        let mut changed = false;
+        self.pump_inner(false).changed
+    }
+
+    fn pump_inner(&mut self, observe: bool) -> PumpResult {
+        let mut result = PumpResult::default();
         for _ in 0..64 {
             let message = self.pty.as_mut().and_then(Pty::try_recv);
             match message {
                 Some(Message::Output(bytes)) => {
-                    self.live.output(&bytes);
-                    self.record(Kind::Output(bytes));
-                    for reply in self.live.drain_replies() {
-                        if let Some(pty) = &self.pty {
-                            if let Err(error) = pty.send(reply.into_bytes()) {
-                                self.warning = Some(error.to_string());
-                            }
-                        }
-                    }
-                    changed = true;
+                    let at = self.elapsed_micros();
+                    let bytes = self.filter_hidden_echo(bytes);
+                    let mut sink = Vec::new();
+                    let observed = if observe {
+                        &mut result.observed
+                    } else {
+                        &mut sink
+                    };
+                    result.changed |= self.accept_output(at, bytes, observed);
                 }
                 Some(Message::Error(error)) => {
                     self.warning = Some(error);
-                    changed = true;
+                    result.changed = true;
                 }
                 Some(Message::Eof) => {
-                    changed = true;
+                    result.changed = true;
                 }
                 None => break,
             }
         }
+
         if let Some(pty) = &mut self.pty {
             match pty.exit_code() {
                 Ok(Some(code)) => {
-                    self.record(Kind::Exit(code));
+                    let at = self.elapsed_micros();
+                    if let Some(filter) = self.hidden_echo.take() {
+                        let bytes = filter.finish();
+                        let mut sink = Vec::new();
+                        let observed = if observe {
+                            &mut result.observed
+                        } else {
+                            &mut sink
+                        };
+                        result.changed |= self.accept_output(at, bytes, observed);
+                    }
+                    self.record_at(at, Kind::Exit(code));
+                    if observe {
+                        result.observed.push(Observed::Exit { at, code });
+                    }
                     self.exit_code = Some(code);
                     self.pty.take();
                     if let Some(journal) = &mut self.journal {
                         journal.stop();
                     }
-                    changed = true;
+                    result.changed = true;
                 }
                 Err(error) => {
                     self.warning = Some(error.to_string());
-                    changed = true;
+                    result.changed = true;
                 }
                 Ok(None) => (),
             }
         }
+
         if let Some(error) = self.journal.as_ref().and_then(Journal::error) {
             self.persistence_stopped = true;
             self.warning = Some(format!("DISK RECORDING FAILED: {error}"));
-            changed = true;
+            result.changed = true;
         }
+
         if let Some((started, offset)) = self.playing {
             let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
             let target = offset.saturating_add(elapsed);
@@ -274,20 +439,62 @@ impl Session {
                     self.warning = Some(error.to_string());
                     self.playing = None;
                 }
-                changed = true;
+                result.changed = true;
             }
             if target >= self.recording.duration() {
                 self.playing = None;
-                changed = true;
+                result.changed = true;
             }
         }
-        changed
+
+        result
     }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn suffix_prefix_len(bytes: &[u8], prefix: &[u8]) -> usize {
+    if prefix.is_empty() {
+        return 0;
+    }
+    (1..=bytes.len().min(prefix.len().saturating_sub(1)))
+        .rev()
+        .find(|length| bytes[bytes.len() - length..] == prefix[..*length])
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn echo_filter_removes_only_the_hidden_input_across_chunks() {
+        let mut filter = EchoFilter::new(b"secret wrapper\r".to_vec());
+        let (first, done) = filter.push(b"prompt> secret wr");
+        assert_eq!(first, b"prompt> ");
+        assert!(!done);
+        let (second, done) = filter.push(b"apper\r\nactual output");
+        assert_eq!(second, b"actual output");
+        assert!(done);
+    }
+
+    #[test]
+    fn echo_filter_fails_open_when_shell_redraws_before_start_marker() {
+        let mut filter = EchoFilter::new(b"wrapper that will not match\r".to_vec());
+        let (visible, done) =
+            filter.push(b"\x1b[2Kredrawn wrapper\r\n\x1b]777;kea;start;1;ZWNobyBoaQ==\x07hi");
+        assert!(done);
+        let marker = b"\x1b]777;kea;sta";
+        assert!(visible.windows(marker.len()).any(|window| window == marker));
+    }
+
     #[test]
     fn offline_playback_never_accepts_input_even_after_go_live() {
         let mut s = Session::demo().unwrap();
@@ -295,6 +502,7 @@ mod tests {
         s.go_live();
         assert!(s.send(b"echo not-executed".to_vec()).is_err());
     }
+
     #[test]
     fn seeking_restores_error_and_preserves_latest_state() {
         let mut s = Session::demo().unwrap();
@@ -304,6 +512,7 @@ mod tests {
         assert!(!s.screen().text().contains("ERROR: connection failed"));
         assert!(s.screen().text().contains("Ready."));
     }
+
     #[cfg(unix)]
     #[test]
     fn live_capture_continues_during_rewind_and_blocks_input() {
@@ -330,6 +539,7 @@ mod tests {
         s.go_live();
         assert!(s.screen().text().contains("beforeafter"));
     }
+
     #[test]
     fn journal_is_exclusive_and_round_trips_after_close() {
         let nonce = std::time::SystemTime::now()

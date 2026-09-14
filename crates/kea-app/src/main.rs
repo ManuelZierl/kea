@@ -1,13 +1,17 @@
 mod command_editor;
+mod document_view;
 mod input;
 mod keybindings;
+mod shell;
 
 use anyhow::{Context as _, Result};
 use command_editor::CommandEditor;
 use gpui::{prelude::*, *};
 use kea_alacritty::Screen;
-use kea_session::Session;
+use kea_document::Document;
+use kea_session::{Observed, Session};
 use keybindings::{Action, Keymap};
+use shell::ShellFlavor;
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
 const CELL_WIDTH: f32 = 9.0;
@@ -51,13 +55,14 @@ fn run() -> Result<()> {
 kea [--direct] [--record NEW.kea] [-- PROGRAM ARG...]\n\
 kea --replay SESSION.kea\n\
 kea --demo\n\n\
-Document mode: Enter inserts a newline; Ctrl+Enter executes the whole input block.\n\
-Ctrl+Shift+Space toggles Direct PTY mode for TUIs and REPLs.\n\
+Document mode creates persistent command/output blocks. Enter inserts a newline; Ctrl+Enter executes the block.\n\
+Ctrl+Shift+Space switches to Direct PTY mode for TUIs and REPLs without starting another shell.\n\
 Linux/Windows defaults: Ctrl+C copy, Ctrl+V paste, Ctrl+Shift+C interrupt.\n\
 macOS defaults: Cmd+C/V copy/paste, Ctrl+C interrupt.\n\
-F6/F7 step history | F8 play/pause | F9 live.\n\n\
+F6/F7 step terminal history | F8 play/pause | F9 live.\n\n\
+Document mode currently supports POSIX shells (sh/bash/dash/zsh/ksh) and PowerShell. Unsupported programs start in Direct PTY mode.\n\
 All shortcuts are configurable in Kea's keybindings.conf. Set KEA_KEYBINDINGS to use an explicit path.\n\
-History stays in memory unless --record is supplied. Output can contain secrets."
+History stays in memory unless --record is supplied. Output and submitted commands can contain secrets."
             );
             return Ok(());
         } else if arg.to_string_lossy().starts_with('-') {
@@ -68,18 +73,41 @@ History stays in memory unless --record is supplied. Output can contain secrets.
             break;
         }
     }
-    if (demo && replay.is_some())
-        || ((demo || replay.is_some()) && (record.is_some() || !command.is_empty()))
+
+    let replay_requested = replay.is_some();
+    if (demo && replay_requested)
+        || ((demo || replay_requested) && (record.is_some() || !command.is_empty()))
     {
         anyhow::bail!(
             "--demo and --replay cannot be combined with each other, --record, or a command"
         );
     }
+
+    // The Windows default console shell is cmd.exe, whose persistent scripting
+    // semantics are substantially different. Document mode chooses Windows PowerShell
+    // unless the user explicitly requests another program or --direct.
+    #[cfg(windows)]
+    if !demo && !replay_requested && !direct && command.is_empty() {
+        command = vec![
+            "powershell.exe".into(),
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NoExit".into(),
+        ];
+    }
+
+    let shell = if demo || replay_requested {
+        None
+    } else {
+        ShellFlavor::detect(&command)
+    };
+
     let session = if demo {
         Session::demo()?
     } else if let Some(path) = replay {
         let loaded = kea_core::read_from(File::open(path)?)?;
         let mut session = Session::from_recording(loaded.recording)?;
+        session.go_live();
         if loaded.truncated_tail {
             session.warning =
                 Some("Recovered complete events; the final recording frame was truncated.".into());
@@ -88,12 +116,34 @@ History stays in memory unless --record is supplied. Output can contain secrets.
     } else {
         Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
     };
-    let (keymap, keymap_warning) = Keymap::load();
-    let initial_mode = if direct {
+
+    let document = Document::from_recording(session.recording());
+    let recorded_document = !document.blocks().is_empty();
+    let initial_mode = if demo {
+        InputMode::Direct
+    } else if replay_requested && recorded_document {
+        InputMode::Document
+    } else if direct || shell.is_none() {
         InputMode::Direct
     } else {
         InputMode::Document
     };
+
+    let (keymap, mut keymap_warning) = Keymap::load();
+    if !demo && !replay_requested && !direct && shell.is_none() {
+        let program = command
+            .first()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "the configured shell".into());
+        let warning = format!(
+            "DOCUMENT MODE UNAVAILABLE for {program}. Kea started in Direct PTY mode; supported document shells are POSIX shells and PowerShell."
+        );
+        keymap_warning = Some(match keymap_warning {
+            Some(existing) => format!("{existing} {warning}"),
+            None => warning,
+        });
+    }
+
     Application::new().run(move |cx: &mut App| {
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -115,7 +165,18 @@ History stays in memory unless --record is supplied. Output can contain secrets.
             ..Default::default()
         };
         if let Err(error) = cx.open_window(options, |window, cx| {
-            cx.new(|cx| KeaView::new(session, keymap, keymap_warning, initial_mode, window, cx))
+            cx.new(|cx| {
+                KeaView::new(
+                    session,
+                    document,
+                    shell,
+                    keymap,
+                    keymap_warning,
+                    initial_mode,
+                    window,
+                    cx,
+                )
+            })
         }) {
             eprintln!("kea: cannot open window: {error:#}");
             cx.quit();
@@ -127,18 +188,23 @@ History stays in memory unless --record is supplied. Output can contain secrets.
 
 struct KeaView {
     session: Session,
+    document: Document,
+    shell: Option<ShellFlavor>,
     keymap: Keymap,
     input_mode: InputMode,
     editor: CommandEditor,
-    submitted_commands: usize,
+    document_scroll: ScrollHandle,
     focus: FocusHandle,
     notice: Option<String>,
     _pump: Task<()>,
 }
 
 impl KeaView {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         session: Session,
+        document: Document,
+        shell: Option<ShellFlavor>,
         keymap: Keymap,
         keymap_warning: Option<String>,
         input_mode: InputMode,
@@ -151,7 +217,23 @@ impl KeaView {
             Timer::after(Duration::from_millis(16)).await;
             if this
                 .update(cx, |this, cx| {
-                    if this.session.pump() {
+                    let pump = this.session.pump_observed();
+                    let mut document_changed = false;
+                    for observed in pump.observed {
+                        document_changed |= match observed {
+                            Observed::Output { at, bytes } => {
+                                this.document.ingest_output(at, &bytes)
+                            }
+                            Observed::Exit { at, .. } => this.document.abort_in_flight(at),
+                        };
+                    }
+                    if document_changed
+                        && this.input_mode == InputMode::Document
+                        && !this.session.is_history()
+                    {
+                        this.document_scroll.scroll_to_bottom();
+                    }
+                    if pump.changed || document_changed {
                         cx.notify();
                     }
                 })
@@ -162,10 +244,12 @@ impl KeaView {
         });
         Self {
             session,
+            document,
+            shell,
             keymap,
             input_mode,
             editor: CommandEditor::default(),
-            submitted_commands: 0,
+            document_scroll: ScrollHandle::new(),
             focus,
             notice: keymap_warning,
             _pump: pump,
@@ -203,7 +287,12 @@ impl KeaView {
     }
 
     fn copy(&self, cx: &mut App) {
-        cx.write_to_clipboard(ClipboardItem::new_string(self.session.screen().text()));
+        let text = if self.input_mode == InputMode::Document && !self.session.is_history() {
+            self.document.text()
+        } else {
+            self.session.screen().text()
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn paste(&mut self, cx: &mut Context<Self>) {
@@ -225,11 +314,58 @@ impl KeaView {
         if self.input_mode != InputMode::Document {
             return;
         }
+        if !self.session.input_allowed() {
+            self.result(
+                Err(anyhow::anyhow!(
+                    "Return to LIVE before executing a document command."
+                )),
+                cx,
+            );
+            return;
+        }
+        if self.document.has_in_flight() {
+            self.result(
+                Err(anyhow::anyhow!(
+                    "A document command is still running. Interrupt it or use Direct PTY mode if it opened an interactive program."
+                )),
+                cx,
+            );
+            return;
+        }
+        let Some(shell) = self.shell else {
+            self.result(
+                Err(anyhow::anyhow!(
+                    "Document execution is unavailable for this terminal program."
+                )),
+                cx,
+            );
+            return;
+        };
         let text = self.editor.text().to_owned();
-        let result = self.session.send(command_editor::terminal_bytes(&text));
+        if text.is_empty() {
+            return;
+        }
+        if let Err(error) = self.document.validate_submission(&text) {
+            self.result(Err(error.into()), cx);
+            return;
+        }
+        let id = self.document.allocate_id();
+        let wrapper = match shell.wrap(id, &text) {
+            Ok(wrapper) => wrapper,
+            Err(error) => {
+                self.result(Err(error.into()), cx);
+                return;
+            }
+        };
+        let queued_at = self.session.elapsed_micros();
+        let result = self.session.send_hidden(wrapper).and_then(|_| {
+            self.document
+                .queue_local(id, text.clone(), queued_at)
+                .map_err(anyhow::Error::from)
+        });
         if result.is_ok() {
             self.editor.clear_after_submit();
-            self.submitted_commands += 1;
+            self.document_scroll.scroll_to_bottom();
         }
         self.result(result, cx);
     }
@@ -240,11 +376,24 @@ impl KeaView {
     }
 
     fn toggle_direct(&mut self, cx: &mut Context<Self>) {
-        self.input_mode = match self.input_mode {
-            InputMode::Document => InputMode::Direct,
-            InputMode::Direct => InputMode::Document,
-        };
-        self.notice = None;
+        match self.input_mode {
+            InputMode::Document => {
+                self.input_mode = InputMode::Direct;
+                self.notice = None;
+            }
+            InputMode::Direct => {
+                if self.shell.is_some() || !self.document.blocks().is_empty() {
+                    self.input_mode = InputMode::Document;
+                    self.notice = None;
+                    self.document_scroll.scroll_to_bottom();
+                } else {
+                    self.notice = Some(
+                        "Document mode is unavailable because this session is not a supported shell and contains no recorded document blocks."
+                            .into(),
+                    );
+                }
+            }
+        }
         cx.notify();
     }
 
@@ -333,8 +482,8 @@ impl KeaView {
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
         if let Some(action) = self.keymap.action_for(key) {
-            // Ctrl+Enter is Kea's execute action in Document mode. In Direct mode it
-            // belongs to the child and must retain its distinct terminal encoding.
+            // The execute shortcut is Kea-owned only in Document mode. In Direct
+            // mode the exact modified Enter sequence belongs to the PTY application.
             if action != Action::Execute || self.input_mode == InputMode::Document {
                 self.dispatch_action(action, cx);
                 cx.stop_propagation();
@@ -362,7 +511,8 @@ impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) - 24.0).max(18.0);
-        let input_height = if self.session.input_allowed() {
+        let show_document = self.input_mode == InputMode::Document && !self.session.is_history();
+        let input_height = if show_document && self.session.input_allowed() {
             104.0
         } else {
             0.0
@@ -375,6 +525,7 @@ impl Render for KeaView {
                 self.notice = Some(error.to_string());
             }
         }
+
         let screen = self.session.screen();
         let duration = self.session.recording().duration();
         let position = self.session.position();
@@ -391,7 +542,7 @@ impl Render for KeaView {
             "ENDED / REPLAY"
         };
         let input_mode = match self.input_mode {
-            InputMode::Document => "DOCUMENT INPUT",
+            InputMode::Document => "DOCUMENT",
             InputMode::Direct => "DIRECT PTY",
         };
         let execute_label = self.keymap.label(Action::Execute);
@@ -403,38 +554,54 @@ impl Render for KeaView {
             .clone()
             .or_else(|| self.notice.clone())
             .unwrap_or_else(|| {
-                if self.session.input_allowed() && self.input_mode == InputMode::Document {
+                if self.session.is_history() {
+                    format!("Historical terminal state is read-only. {live_label} returns to the live document/terminal.")
+                } else if show_document && self.document.has_in_flight() {
                     format!(
-                        "Editor input is local. Enter = newline; {execute_label} = execute; {toggle_label} = Direct PTY."
+                        "Command is running. {toggle_label} opens the same live PTY if the command needs interactive/TUI input."
+                    )
+                } else if show_document && self.session.input_allowed() {
+                    format!(
+                        "Document input is local. Enter = newline; {execute_label} = execute; {toggle_label} = Direct PTY."
                     )
                 } else if self.session.input_allowed() {
                     format!(
-                        "Direct PTY compatibility mode. {toggle_label} returns to document input."
+                        "Direct PTY compatibility mode. {toggle_label} returns to the persistent document when available."
                     )
+                } else if show_document {
+                    "Recorded command/output document. Copy uses the structured document, not the terminal grid."
+                        .into()
                 } else {
-                    format!("Historical output is read-only. {live_label} returns to live when available.")
+                    "Terminal session ended.".into()
                 }
             });
-        let footer = format!(
-            "{:.3}s / {:.3}s   |   event {} / {}   |   commands submitted {}",
-            position as f64 / 1_000_000.0,
-            duration as f64 / 1_000_000.0,
-            self.session.end(),
-            self.session.recording().events().len(),
-            self.submitted_commands
-        );
+        let footer = if show_document {
+            let active = self
+                .document
+                .active()
+                .map_or_else(|| "none".into(), |id| format!("#{id}"));
+            format!(
+                "{} command block(s)   |   active {active}   |   terminal history {:.3}s",
+                self.document.blocks().len(),
+                duration as f64 / 1_000_000.0
+            )
+        } else {
+            format!(
+                "{:.3}s / {:.3}s   |   event {} / {}   |   {} structured block(s)",
+                position as f64 / 1_000_000.0,
+                duration as f64 / 1_000_000.0,
+                self.session.end(),
+                self.session.recording().events().len(),
+                self.document.blocks().len()
+            )
+        };
+
         let editor_display = if self.editor.is_empty() {
             "▏".to_string()
         } else {
             self.editor.rendered()
         };
-        let input_panel = if self.session.input_allowed() {
-            let body = match self.input_mode {
-                InputMode::Document => editor_display,
-                InputMode::Direct => format!(
-                    "Keystrokes are going directly to the PTY. Press {toggle_label} to return to the document editor."
-                ),
-            };
+        let input_panel = if show_document && self.session.input_allowed() {
             div()
                 .h(px(input_height))
                 .flex_shrink_0()
@@ -447,12 +614,13 @@ impl Render for KeaView {
                 .border_1()
                 .border_color(rgb(0x303844))
                 .child(div().text_color(rgb(0x98c379)).child(format!(
-                    "{input_mode}   ·   {execute_label} execute   ·   Enter newline"
+                    "COMMAND EDITOR   ·   {execute_label} execute   ·   Enter newline"
                 )))
-                .child(div().flex_1().overflow_hidden().child(body))
+                .child(div().flex_1().overflow_hidden().child(editor_display))
         } else {
             div().h(px(0.0)).flex_shrink_0()
         };
+
         div()
             .id("kea")
             .size_full()
@@ -493,18 +661,11 @@ impl Render for KeaView {
                     )
                     .child(button("live", "LIVE F9").on_click(cx.listener(Self::live)))
                     .child(
-                        button(
-                            "input-mode",
-                            if self.input_mode == InputMode::Document {
-                                "DOCUMENT"
-                            } else {
-                                "DIRECT PTY"
-                            },
-                        )
-                        .on_click(cx.listener(Self::toggle_input_mode)),
+                        button("input-mode", input_mode)
+                            .on_click(cx.listener(Self::toggle_input_mode)),
                     )
                     .child(
-                        button("copy", "Copy screen")
+                        button("copy", "Copy")
                             .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
                     )
                     .child(div().ml_2().text_color(rgb(0x98c379)).child(terminal_mode)),
@@ -517,13 +678,27 @@ impl Render for KeaView {
                     .child(status),
             )
             .child(
-                div().flex_1().min_h_0().overflow_hidden().child(
-                    canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, cx| paint_screen(&screen, bounds, window, cx),
-                    )
-                    .size_full(),
-                ),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .when(show_document, |element| {
+                        element.child(document_view::render_document(
+                            &self.document,
+                            &self.document_scroll,
+                        ))
+                    })
+                    .when(!show_document, |element| {
+                        element.child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, window, cx| {
+                                    paint_screen(&screen, bounds, window, cx)
+                                },
+                            )
+                            .size_full(),
+                        )
+                    }),
             )
             .child(input_panel)
             .child(
@@ -564,7 +739,7 @@ impl Render for KeaView {
     }
 }
 
-fn button(id: &'static str, label: &'static str) -> Stateful<Div> {
+fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
         .px_2()
@@ -572,7 +747,7 @@ fn button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .rounded_md()
         .bg(rgb(0x252d37))
         .cursor_pointer()
-        .child(label)
+        .child(label.into())
 }
 
 fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
