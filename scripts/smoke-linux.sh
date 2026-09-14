@@ -77,13 +77,17 @@ fi
 xdotool key --clearmodifiers ctrl+shift+q
 wait_for_exit
 
-# 2. Document mode owns command boundaries and yields a persistent read-only block.
+# 2. Document mode owns multiline editing and command boundaries and yields one
+# persistent read-only block only when Ctrl+Enter explicitly executes it.
 ./target/debug/kea -- bash --noprofile --norc >smoke-artifacts/document.log 2>&1 &
 kea_pid=$!
 window=$(wait_for_window smoke-artifacts/document.log)
 xdotool windowfocus --sync "$window"
 sleep 1
-xdotool type --clearmodifiers --delay 5 'printf kea_doc_ok'
+xdotool type --clearmodifiers --delay 5 'printf kea_doc_one;'
+xdotool key --clearmodifiers Return
+xdotool type --clearmodifiers --delay 5 'printf kea_doc_two'
+# Ordinary Enter above must only edit the local document buffer.
 xdotool key --clearmodifiers ctrl+Return
 
 found=''
@@ -92,8 +96,9 @@ for _ in $(seq 1 50); do
   xdotool key --clearmodifiers ctrl+c
   sleep 0.05
   if timeout 2s xclip -selection clipboard -o >smoke-artifacts/document.txt 2>/dev/null; then
-    if grep -Fq '$ printf kea_doc_ok' smoke-artifacts/document.txt \
-      && grep -Fq 'kea_doc_ok' smoke-artifacts/document.txt \
+    if grep -Fq '$ printf kea_doc_one;' smoke-artifacts/document.txt \
+      && grep -Fq 'printf kea_doc_two' smoke-artifacts/document.txt \
+      && grep -Fq 'kea_doc_onekea_doc_two' smoke-artifacts/document.txt \
       && grep -Fq 'exit 0' smoke-artifacts/document.txt; then
       found=1
       break
@@ -103,11 +108,11 @@ done
 [[ -n "$found" ]] || {
   cat smoke-artifacts/document.log
   cat smoke-artifacts/document.txt 2>/dev/null || true
-  echo 'Structured document command block did not appear'
+  echo 'Structured multiline document command block did not appear'
   exit 1
 }
 import -window "$window" smoke-artifacts/document.png
 xdotool key --clearmodifiers ctrl+shift+q
 wait_for_exit
 
-echo 'Desktop smoke passed: structured document blocks, native copy, terminal replay, live return and quit.'
+echo 'Desktop smoke passed: multiline document blocks, native copy, terminal replay, live return and quit.'
