@@ -6,6 +6,20 @@
 
 An eventual Zed host can use the core with its own pinned emulator, PTY and renderer. The standalone session controller is a reference host, not a mandatory integration layer. No Zed code is copied; there is no extension or upstream PR yet.
 
+## Document-native direction
+
+The long-term UI model is a persistent session document, not one mutable terminal surface. Normal command input should be represented as editable text and executed explicitly; completed commands and their output become persistent document content. A PTY-backed terminal surface remains available for applications that genuinely require terminal semantics.
+
+Terminal replay is therefore not the top-level product abstraction. Ordered terminal history is one capability that makes interactive PTY blocks persistent and inspectable instead of ephemeral.
+
+## Input actions and keybindings
+
+UI commands such as `copy`, `paste`, `execute`, `interrupt`, `seek_back`, and `go_live` are semantic actions. Physical shortcuts are mappings onto those actions and belong to the host UI/configuration layer, not `kea-core` or the recording format.
+
+Defaults should follow host-OS conventions where practical. In particular, copy should default to `Ctrl+C` on Linux/Windows and `Cmd+C` on macOS. Sending a terminal interrupt is a separate action with its own configurable binding. Users may override both and can choose traditional terminal behavior if preferred.
+
+Interactive terminal blocks may forward keys to the PTY according to the terminal keyboard protocol, but application-level actions are resolved first according to the configured keymap. This separation is important for embedding Kea in an editor such as Zed, where the host may supply its own keybinding system entirely.
+
 ## Two independent views
 
 Live output is parsed by the live emulator and recorded in ingestion order. A rewind constructs or advances a separate historical emulator. The live emulator continues consuming output and sending supported protocol replies. Returning to LIVE reveals that current state, rather than replaying commands or restoring a process snapshot.
@@ -44,4 +58,4 @@ Async cancellable seeking, compression, historical text indexing and retention p
 
 ## Zed direction
 
-Demonstrate value and measured overhead, then discuss privacy/storage/dependency policy with maintainers before proposing an upstream change. Reuse Zed's PTY and renderer; add ordered output capture and a visibly read-only historical projection. GPUI reuse helps but does not make integration a trivial transplant.
+Demonstrate value and measured overhead, then discuss privacy/storage/dependency policy with maintainers before proposing an upstream change. Reuse Zed's PTY, renderer and preferably its keybinding/action system; add ordered output capture and a persistent/read-only historical projection. GPUI reuse helps but does not make integration a trivial transplant.
