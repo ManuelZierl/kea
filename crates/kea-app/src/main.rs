@@ -115,16 +115,7 @@ History stays in memory unless --record is supplied. Output can contain secrets.
             ..Default::default()
         };
         if let Err(error) = cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
-                KeaView::new(
-                    session,
-                    keymap,
-                    keymap_warning,
-                    initial_mode,
-                    window,
-                    cx,
-                )
-            })
+            cx.new(|cx| KeaView::new(session, keymap, keymap_warning, initial_mode, window, cx))
         }) {
             eprintln!("kea: cannot open window: {error:#}");
             cx.quit();
@@ -371,7 +362,11 @@ impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) - 24.0).max(18.0);
-        let input_height = if self.session.input_allowed() { 104.0 } else { 0.0 };
+        let input_height = if self.session.input_allowed() {
+            104.0
+        } else {
+            0.0
+        };
         let height = (f32::from(viewport.height) - 150.0 - input_height).max(20.0);
         let columns = (width / CELL_WIDTH).floor().clamp(2.0, 512.0) as u16;
         let rows = (height / LINE_HEIGHT).floor().clamp(1.0, 256.0) as u16;
@@ -451,11 +446,9 @@ impl Render for KeaView {
                 .bg(rgb(0x171d24))
                 .border_1()
                 .border_color(rgb(0x303844))
-                .child(
-                    div()
-                        .text_color(rgb(0x98c379))
-                        .child(format!("{input_mode}   ·   {execute_label} execute   ·   Enter newline")),
-                )
+                .child(div().text_color(rgb(0x98c379)).child(format!(
+                    "{input_mode}   ·   {execute_label} execute   ·   Enter newline"
+                )))
                 .child(div().flex_1().overflow_hidden().child(body))
         } else {
             div().h(px(0.0)).flex_shrink_0()

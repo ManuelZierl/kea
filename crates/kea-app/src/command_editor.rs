@@ -186,7 +186,10 @@ mod tests {
 
     #[test]
     fn submitted_multiline_text_is_sent_as_terminal_enters() {
-        assert_eq!(terminal_bytes("printf one\nprintf two"), b"printf one\rprintf two\r");
+        assert_eq!(
+            terminal_bytes("printf one\nprintf two"),
+            b"printf one\rprintf two\r"
+        );
         assert_eq!(terminal_bytes("echo done\n"), b"echo done\r");
     }
 

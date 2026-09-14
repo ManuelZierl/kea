@@ -210,7 +210,10 @@ impl Keymap {
             ],
         };
         for (action, spec) in specs {
-            bindings.insert(*action, vec![Shortcut::parse(spec).expect("default keybinding")]);
+            bindings.insert(
+                *action,
+                vec![Shortcut::parse(spec).expect("default keybinding")],
+            );
         }
         Self {
             bindings,
@@ -229,8 +232,9 @@ impl Keymap {
             let (name, value) = line
                 .split_once('=')
                 .with_context(|| format!("line {} needs `action = shortcut`", index + 1))?;
-            let action = Action::parse(name)
-                .with_context(|| format!("line {} has unknown action `{}`", index + 1, name.trim()))?;
+            let action = Action::parse(name).with_context(|| {
+                format!("line {} has unknown action `{}`", index + 1, name.trim())
+            })?;
             let value = value.trim();
             let shortcuts = if value.eq_ignore_ascii_case("none") {
                 Vec::new()
@@ -300,7 +304,11 @@ fn config_path() -> Option<PathBuf> {
     }
     env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(PathBuf::from).map(|path| path.join(".config")))
+        .or_else(|| {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|path| path.join(".config"))
+        })
         .map(|path| path.join("kea").join("keybindings.conf"))
 }
 
