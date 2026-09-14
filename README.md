@@ -36,7 +36,7 @@ docker compose run --rm backend \
     python manage.py migrate
 
 Enter       -> newline
-Ctrl+Enter  -> execute
+Ctrl+Enter  -> execute (default; configurable)
 ```
 
 Interactive programs remain compatible through a PTY, but their display is backed by an ordered terminal event history. The current screen is therefore only one view of the session, not the session itself.
@@ -49,6 +49,16 @@ This is what makes otherwise unusual capabilities natural rather than bolted on:
 - associate commands with output, cwd, duration and exit status when shell metadata is available;
 - collapse, bookmark, compare, copy or revisit previous command results;
 - give IDEs and coding agents structured terminal history instead of forcing them to scrape an ephemeral screen.
+
+## Interaction philosophy
+
+Kea should behave like a native editor first and expose terminal-specific actions explicitly rather than hijacking familiar desktop shortcuts.
+
+All user-facing shortcuts are intended to be configurable. Defaults should follow the host OS where practical: for example, copy should use `Ctrl+C` on Linux/Windows and `Cmd+C` on macOS. Sending a terminal interrupt remains a separate action with its own binding, and users can remap either action if they prefer traditional terminal behavior.
+
+The same principle applies to execution: command input is multiline text, so `Enter` inserts a newline and an explicit configurable action such as `Ctrl+Enter` executes it. Interactive PTY/TUI blocks can temporarily use terminal-style key forwarding where an application requires it.
+
+This shortcut/configuration model is a target design; the current prototype still has hard-coded terminal-oriented controls listed below.
 
 ## What exists today
 
@@ -95,7 +105,7 @@ cargo run --release -- --replay session.kea
 
 The executable is `target/release/kea`. `cargo install --path crates/kea-app` installs it locally. There is no crates.io release or installer yet.
 
-## Controls
+## Current prototype controls
 
 | Control | Action |
 | --- | --- |
@@ -110,7 +120,7 @@ The executable is `target/release/kea`. `cargo install --path crates/kea-app` in
 | Shift+Enter | Send a distinct modified-Enter sequence |
 | Ctrl+Shift+Q | Quit |
 
-Cmd+C/V/Q equivalents are handled on macOS. F6–F9 are reserved, not forwarded to the child. Copy currently copies the entire screen, not a selection. History rejects process input. The live process continues collecting output while you inspect history. Closing the window requests termination of the directly managed child; this is not a detachable terminal server.
+These are prototype bindings, not the intended final defaults. Cmd+C/V/Q equivalents are handled on macOS. F6–F9 are reserved, not forwarded to the child. Copy currently copies the entire screen, not a selection. History rejects process input. The live process continues collecting output while you inspect history. Closing the window requests termination of the directly managed child; this is not a detachable terminal server.
 
 ## Structure
 
