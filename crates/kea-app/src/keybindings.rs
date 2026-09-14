@@ -52,7 +52,7 @@ impl Action {
         }
     }
 
-    pub fn config_name(self) -> &'static str {
+    fn config_name(self) -> &'static str {
         match self {
             Self::Copy => "copy",
             Self::Paste => "paste",
@@ -98,32 +98,30 @@ impl Shortcut {
     }
 
     fn matches(&self, key: &Keystroke) -> bool {
-        let other = Self::from_keystroke(key);
-        self == &other
+        self == &Self::from_keystroke(key)
     }
 
     fn display(&self) -> String {
-        let mut parts = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
         if self.platform {
-            parts.push("Cmd");
+            parts.push("Cmd".into());
         }
         if self.control {
-            parts.push("Ctrl");
+            parts.push("Ctrl".into());
         }
         if self.alt {
-            parts.push("Alt");
+            parts.push("Alt".into());
         }
         if self.shift {
-            parts.push("Shift");
+            parts.push("Shift".into());
         }
-        let key = match self.key.as_str() {
+        parts.push(match self.key.as_str() {
             "enter" | "return" => "Enter".to_string(),
             "space" => "Space".to_string(),
             value if value.starts_with('f') => value.to_ascii_uppercase(),
             value if value.len() == 1 => value.to_ascii_uppercase(),
             value => value.to_string(),
-        };
-        parts.push(Box::leak(key.into_boxed_str()));
+        });
         parts.join("+")
     }
 }
@@ -280,10 +278,6 @@ impl Keymap {
             .get(&action)
             .and_then(|shortcuts| shortcuts.first())
             .map_or_else(|| "unbound".into(), Shortcut::display)
-    }
-
-    pub fn config_path(&self) -> Option<&PathBuf> {
-        self.config_path.as_ref()
     }
 }
 
