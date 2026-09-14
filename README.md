@@ -1,10 +1,64 @@
 # Kea
 
-**Rewind what your terminal displayed. Keep the live process running.**
+**The terminal, rethought as a persistent document.**
 
-Kea is a Rust/GPUI terminal experiment with an embeddable history engine. Raw terminal output and window-size changes are recorded so historical screens can be reconstructed, including text overwritten by a TUI. Replay never re-executes commands.
+Kea explores a different terminal model: instead of treating a mutable character grid as the canonical user interface, treat the terminal session as structured, persistent state.
 
-The first slice includes a native window, a real PTY, Alacritty emulation, a timeline, playback, optional recording files and a synthetic demo. It is **not yet a replacement for a mature terminal**. Editor-like multiline input and Zed integration are future goals, not implemented features.
+The intended experience is closer to an editor than a traditional terminal:
+
+- command input is real editable text, including natural multiline editing;
+- executing a command turns that input into a persistent command block;
+- command output is read-only and remains associated with the command that produced it;
+- interactive PTY/TUI programs still work without modification;
+- terminal state changes are retained instead of disappearing when a program redraws the screen.
+
+That model enables ordinary editor behavior, structured command/output history, better search and inspection, transient-error recovery, agent observability, and time travel through interactive applications. **Replay is a consequence of the model, not Kea's main purpose.**
+
+## Why
+
+A conventional terminal exposes one mutable character grid. Input and output share that grid, shell editing uses terminal-specific conventions, scrollback is only a partial history, and a TUI is free to overwrite what was visible a moment ago.
+
+Kea's target model is different:
+
+```text
+Session document
+
+[command]
+$ cargo test
+
+[read-only output]
+running 42 tests
+...
+test result: ok
+
+[command editor]
+docker compose run --rm backend \
+    python manage.py migrate
+
+Enter       -> newline
+Ctrl+Enter  -> execute
+```
+
+Interactive programs remain compatible through a PTY, but their display is backed by an ordered terminal event history. The current screen is therefore only one view of the session, not the session itself.
+
+This is what makes otherwise unusual capabilities natural rather than bolted on:
+
+- recover text that a TUI displayed only briefly and then erased;
+- inspect or search historical terminal states;
+- rewind an interactive application without rewinding or re-executing the process;
+- associate commands with output, cwd, duration and exit status when shell metadata is available;
+- collapse, bookmark, compare, copy or revisit previous command results;
+- give IDEs and coding agents structured terminal history instead of forcing them to scrape an ephemeral screen.
+
+## What exists today
+
+The first implementation deliberately proves the hardest compatibility foundation before the full document UX.
+
+Today Kea has a native Rust/GPUI window, a real PTY, Alacritty terminal emulation, bounded terminal-event history, historical reconstruction, a timeline, playback, optional recording files and a synthetic demo. The live process continues running while an older terminal state is inspected, and replay never re-executes commands.
+
+**The editor-like command document is not implemented yet.** Current input is still terminal-style input, and Kea is not yet a replacement for a mature terminal. The event/history engine is the foundation on which the document-native interaction model will be built.
+
+Kea is intentionally structured so the history/session engine can remain independent of the UI and potentially be integrated into editors such as Zed instead of requiring the standalone application.
 
 ## Try it on Ubuntu
 
@@ -22,7 +76,7 @@ cd kea
 cargo run --release -- --demo
 ```
 
-The demo briefly displays `ERROR: connection failed`, overwrites it with `Ready`, and lets you recover the error by dragging the timeline backwards. It does not run a shell, access a network, or create a recording file.
+The demo briefly displays `ERROR: connection failed`, overwrites it with `Ready`, and lets you recover the error by dragging the timeline backwards. This demonstrates one consequence of retaining terminal state changes; it is not intended as the complete Kea UX. The demo does not run a shell, access a network, or create a recording file.
 
 ```bash
 # Default shell, with in-memory history only:
