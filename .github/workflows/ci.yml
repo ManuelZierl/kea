@@ -21,5 +21,24 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p kea-core -p kea-alacritty -p kea-pty
-      - run: cargo clippy -p kea-core -p kea-alacritty -p kea-pty --all-targets -- -D warnings
+      - run: cargo test -p kea-core -p kea-alacritty -p kea-pty -p kea-session
+      - run: cargo clippy -p kea-core -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
+  desktop-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-linux
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config
+      - run: cargo test -p kea-app
+      - run: cargo build -p kea-app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kea-build-metadata
+          path: Cargo.lock

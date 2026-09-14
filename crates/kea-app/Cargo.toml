@@ -1,0 +1,20 @@
+[package]
+name = "kea-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kea"
+path = "src/main.rs"
+
+[dependencies]
+kea-core.workspace = true
+kea-alacritty.workspace = true
+kea-session.workspace = true
+gpui.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

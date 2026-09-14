@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty"]
+members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty", "crates/kea-session", "crates/kea-app"]
+default-members = ["crates/kea-app"]
 resolver = "2"
 
 [workspace.package]
@@ -12,8 +13,10 @@ publish = false
 kea-core = { path = "crates/kea-core" }
 kea-alacritty = { path = "crates/kea-alacritty" }
 kea-pty = { path = "crates/kea-pty" }
+kea-session = { path = "crates/kea-session" }
 alacritty_terminal = "=0.26.0"
 portable-pty = "=0.9.0"
+gpui = "=0.2.2"
 anyhow = "1.0"
 
 [workspace.lints.rust]
