@@ -1,0 +1,25 @@
+name: Dev Recursion Fix
+on:
+  push:
+    branches: [feature/structured-document-blocks]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Raise GPUI test recursion limit
+        run: sed -i 's/recursion_limit = "256"/recursion_limit = "512"/' crates/kea-app/src/main.rs
+      - run: cargo fmt --all
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/kea-app/src/main.rs
+          git commit -m "Raise GPUI test recursion limit"
+          git push
