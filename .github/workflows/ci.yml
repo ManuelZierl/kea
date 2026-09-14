@@ -21,6 +21,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo test -p kea-core -p kea-alacritty -p kea-pty -p kea-session
       - run: cargo clippy -p kea-core -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
   desktop-linux:
@@ -34,11 +36,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: desktop-linux
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config
+          cache-on-failure: true
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
       - run: cargo test -p kea-app
       - run: cargo build -p kea-app
+      - name: Desktop replay smoke test
+        run: timeout 90s xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash scripts/smoke-linux.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: kea-build-metadata
-          path: Cargo.lock
+          path: |
+            Cargo.lock
+            smoke-artifacts/

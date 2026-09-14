@@ -7,11 +7,12 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 pub enum Message { Output(Vec<u8>), Eof, Error(String) }
 
 pub struct Pty {
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
     input: Option<SyncSender<Vec<u8>>>,
     output: Receiver<Message>,
     eof: bool,
+    status: Option<u32>,
 }
 
 impl Pty {
@@ -22,13 +23,11 @@ impl Pty {
             let mut builder = CommandBuilder::new(program);
             builder.args(&command[1..]);
             builder
-        } else {
-            CommandBuilder::new_default_prog()
-        };
+        } else { CommandBuilder::new_default_prog() };
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         builder.env("TERM_PROGRAM", "kea");
-        // Acquire I/O before spawning so an allocation failure cannot leak a child.
+        // Acquire I/O before spawning so setup failures cannot leak a child.
         let mut reader = pair.master.try_clone_reader().context("opening PTY reader")?;
         let mut writer = pair.master.take_writer().context("opening PTY writer")?;
         let child = pair.slave.spawn_command(builder).context("spawning terminal program")?;
@@ -42,7 +41,6 @@ impl Pty {
                     Ok(0) => break,
                     Ok(n) => { if output_tx.send(Message::Output(buffer[..n].to_vec())).is_err() { return; } }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    // Linux reports EIO when the slave side closes.
                     Err(e) if cfg!(target_os = "linux") && e.raw_os_error() == Some(5) => break,
                     Err(e) => { let _ = output_tx.send(Message::Error(e.to_string())); break; }
                 }
@@ -58,35 +56,52 @@ impl Pty {
                 }
             }
         });
-        Ok(Self { master: pair.master, child, input: Some(input), output, eof: false })
+        Ok(Self { master: Some(pair.master), child: Some(child), input: Some(input), output, eof: false, status: None })
     }
     pub fn try_recv(&mut self) -> Option<Message> {
         let message = self.output.try_recv().ok()?;
         if matches!(message, Message::Eof) { self.eof = true; }
         Some(message)
     }
-    /// Never block the UI on a program that has stopped consuming input.
     pub fn send(&self, bytes: Vec<u8>) -> Result<()> {
         if bytes.len() > kea_core::MAX_OUTPUT { anyhow::bail!("input exceeds 1 MiB"); }
         self.input.as_ref().context("PTY input is closed")?.try_send(bytes).context("PTY input queue is full or closed")
     }
     pub fn resize(&self, size: Size) -> Result<()> {
         Size::new(size.columns, size.rows)?;
-        self.master.resize(pty_size(size)).context("resizing PTY")
+        self.master.as_ref().context("PTY is closing")?.resize(pty_size(size)).context("resizing PTY")
     }
-    /// Only report exit after output has drained, preserving the final output.
+    /// Poll child termination independently of EOF, but expose exit only after
+    /// the ordered output channel has drained through its EOF event.
     pub fn exit_code(&mut self) -> Result<Option<u32>> {
-        if !self.eof { return Ok(None); }
-        Ok(self.child.try_wait()?.map(|status| status.exit_code()))
+        if self.status.is_none() {
+            if let Some(child) = &mut self.child {
+                self.status = child.try_wait()?.map(|status| status.exit_code());
+            }
+        }
+        // An owned Windows HPCON can keep output open after child exit. Close it
+        // off the UI/reader thread while the reader drains the final frame.
+        #[cfg(windows)]
+        if self.status.is_some() {
+            self.input.take();
+            if let Some(master) = self.master.take() { thread::spawn(move || drop(master)); }
+        }
+        Ok(if self.eof { self.status } else { None })
     }
 }
 impl Drop for Pty {
     fn drop(&mut self) {
         self.input.take();
-        // Closing a terminal terminates its immediate child. Deliberately detached
-        // descendants are not supervised by this small transport.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let master = self.master.take();
+        let child = self.child.take();
+        // Process waits and ConPTY shutdown must not block the closing GUI.
+        thread::spawn(move || {
+            if let Some(mut child) = child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            drop(master);
+        });
     }
 }
 fn pty_size(size: Size) -> PtySize {
@@ -109,10 +124,7 @@ mod tests {
             while let Some(message) = pty.try_recv() {
                 if let Message::Output(bytes) = message { output.extend_from_slice(&bytes); }
             }
-            if let Some(code) = pty.exit_code().unwrap() {
-                assert_eq!(code, 7);
-                break;
-            }
+            if let Some(code) = pty.exit_code().unwrap() { assert_eq!(code, 7); break; }
             assert!(start.elapsed().as_secs() < 15, "PTY did not terminate");
             thread::sleep(std::time::Duration::from_millis(10));
         }

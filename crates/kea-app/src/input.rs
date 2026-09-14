@@ -1,10 +1,10 @@
-//! Small keyboard bridge, isolated from recording. Full keyboard/IME coverage
+//! Basic keyboard bridge, isolated from recording. Full keyboard/IME coverage
 //! is a separate compatibility milestone, not a claim of this bootstrap.
 use gpui::Keystroke;
 
 pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
     let m = key.modifiers;
-    if m.platform || key.is_ime_in_progress() { return None; }
+    if m.platform { return None; }
     let modifier = 1 + u8::from(m.shift) + 2 * u8::from(m.alt) + 4 * u8::from(m.control);
     let arrow = match key.key.as_str() { "up" => Some('A'), "down" => Some('B'), "right" => Some('C'), "left" => Some('D'), "home" => Some('H'), "end" => Some('F'), _ => None };
     if let Some(arrow) = arrow {
@@ -19,16 +19,17 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         return Some(if modifier == 1 { format!("\x1bO{letter}") } else { format!("\x1b[1;{modifier}{letter}") }.into_bytes());
     }
     let bytes = match key.key.as_str() {
-        // Explicit CSI-u binding keeps modified Enter distinguishable for OpenCode.
-        "enter" if modifier != 1 => format!("\x1b[13;{modifier}u").into_bytes(),
-        "enter" => vec![b'\r'],
+        // Control keys have explicit terminal semantics, even when GPUI supplies
+        // no completed text character. Do not run them through the IME text gate.
+        "enter" | "return" if modifier != 1 => format!("\x1b[13;{modifier}u").into_bytes(),
+        "enter" | "return" => vec![b'\r'],
         "escape" => vec![27],
         "backspace" => vec![if m.control { 8 } else { 127 }],
         "tab" if m.shift => b"\x1b[Z".to_vec(),
         "tab" => vec![b'\t'],
         _ => {
-            // Prefer composed text for AltGr rather than interpreting Ctrl+Alt as
-            // a control character. This does not substitute for a full IME bridge.
+            if key.is_ime_in_progress() { return None; }
+            // Prefer composed text for AltGr, not a Ctrl+Alt control character.
             if m.control && m.alt {
                 if let Some(text) = &key.key_char { return Some(text.as_bytes().to_vec()); }
             }
@@ -61,6 +62,14 @@ mod tests {
         assert_eq!(encode(&Keystroke::parse("enter").unwrap(), false).unwrap(), b"\r");
         assert_eq!(encode(&Keystroke::parse("shift-enter").unwrap(), false).unwrap(), b"\x1b[13;2u");
         assert_eq!(encode(&Keystroke::parse("ctrl-c").unwrap(), false).unwrap(), vec![3]);
+        assert_eq!(encode(&Keystroke::parse("tab").unwrap(), false).unwrap(), b"\t");
+        assert_eq!(encode(&Keystroke::parse("shift-tab").unwrap(), false).unwrap(), b"\x1b[Z");
+    }
+    #[test]
+    fn text_requires_a_completed_character_but_keeps_unicode() {
+        assert!(encode(&Keystroke::parse("a").unwrap(), false).is_none());
+        assert_eq!(encode(&Keystroke::parse("space").unwrap().with_simulated_ime(), false).unwrap(), b" ");
+        assert_eq!(encode(&Keystroke::parse("a->ä").unwrap(), false).unwrap(), "ä".as_bytes());
     }
     #[test]
     fn application_cursor_and_modified_arrows() {
