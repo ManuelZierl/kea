@@ -1,0 +1,24 @@
+name: Dev Format Artifact
+on:
+  push:
+    branches: [feature/document-input-keybindings]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatted-kea-source
+          path: |
+            crates/kea-app/src/command_editor.rs
+            crates/kea-app/src/keybindings.rs
+            crates/kea-app/src/main.rs
