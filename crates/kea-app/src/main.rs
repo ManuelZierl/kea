@@ -1,12 +1,23 @@
+mod command_editor;
 mod input;
+mod keybindings;
+
 use anyhow::{Context as _, Result};
+use command_editor::CommandEditor;
 use gpui::{prelude::*, *};
 use kea_alacritty::Screen;
 use kea_session::Session;
+use keybindings::{Action, Keymap};
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
 const CELL_WIDTH: f32 = 9.0;
 const LINE_HEIGHT: f32 = 20.0;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InputMode {
+    Document,
+    Direct,
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -14,9 +25,10 @@ fn main() {
         std::process::exit(1);
     }
 }
+
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let (mut demo, mut replay, mut record) = (false, None, None);
+    let (mut demo, mut replay, mut record, mut direct) = (false, None, None, false);
     let mut command: Vec<OsString> = Vec::new();
     while let Some(arg) = args.next() {
         if arg == "--" {
@@ -25,6 +37,8 @@ fn run() -> Result<()> {
         }
         if arg == "--demo" {
             demo = true;
+        } else if arg == "--direct" {
+            direct = true;
         } else if arg == "--replay" {
             replay = Some(PathBuf::from(args.next().context("--replay needs a path")?));
         } else if arg == "--record" {
@@ -32,7 +46,19 @@ fn run() -> Result<()> {
                 args.next().context("--record needs a new file path")?,
             ));
         } else if arg == "--help" || arg == "-h" {
-            println!("Kea - a terminal with rewindable screen history\n\nkea [--record NEW.kea] [-- PROGRAM ARG...]\nkea --replay SESSION.kea\nkea --demo\n\nF6/F7: previous/next event | F8: play/pause | F9: live\nShift+F6/F7: back/forward 5 seconds | Ctrl+Shift+C: copy screen\nCtrl+V: paste | Ctrl+Shift+Q: quit\n\nHistory stays in memory unless --record is supplied. Output can contain secrets.");
+            println!(
+                "Kea - a document-native terminal\n\n\
+kea [--direct] [--record NEW.kea] [-- PROGRAM ARG...]\n\
+kea --replay SESSION.kea\n\
+kea --demo\n\n\
+Document mode: Enter inserts a newline; Ctrl+Enter executes the whole input block.\n\
+Ctrl+Shift+Space toggles Direct PTY mode for TUIs and REPLs.\n\
+Linux/Windows defaults: Ctrl+C copy, Ctrl+V paste, Ctrl+Shift+C interrupt.\n\
+macOS defaults: Cmd+C/V copy/paste, Ctrl+C interrupt.\n\
+F6/F7 step history | F8 play/pause | F9 live.\n\n\
+All shortcuts are configurable in Kea's keybindings.conf. Set KEA_KEYBINDINGS to use an explicit path.\n\
+History stays in memory unless --record is supplied. Output can contain secrets."
+            );
             return Ok(());
         } else if arg.to_string_lossy().starts_with('-') {
             anyhow::bail!("unknown option: {}", arg.to_string_lossy());
@@ -62,6 +88,12 @@ fn run() -> Result<()> {
     } else {
         Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
     };
+    let (keymap, keymap_warning) = Keymap::load();
+    let initial_mode = if direct {
+        InputMode::Direct
+    } else {
+        InputMode::Document
+    };
     Application::new().run(move |cx: &mut App| {
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -83,7 +115,16 @@ fn run() -> Result<()> {
             ..Default::default()
         };
         if let Err(error) = cx.open_window(options, |window, cx| {
-            cx.new(|cx| KeaView::new(session, window, cx))
+            cx.new(|cx| {
+                KeaView::new(
+                    session,
+                    keymap,
+                    keymap_warning,
+                    initial_mode,
+                    window,
+                    cx,
+                )
+            })
         }) {
             eprintln!("kea: cannot open window: {error:#}");
             cx.quit();
@@ -95,12 +136,24 @@ fn run() -> Result<()> {
 
 struct KeaView {
     session: Session,
+    keymap: Keymap,
+    input_mode: InputMode,
+    editor: CommandEditor,
+    submitted_commands: usize,
     focus: FocusHandle,
     notice: Option<String>,
     _pump: Task<()>,
 }
+
 impl KeaView {
-    fn new(session: Session, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        session: Session,
+        keymap: Keymap,
+        keymap_warning: Option<String>,
+        input_mode: InputMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus);
         let pump = cx.spawn(async move |this, cx| loop {
@@ -118,84 +171,192 @@ impl KeaView {
         });
         Self {
             session,
+            keymap,
+            input_mode,
+            editor: CommandEditor::default(),
+            submitted_commands: 0,
             focus,
-            notice: None,
+            notice: keymap_warning,
             _pump: pump,
         }
     }
+
     fn result(&mut self, result: Result<()>, cx: &mut Context<Self>) {
         self.notice = result.err().map(|error| error.to_string());
         cx.notify();
     }
+
     fn previous(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         let result = self.session.step(-1);
         self.result(result, cx);
     }
+
     fn next(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         let result = self.session.step(1);
         self.result(result, cx);
     }
+
     fn play(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.session.toggle_playback();
         cx.notify();
     }
+
     fn live(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.session.go_live();
         self.notice = None;
         cx.notify();
     }
+
+    fn toggle_input_mode(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_direct(cx);
+    }
+
     fn copy(&self, cx: &mut App) {
         cx.write_to_clipboard(ClipboardItem::new_string(self.session.screen().text()));
     }
+
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        if self.input_mode == InputMode::Document && self.session.input_allowed() {
+            self.editor.insert(&text);
+            self.notice = None;
+            cx.notify();
+            return;
+        }
+        let result = input::paste(&text, self.session.bracketed_paste())
+            .and_then(|bytes| self.session.send(bytes));
+        self.result(result, cx);
+    }
+
+    fn execute_editor(&mut self, cx: &mut Context<Self>) {
+        if self.input_mode != InputMode::Document {
+            return;
+        }
+        let text = self.editor.text().to_owned();
+        let result = self.session.send(command_editor::terminal_bytes(&text));
+        if result.is_ok() {
+            self.editor.clear_after_submit();
+            self.submitted_commands += 1;
+        }
+        self.result(result, cx);
+    }
+
+    fn interrupt(&mut self, cx: &mut Context<Self>) {
+        let result = self.session.send(vec![3]);
+        self.result(result, cx);
+    }
+
+    fn toggle_direct(&mut self, cx: &mut Context<Self>) {
+        self.input_mode = match self.input_mode {
+            InputMode::Document => InputMode::Direct,
+            InputMode::Direct => InputMode::Document,
+        };
+        self.notice = None;
+        cx.notify();
+    }
+
     fn seek_x(&mut self, x: Pixels, width: f32, cx: &mut Context<Self>) {
         let fraction = ((f32::from(x) - 12.0) / width).clamp(0.0, 1.0);
         let at = (fraction as f64 * self.session.recording().duration() as f64) as u64;
         let result = self.session.seek_time(at);
         self.result(result, cx);
     }
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke;
-        let m = key.modifiers;
-        match key.key.as_str() {
-            "f6" if m.shift => {
-                let r = self
+
+    fn dispatch_action(&mut self, action: Action, cx: &mut Context<Self>) {
+        match action {
+            Action::Copy => self.copy(cx),
+            Action::Paste => self.paste(cx),
+            Action::Interrupt => self.interrupt(cx),
+            Action::Execute => self.execute_editor(cx),
+            Action::ToggleDirect => self.toggle_direct(cx),
+            Action::PreviousEvent => {
+                let result = self.session.step(-1);
+                self.result(result, cx);
+            }
+            Action::NextEvent => {
+                let result = self.session.step(1);
+                self.result(result, cx);
+            }
+            Action::BackFiveSeconds => {
+                let result = self
                     .session
                     .seek_time(self.session.position().saturating_sub(5_000_000));
-                self.result(r, cx);
+                self.result(result, cx);
             }
-            "f7" if m.shift => {
-                let r = self
+            Action::ForwardFiveSeconds => {
+                let result = self
                     .session
                     .seek_time(self.session.position().saturating_add(5_000_000));
-                self.result(r, cx);
+                self.result(result, cx);
             }
-            "f6" => {
-                let r = self.session.step(-1);
-                self.result(r, cx);
-            }
-            "f7" => {
-                let r = self.session.step(1);
-                self.result(r, cx);
-            }
-            "f8" => {
+            Action::PlayPause => {
                 self.session.toggle_playback();
                 cx.notify();
             }
-            "f9" => {
+            Action::GoLive => {
                 self.session.go_live();
                 self.notice = None;
                 cx.notify();
             }
-            "q" if (m.control && m.shift) || m.platform => cx.quit(),
-            "c" if (m.control && m.shift) || m.platform => self.copy(cx),
-            "v" if m.control || m.platform => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    let result = input::paste(&text, self.session.bracketed_paste())
-                        .and_then(|bytes| self.session.send(bytes));
-                    self.result(result, cx);
+            Action::Quit => cx.quit(),
+        }
+    }
+
+    fn document_key(&mut self, key: &Keystroke, cx: &mut Context<Self>) {
+        let modifiers = key.modifiers;
+        match key.key.as_str() {
+            "enter" | "return" if !modifiers.control && !modifiers.platform && !modifiers.alt => {
+                self.editor.newline();
+            }
+            "backspace" if !modifiers.control && !modifiers.platform => self.editor.backspace(),
+            "delete" if !modifiers.control && !modifiers.platform => self.editor.delete(),
+            "left" if !modifiers.control && !modifiers.platform => self.editor.left(),
+            "right" if !modifiers.control && !modifiers.platform => self.editor.right(),
+            "up" if !modifiers.control && !modifiers.platform => self.editor.up(),
+            "down" if !modifiers.control && !modifiers.platform => self.editor.down(),
+            "home" if !modifiers.control && !modifiers.platform => self.editor.home(),
+            "end" if !modifiers.control && !modifiers.platform => self.editor.end(),
+            "tab" if !modifiers.control && !modifiers.platform => self.editor.insert("\t"),
+            _ => {
+                if key.is_ime_in_progress() || modifiers.platform {
+                    return;
+                }
+                if modifiers.control && !modifiers.alt {
+                    return;
+                }
+                if let Some(text) = key.key_char.as_deref().or_else(|| {
+                    (!modifiers.control && key.key.chars().count() == 1).then_some(key.key.as_str())
+                }) {
+                    self.editor.insert(text);
+                } else {
+                    return;
                 }
             }
-            _ => {
+        }
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let key = &event.keystroke;
+        if let Some(action) = self.keymap.action_for(key) {
+            // Ctrl+Enter is Kea's execute action in Document mode. In Direct mode it
+            // belongs to the child and must retain its distinct terminal encoding.
+            if action != Action::Execute || self.input_mode == InputMode::Document {
+                self.dispatch_action(action, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
+        if !self.session.input_allowed() {
+            cx.stop_propagation();
+            return;
+        }
+        match self.input_mode {
+            InputMode::Document => self.document_key(key, cx),
+            InputMode::Direct => {
                 if let Some(bytes) = input::encode(key, self.session.application_cursor()) {
                     let result = self.session.send(bytes);
                     self.result(result, cx);
@@ -205,11 +366,13 @@ impl KeaView {
         cx.stop_propagation();
     }
 }
+
 impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let width = (f32::from(viewport.width) - 24.0).max(18.0);
-        let height = (f32::from(viewport.height) - 150.0).max(20.0);
+        let input_height = if self.session.input_allowed() { 104.0 } else { 0.0 };
+        let height = (f32::from(viewport.height) - 150.0 - input_height).max(20.0);
         let columns = (width / CELL_WIDTH).floor().clamp(2.0, 512.0) as u16;
         let rows = (height / LINE_HEIGHT).floor().clamp(1.0, 256.0) as u16;
         if let Ok(size) = kea_core::Size::new(columns, rows) {
@@ -225,29 +388,78 @@ impl Render for KeaView {
         } else {
             position as f32 / duration as f32
         };
-        let mode = if self.session.is_history() {
+        let terminal_mode = if self.session.is_history() {
             "HISTORY - READ ONLY"
         } else if self.session.is_running() {
             "LIVE"
         } else {
             "ENDED / REPLAY"
         };
+        let input_mode = match self.input_mode {
+            InputMode::Document => "DOCUMENT INPUT",
+            InputMode::Direct => "DIRECT PTY",
+        };
+        let execute_label = self.keymap.label(Action::Execute);
+        let toggle_label = self.keymap.label(Action::ToggleDirect);
+        let live_label = self.keymap.label(Action::GoLive);
         let status = self
             .session
             .warning
             .clone()
             .or_else(|| self.notice.clone())
             .unwrap_or_else(|| {
-                "Output history is retained. Raw keystrokes are not recorded. F9 returns to live."
-                    .into()
+                if self.session.input_allowed() && self.input_mode == InputMode::Document {
+                    format!(
+                        "Editor input is local. Enter = newline; {execute_label} = execute; {toggle_label} = Direct PTY."
+                    )
+                } else if self.session.input_allowed() {
+                    format!(
+                        "Direct PTY compatibility mode. {toggle_label} returns to document input."
+                    )
+                } else {
+                    format!("Historical output is read-only. {live_label} returns to live when available.")
+                }
             });
         let footer = format!(
-            "{:.3}s / {:.3}s   |   event {} / {}   |   F6/F7 step   F8 play/pause   F9 live",
+            "{:.3}s / {:.3}s   |   event {} / {}   |   commands submitted {}",
             position as f64 / 1_000_000.0,
             duration as f64 / 1_000_000.0,
             self.session.end(),
-            self.session.recording().events().len()
+            self.session.recording().events().len(),
+            self.submitted_commands
         );
+        let editor_display = if self.editor.is_empty() {
+            "▏".to_string()
+        } else {
+            self.editor.rendered()
+        };
+        let input_panel = if self.session.input_allowed() {
+            let body = match self.input_mode {
+                InputMode::Document => editor_display,
+                InputMode::Direct => format!(
+                    "Keystrokes are going directly to the PTY. Press {toggle_label} to return to the document editor."
+                ),
+            };
+            div()
+                .h(px(input_height))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .bg(rgb(0x171d24))
+                .border_1()
+                .border_color(rgb(0x303844))
+                .child(
+                    div()
+                        .text_color(rgb(0x98c379))
+                        .child(format!("{input_mode}   ·   {execute_label} execute   ·   Enter newline")),
+                )
+                .child(div().flex_1().overflow_hidden().child(body))
+        } else {
+            div().h(px(0.0)).flex_shrink_0()
+        };
         div()
             .id("kea")
             .size_full()
@@ -288,10 +500,21 @@ impl Render for KeaView {
                     )
                     .child(button("live", "LIVE F9").on_click(cx.listener(Self::live)))
                     .child(
+                        button(
+                            "input-mode",
+                            if self.input_mode == InputMode::Document {
+                                "DOCUMENT"
+                            } else {
+                                "DIRECT PTY"
+                            },
+                        )
+                        .on_click(cx.listener(Self::toggle_input_mode)),
+                    )
+                    .child(
                         button("copy", "Copy screen")
                             .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
                     )
-                    .child(div().ml_2().text_color(rgb(0x98c379)).child(mode)),
+                    .child(div().ml_2().text_color(rgb(0x98c379)).child(terminal_mode)),
             )
             .child(
                 div()
@@ -309,6 +532,7 @@ impl Render for KeaView {
                     .size_full(),
                 ),
             )
+            .child(input_panel)
             .child(
                 div()
                     .id("timeline")
@@ -346,6 +570,7 @@ impl Render for KeaView {
             .child(div().h(px(20.0)).flex_shrink_0().child(footer))
     }
 }
+
 fn button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
@@ -356,6 +581,7 @@ fn button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .cursor_pointer()
         .child(label)
 }
+
 fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     for (index, cell) in screen.cells.iter().enumerate() {
         let row = index / usize::from(screen.size.columns);
