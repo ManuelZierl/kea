@@ -97,7 +97,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn posix_wrapper_creates_a_real_structured_block_through_the_pty() {
+    fn posix_wrapper_creates_a_real_multiline_structured_block_through_the_pty() {
         use kea_core::Size;
         use kea_document::{CommandStatus, Document};
         use kea_session::{Observed, Session};
@@ -105,7 +105,7 @@ mod tests {
 
         let mut session = Session::spawn(&["sh".into()], Size::new(80, 24).unwrap(), None).unwrap();
         let mut document = Document::new();
-        let input = "printf KEA_DOC_OK";
+        let input = "printf 'KEA_DOC_ONE\\n'\nprintf 'KEA_DOC_TWO\\n'";
         let id = document.allocate_id();
         let wrapper = ShellFlavor::Posix.wrap(id, input).unwrap();
         let queued_at = session.elapsed_micros();
@@ -134,7 +134,7 @@ mod tests {
 
         let block = &document.blocks()[0];
         assert_eq!(block.input, input);
-        assert_eq!(block.plain_output(), "KEA_DOC_OK");
+        assert_eq!(block.plain_output(), "KEA_DOC_ONE\nKEA_DOC_TWO");
     }
 
     #[test]
