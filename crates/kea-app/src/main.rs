@@ -22,7 +22,6 @@ use kea_session::{Observed, Session};
 use shell_metadata::ShellMetadata;
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
-const TERMINAL_LINE_HEIGHT: f32 = 1.2;
 const FALLBACK_CELL_WIDTH_EM: f32 = 0.6;
 
 #[derive(Clone)]
@@ -1045,7 +1044,9 @@ fn terminal_font_metrics(window: &mut Window, cx: &mut App) -> TerminalFontMetri
         .advance(font_id, font_size, 'M')
         .map(|advance| advance.width)
         .unwrap_or_else(|_| px(f32::from(font_size) * FALLBACK_CELL_WIDTH_EM));
-    let line_height = px(f32::from(font_size) * TERMINAL_LINE_HEIGHT);
+    let line_height = px((f32::from(text_system.ascent(font_id, font_size)).abs()
+        + f32::from(text_system.descent(font_id, font_size)).abs())
+    .max(1.));
 
     TerminalFontMetrics {
         font: terminal_font,
