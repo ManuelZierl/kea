@@ -1,23 +1,34 @@
 # Working on Kea
 
-Read README.md and docs/architecture.md before changing the design.
+Read README.md, docs/architecture.md and docs/editor-integration.md before changing the design.
 
-## Invariants
+## Product and host invariants
+
+- Treat Kea as a minimal editor with executable input and read-only output. Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
+- The standalone host uses GPUI Component; a Zed host should use Zed's editor/actions. Ordinary text arrives through the component's platform text-input handler, not manual keycode-to-character conversion.
+- Copy means focused selection. Copy block/document/screen is explicit. Never silently copy the entire document when selection-copy has nothing selected.
+- Undo affects the current draft only, never execution or recorded output. Successful submission creates a fresh draft. Edit as new preserves the prior command and a nonempty current draft.
+- Execute requires focused command input and no active composition. It must not run from a search field, output block or Direct PTY shortcut.
+- Scope keybindings by focused component. Remapping/unbinding must mask the inherited binding. Do not globally consume editing/navigation/TUI keys or steal platform input-method events.
+- Read-only output must remain selectable, searchable and copyable. Keep editor entities stable across renders. Live output cannot reset a reading selection or unconditionally scroll to bottom.
+- Follow system appearance by default; use component/platform defaults unless the user explicitly overrides them. Do not promise unsupported OS autocomplete, dictation, accessibility or IME features.
+
+## Data and execution invariants
 
 - Raw output bytes plus ordered resize/lifecycle events are canonical. Do not replace them with lossy UTF-8 or rendered text.
-- Structured command blocks must come from explicit application-owned/shell-provided boundaries. Never infer command completion from prompt regexes, cursor position, idle time or `$`/`>` text.
-- `kea-document` is a derived portable layer over `kea-core`; keep GPUI, Zed, PTY, OS and shell-adapter dependencies out of both crates.
+- Command blocks require explicit application-owned/shell-provided boundaries, never prompt regexes, cursor position, idle time or `$`/`>` text.
+- `kea-document` depends only on `kea-core`; keep GPUI, editor, Zed, PTY, OS and shell-adapter dependencies out of both crates.
 - Replay is observation, never execution. Historical engines cannot issue PTY replies, send input, mutate clipboard, open URLs or change windows.
-- Keep live and historical terminal emulator state separate; live output and required protocol replies continue during rewind.
-- Direct PTY mode and Document mode must refer to the same underlying process/session. Do not fake compatibility by silently spawning a second shell.
-- Application-owned shell wrappers are not user command content. Hidden-input suppression must fail open: never drop real command output merely to hide a wrapper echo.
-- No raw input recording by default. Document boundary markers intentionally retain submitted command text, and output can contain secrets. Persistence stays explicit, bounded and non-overwriting.
-- Keep all retained structures bounded. Surface quota exhaustion, disk failures, truncation and gaps; never claim incomplete history/document content is complete.
-- A replay checkpoint needs full parser state, partial escapes/UTF-8, both buffers, modes, margins, tabs, cursor and colors. A grid clone is not a checkpoint.
-- Document protocol markers are structural metadata, not authentication. Do not treat imported terminal output as trusted provenance.
-- Distinguish compilation, automated tests and interactive validation when reporting platform compatibility.
-- Do not copy GPL Zed code into these MIT crates. A Zed integration should use Zed code in Zed and keep Kea's portable layers independently licensed.
+- Live and historical emulator state stay separate; live output/protocol replies continue during rewind.
+- Direct PTY and Document mode refer to the same process/session. Do not silently spawn a second shell.
+- Shell wrappers are implementation input. Hidden-echo suppression fails open; do not drop real output to hide cosmetic wrapper echoes.
+- No raw keystroke recording by default. Submitted command markers and output can contain secrets. Persistence is explicit, bounded and non-overwriting.
+- Bound retained data and UI entities. Surface quota exhaustion, disk failures, truncation and gaps; do not call incomplete history complete.
+- Replay checkpoints need full parser state, partial escapes/UTF-8, both buffers, modes, margins, tabs, cursor and colors. A grid clone is not a checkpoint.
+- Document markers are metadata, not authentication. Imported terminal output is not trusted provenance.
+- Distinguish compilation, automated/component tests, graphical smoke tests and real platform validation.
+- Do not copy GPL Zed code into MIT Kea crates.
 
-Run `cargo fmt --all`, portable tests, portable clippy with `-D warnings`, `cargo test -p kea-app`, and the Linux desktop smoke test when native dependencies are available. Commit `Cargo.lock` and use `--locked` for reproducible CI.
+Run cargo fmt, portable tests/Clippy with -D warnings, cargo test -p kea-app, cargo build -p kea-app and the Linux desktop smoke test where dependencies exist. Commit Cargo.lock and use --locked. Preserve real assertions rather than disabling tests to obtain a green build.
 
-Current known quality gaps include editor selections/undo/IME, richer shell metadata such as cwd, full terminal keyboard/mouse/image protocols, accessibility, efficient long-session checkpoints/indexing and packaged Windows/macOS validation. Implement real capabilities with regression tests rather than placeholders that merely look operational.
+Outstanding work includes richer shell metadata, complete Direct PTY keyboard/mouse/image/input protocols, actual OS input-service/accessibility acceptance, long-session indexing/checkpoints and platform packages. Do not describe those as already provided by the editor dependency.
