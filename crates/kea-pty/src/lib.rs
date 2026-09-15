@@ -37,6 +37,9 @@ impl Pty {
         } else {
             CommandBuilder::new_default_prog()
         };
+        // portable-pty otherwise chooses the home directory on Unix. Relative
+        // program arguments must resolve where Kea was launched, not elsewhere.
+        builder.cwd(std::env::current_dir().context("reading current directory")?);
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         builder.env("TERM_PROGRAM", "kea");
@@ -172,15 +175,15 @@ mod tests {
         let command = vec![
             "sh".into(),
             "-c".into(),
-            "printf 'kea-pty-ok'; exit 7".into(),
+            "printf 'kea-pty-ok\n'; pwd; exit 7".into(),
         ];
         #[cfg(windows)]
         let command = vec![
             "cmd.exe".into(),
             "/C".into(),
-            "echo kea-pty-ok & exit /b 7".into(),
+            "echo kea-pty-ok & cd & exit /b 7".into(),
         ];
-        let mut pty = Pty::spawn(&command, Size::new(80, 24).unwrap()).unwrap();
+        let mut pty = Pty::spawn(&command, Size::new(160, 24).unwrap()).unwrap();
         let mut output = Vec::new();
         #[cfg(windows)]
         let mut answered_cursor_query = false;
@@ -213,6 +216,9 @@ mod tests {
             );
             thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(String::from_utf8_lossy(&output).contains("kea-pty-ok"));
+        let output = String::from_utf8_lossy(&output);
+        assert!(output.contains("kea-pty-ok"));
+        let directory = std::env::current_dir().unwrap();
+        assert!(output.contains(directory.to_string_lossy().as_ref()));
     }
 }
