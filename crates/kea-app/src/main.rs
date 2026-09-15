@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod document_view;
+mod shell_metadata;
 mod terminal_input;
 
 use anyhow::{Context as _, Result};
@@ -18,6 +19,7 @@ use kea_app::{
 };
 use kea_document::Document;
 use kea_session::{Observed, Session};
+use shell_metadata::ShellMetadata;
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
 const CELL_WIDTH: f32 = 9.0;
@@ -40,7 +42,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let (mut demo, mut replay, mut record, mut direct) = (false, None, None, false);
+    let (mut demo, mut replay, mut record, mut terminal_focus) = (false, None, None, false);
     let mut command: Vec<OsString> = Vec::new();
     while let Some(arg) = args.next() {
         if arg == "--" {
@@ -49,8 +51,9 @@ fn run() -> Result<()> {
         }
         if arg == "--demo" {
             demo = true;
-        } else if arg == "--direct" {
-            direct = true;
+        } else if arg == "--direct" || arg == "--terminal-focus" {
+            // --direct is retained as a compatibility alias; there is no Direct mode.
+            terminal_focus = true;
         } else if arg == "--replay" {
             replay = Some(PathBuf::from(args.next().context("--replay needs a path")?));
         } else if arg == "--record" {
@@ -58,21 +61,24 @@ fn run() -> Result<()> {
                 args.next().context("--record needs a new file path")?,
             ));
         } else if arg == "--help" || arg == "-h" {
-            let help = "Kea — one session, terminal and editor together
+            let help = "Kea — one terminal session with a persistent text editor
 
-kea [--direct] [--record NEW.kea] [-- PROGRAM ARG...]
+kea [--terminal-focus] [--record NEW.kea] [-- PROGRAM ARG...]
 kea --replay SESSION.kea
 kea --demo
 
-Click the terminal: keys belong to the child. Click the editor: normal text editing.
-Editor Enter = newline; Ctrl+Enter = Run in shell; Ctrl+Shift+Enter = Send to app.
-Tab in the editor suggests local paths/history; terminal Tab goes to the child.
-Blocks are optional (show_blocks = false). --direct changes initial focus only.
-Kea shortcuts are scoped to text components, not a live terminal.
-Use the toolbar for history, clipboard and focus while the terminal owns the keys.
+Terminal and editor are visible together; focus decides who receives keyboard input.
+Editor defaults: Enter = newline, Ctrl+Enter = Run in shell, Ctrl+Shift+Enter = Send to app, Tab = complete.
+All semantic shortcuts are configurable. Terminal-like editor behavior is possible with:
+  run_shell = enter
+  newline = shift-enter
+
+Blocks are an optional observational view. They never gate command execution.
+The current integrated local-shell directory is reported by shell hooks; while a TUI/remote app owns the terminal, Kea labels it last reported rather than guessing.
+Terminal Tab and other representable keys go to the child application.
 
 KEA_KEYBINDINGS and KEA_SETTINGS select explicit configuration files.
-Recording is opt-in, unencrypted, bounded and create-only. Commands and output can contain secrets.";
+Recording is opt-in, bounded and unencrypted; commands/output can contain secrets.";
             #[cfg(not(windows))]
             println!("{help}");
             #[cfg(windows)]
@@ -86,6 +92,7 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
             break;
         }
     }
+
     let replay_requested = replay.is_some();
     if (demo && replay_requested)
         || ((demo || replay_requested) && (record.is_some() || !command.is_empty()))
@@ -94,10 +101,14 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
             "--demo and --replay cannot be combined with each other, --record, or a command"
         );
     }
+
     #[cfg(windows)]
     if !demo && !replay_requested && command.is_empty() {
+        // Keep the user's profile: shell configuration/completers are part of the
+        // environment Kea should preserve, not replace.
         command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
     }
+
     let shell = if demo || replay_requested {
         None
     } else {
@@ -117,15 +128,12 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
     } else {
         Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
     };
+
     if let Some(shell) = shell {
         session.send_hidden(shell.integration(&command))?;
     }
     let document = Document::from_recording(session.recording());
-    let mode = if demo {
-        InitialFocus::Terminal
-    } else if replay_requested && !document.blocks().is_empty() {
-        InitialFocus::Editor
-    } else if direct || shell.is_none() {
+    let initial_focus = if demo || terminal_focus || shell.is_none() {
         InitialFocus::Terminal
     } else {
         InitialFocus::Editor
@@ -133,10 +141,14 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
     let (keymap, warning) = Keymap::load();
     let (settings, settings_warning) = Settings::load();
     let mut warnings: Vec<String> = warning.into_iter().chain(settings_warning).collect();
-    if !demo && !replay_requested && !direct && shell.is_none() {
-        warnings.push("No interactive shell integration for this program. Use terminal input or Send to app; the editor remains available.".into());
+    if !demo && !replay_requested && shell.is_none() {
+        warnings.push(
+            "No integrated local shell detected. Terminal input and Send to app remain available; Run in shell and shell cwd completion are unavailable."
+                .into(),
+        );
     }
     let notice = (!warnings.is_empty()).then(|| warnings.join(" "));
+
     Application::new()
         .with_assets(gpui_component_assets::Assets)
         .run(move |cx: &mut App| {
@@ -166,16 +178,24 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
                 apply_appearance(&settings, window, cx);
                 let view = cx.new(|cx| {
                     KeaView::new(
-                        session, document, shell, keymap, settings, mode, notice, window, cx,
+                        session,
+                        document,
+                        shell,
+                        keymap,
+                        settings,
+                        initial_focus,
+                        notice,
+                        window,
+                        cx,
                     )
                 });
                 let weak = view.downgrade();
                 window.defer(cx, move |window, cx| {
                     let _ = weak.update(cx, |view, cx| {
-                        if mode == InitialFocus::Terminal {
+                        if initial_focus == InitialFocus::Terminal {
                             window.focus(&view.focus);
                         } else {
-                            view.focus_active(window, cx);
+                            view.focus_editor(window, cx);
                         }
                     });
                 });
@@ -192,6 +212,7 @@ Recording is opt-in, unencrypted, bounded and create-only. Commands and output c
 struct KeaView {
     session: Session,
     document: Document,
+    shell_metadata: ShellMetadata,
     shell: Option<ShellFlavor>,
     keymap: Keymap,
     settings: Settings,
@@ -226,9 +247,8 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        let start_at_terminal = initial_focus == InitialFocus::Terminal;
         let editor = command_editor::new_draft(shell, &settings, "", window, cx);
-        if start_at_terminal {
+        if initial_focus == InitialFocus::Terminal {
             window.focus(&focus);
         } else {
             editor.update(cx, |state, cx| state.focus(window, cx));
@@ -257,27 +277,38 @@ impl KeaView {
                     match completion {
                         Some(Ok((text, cursor, candidates))) => {
                             this.completion_rx = None;
-                            if this.editor.read(cx).value().as_ref() == text && this.editor.read(cx).cursor() == cursor {
+                            if this.editor.read(cx).value().as_ref() == text
+                                && this.editor.read(cx).cursor() == cursor
+                            {
                                 this.completion_text = text;
                                 this.completion_cursor = cursor;
                                 this.candidates = candidates;
-                                this.notice = Some(if this.candidates.is_empty() { "No local path/history matches. Native shell Tab is available in terminal focus.".into() } else { "Choose a completion below, or press Tab again to accept the first. Nothing is executed.".into() });
+                                this.notice = Some(if this.candidates.is_empty() {
+                                    "No local completion matches. Terminal Tab still uses the running application's native completion."
+                                        .into()
+                                } else {
+                                    "Choose a completion, or press Tab again to accept the first. Nothing is executed."
+                                        .into()
+                                });
                                 cx.notify();
                             }
                         }
                         Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                             this.completion_rx = None;
-                            this.notice = Some("Completion worker stopped; the draft was not changed.".into());
+                            this.notice =
+                                Some("Completion worker stopped; the draft was not changed.".into());
                             cx.notify();
                         }
                         _ => {}
                     }
+
                     let pump = this.session.pump_observed();
                     let mut changed = false;
                     for event in pump.observed {
                         changed |= match event {
                             Observed::Output { at, bytes } => {
-                                this.document.ingest_output(at, &bytes)
+                                let metadata_changed = this.shell_metadata.ingest(&bytes);
+                                metadata_changed || this.document.ingest_output(at, &bytes)
                             }
                             Observed::Exit { at, .. } => this.document.abort_in_flight(at),
                         };
@@ -285,7 +316,6 @@ impl KeaView {
                     if changed {
                         this.document_ui.dirty = true;
                     }
-                    // Never reset a reader's selection or scroll on each output chunk.
                     if pump.changed || changed {
                         cx.notify();
                     }
@@ -295,13 +325,15 @@ impl KeaView {
                 break;
             }
         });
+        let show_blocks = settings.show_blocks;
         Self {
             session,
             document,
+            shell_metadata: ShellMetadata::default(),
             shell,
             keymap,
-            show_blocks: settings.show_blocks,
             settings,
+            show_blocks,
             terminal_bounds: None,
             terminal_composition,
             completion_rx: None,
@@ -323,9 +355,16 @@ impl KeaView {
         self.notice = result.err().map(|error| error.to_string());
         cx.notify();
     }
-    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+
+    fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |state, cx| state.focus(window, cx));
     }
+
+    // Kept for document_view's existing helper calls.
+    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_editor(window, cx);
+    }
+
     fn copy_document(&self, cx: &mut App) {
         let text = if self.show_blocks && !self.session.is_history() {
             self.document.text()
@@ -334,6 +373,7 @@ impl KeaView {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
+
     fn paste_terminal(&mut self, cx: &mut Context<Self>) {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
@@ -345,11 +385,11 @@ impl KeaView {
         }
         self.result(result, cx);
     }
-    fn execute_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.document.prompt_ready() {
-            self.result(Err(anyhow::anyhow!("The shell has not reported an idle prompt. Use Send to app, or finish/cancel the command in the terminal.")), cx);
-            return;
-        }
+
+    /// Run the draft in the integrated shell. Execution is authoritative; block
+    /// tracking is observational. We never queue a local block or make document
+    /// retention a prerequisite for sending the command.
+    fn run_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
             return;
         };
@@ -357,25 +397,28 @@ impl KeaView {
             return;
         }
         if !self.session.input_allowed() {
-            self.result(
-                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
-                cx,
-            );
-            return;
-        }
-        if let Err(error) = self.document.validate_submission(&text) {
-            self.result(Err(error.into()), cx);
+            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
             return;
         }
         let Some(shell) = self.shell else {
             self.result(
                 Err(anyhow::anyhow!(
-                    "Run in shell requires an integrated shell; use Send to app instead."
+                    "Run in shell requires an integrated local shell; use Send to app instead."
                 )),
                 cx,
             );
             return;
         };
+        if !self.document.prompt_ready() {
+            self.result(
+                Err(anyhow::anyhow!(
+                    "The local shell has not reported an idle prompt. Use Send to app while another application owns input."
+                )),
+                cx,
+            );
+            return;
+        }
+
         let id = self.document.allocate_id();
         let wrapper = match shell.wrap(id, &text) {
             Ok(wrapper) => wrapper,
@@ -384,35 +427,31 @@ impl KeaView {
                 return;
             }
         };
-        let at = self.session.elapsed_micros();
-        let result = self.session.send_hidden(wrapper).and_then(|_| {
-            self.document
-                .queue_local(id, text.clone(), at)
-                .map_err(anyhow::Error::from)
-        });
+        let result = self.session.send_hidden(wrapper);
         if result.is_ok() {
+            self.document.note_terminal_input();
             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
-            window.focus(&self.focus);
             self.candidates.clear();
+            window.focus(&self.focus);
+            // A start marker may create an optional block shortly afterward. If it
+            // cannot be retained, execution still proceeds normally.
             self.document_ui.page_start = None;
             self.document_ui.dirty = true;
-            self.document_scroll.scroll_to_bottom();
         }
         self.result(result, cx);
     }
-    // Legacy configuration name: this changes only the optional inspector.
-    fn toggle_direct(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_blocks = !self.show_blocks;
-        self.document_ui.page_start = None;
-        self.document_scroll.scroll_to_bottom();
-        cx.notify();
-    }
 
+    /// Send editor text literally to whichever application currently owns stdin.
+    /// No shell wrapper, block boundary, cwd assumption or application-name sniffing.
     fn send_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
             return;
         };
         if text.is_empty() {
+            return;
+        }
+        if !self.session.input_allowed() {
+            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
             return;
         }
         let result = input::paste(&text, self.session.bracketed_paste()).and_then(|mut bytes| {
@@ -426,6 +465,19 @@ impl KeaView {
             window.focus(&self.focus);
         }
         self.result(result, cx);
+    }
+
+    fn insert_newline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        self.editor.update(cx, |state, cx| {
+            if state.marked_text_range(window, cx).is_none() {
+                state.replace_text_in_range(None, "\n", window, cx);
+            }
+        });
+        self.candidates.clear();
+        cx.notify();
     }
 
     fn complete_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -448,18 +500,21 @@ impl KeaView {
         if self.completion_rx.is_some() {
             return;
         }
-        let directory = self
-            .document
-            .prompt_ready()
+
+        let metadata_current = self.document.prompt_ready();
+        let directory = metadata_current
             .then(|| self.document.directory().map(PathBuf::from))
+            .flatten();
+        let shell_path = metadata_current
+            .then(|| self.shell_metadata.path().map(ToOwned::to_owned))
             .flatten();
         let history = self
             .document
             .blocks()
             .iter()
             .rev()
-            .take(200)
-            .map(|b| b.input.clone())
+            .take(500)
+            .map(|block| block.input.clone())
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -469,8 +524,14 @@ impl KeaView {
         self.completion_rx = Some(rx);
         self.candidates.clear();
         std::thread::spawn(move || {
-            let candidates =
-                completion::suggest(&text, cursor, directory.as_deref(), &history, shell);
+            let candidates = completion::suggest(
+                &text,
+                cursor,
+                directory.as_deref(),
+                shell_path.as_deref(),
+                &history,
+                shell,
+            );
             let _ = tx.send((text, cursor, candidates));
         });
     }
@@ -499,6 +560,14 @@ impl KeaView {
         self.notice = None;
         cx.notify();
     }
+
+    fn toggle_blocks(&mut self, cx: &mut Context<Self>) {
+        self.show_blocks = !self.show_blocks;
+        self.document_ui.page_start = None;
+        self.document_scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
     fn seek_x(&mut self, x: Pixels, width: f32, window: &mut Window, cx: &mut Context<Self>) {
         let fraction = ((f32::from(x) - 12.) / width).clamp(0., 1.);
         let at = (fraction as f64 * self.session.recording().duration() as f64) as u64;
@@ -506,11 +575,15 @@ impl KeaView {
         window.focus(&self.focus);
         self.result(result, cx);
     }
+
     fn invoke(&mut self, event: &Invoke, window: &mut Window, cx: &mut Context<Self>) {
         let terminal_focused = self.focus.is_focused(window);
         match event.action {
             Action::Copy if terminal_focused => {
-                self.notice = Some("Direct PTY has no selection yet. Use Copy document/screen for an explicit whole-screen copy.".into());
+                self.notice = Some(
+                    "Terminal selection is not implemented yet. Use Copy view for an explicit whole-screen copy."
+                        .into(),
+                );
                 cx.notify();
             }
             Action::Paste if terminal_focused => self.paste_terminal(cx),
@@ -522,15 +595,19 @@ impl KeaView {
             Action::SelectAll => window.dispatch_action(Box::new(edit::SelectAll), cx),
             Action::Find => window.dispatch_action(Box::new(edit::Search), cx),
             Action::CopyDocument => self.copy_document(cx),
-            Action::FocusEditor => self.focus_active(window, cx),
+            Action::FocusEditor => self.focus_editor(window, cx),
             Action::Interrupt => {
                 let result = self.session.send(vec![3]);
+                if result.is_ok() {
+                    self.document.note_terminal_input();
+                }
                 self.result(result, cx);
             }
-            Action::Execute => self.execute_editor(window, cx),
-            Action::SendText => self.send_editor(window, cx),
+            Action::RunShell => self.run_shell(window, cx),
+            Action::SendApplication => self.send_editor(window, cx),
+            Action::Newline => self.insert_newline(window, cx),
             Action::Complete => self.complete_editor(window, cx),
-            Action::ToggleDirect => self.toggle_direct(window, cx),
+            Action::ToggleBlocks => self.toggle_blocks(cx),
             Action::PreviousEvent | Action::NextEvent => {
                 let result = self.session.step(if event.action == Action::PreviousEvent {
                     -1
@@ -557,14 +634,16 @@ impl KeaView {
             Action::GoLive => {
                 self.session.go_live();
                 self.notice = None;
-                self.focus_active(window, cx);
+                self.focus_editor(window, cx);
                 cx.notify();
             }
             Action::Quit => cx.quit(),
         }
     }
-    // Text components receive platform text input themselves. This fallback belongs
-    // only to the compatibility terminal, never to the command editor.
+
+    /// Raw terminal keyboard bridge. Kea semantic shortcuts are masked in the
+    /// KeaTerminal context, so representable keys reach this encoder. Unencoded
+    /// composed text falls through to the platform text-input handler.
     fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_composition.update(cx, |state, cx| {
             state.marked_text_range(window, cx).is_some()
@@ -581,8 +660,8 @@ impl KeaView {
             }
             cx.stop_propagation();
         }
-        // Unencoded text continues to GPUI's platform composition/replacement handler.
     }
+
     fn control(
         &self,
         id: &'static str,
@@ -613,7 +692,7 @@ impl Render for KeaView {
             .min_w_0()
             .h_full()
             .overflow_hidden()
-            .key_context(if self.session.is_running() {
+            .key_context(if self.session.input_allowed() {
                 "KeaTerminal"
             } else {
                 "KeaChrome"
@@ -668,6 +747,7 @@ impl Render for KeaView {
                 )
                 .size_full(),
             );
+
         let mut output = div()
             .flex()
             .flex_1()
@@ -675,16 +755,16 @@ impl Render for KeaView {
             .overflow_hidden()
             .child(terminal);
         if self.show_blocks {
-            let inspector = self.render_document(window, cx);
             output = output.child(
                 div()
                     .id("block-inspector")
                     .w(px(450.))
                     .h_full()
                     .flex_shrink_0()
-                    .child(inspector),
+                    .child(self.render_document(window, cx)),
             );
         }
+
         let mut completions = div().flex().flex_wrap().gap_1();
         if self.editor.read(cx).value().as_ref() == self.completion_text {
             for (index, candidate) in self.candidates.iter().enumerate() {
@@ -703,16 +783,33 @@ impl Render for KeaView {
                 );
             }
         }
-        let status = self.notice.clone().or_else(|| self.session.warning.clone()).unwrap_or_else(|| {
-            if self.session.is_history() { "History is read-only; the live process continues.".into() }
-            else if self.focus.is_focused(window) { "Terminal focus: keys go to the application. Click the editor to compose text.".into() }
-            else { "Editor focus: Enter adds a newline; Tab suggests local paths/history. Run and Send are explicit actions.".into() }
-        });
-        let directory = self
-            .document
-            .directory()
-            .map(|d| format!("Shell directory: {d}"))
-            .unwrap_or_else(|| "Shell directory: not reported".into());
+
+        let status = self
+            .notice
+            .clone()
+            .or_else(|| self.session.warning.clone())
+            .unwrap_or_else(|| {
+                if self.session.is_history() {
+                    "History is read-only; the live process continues.".into()
+                } else if self.focus.is_focused(window) {
+                    "Terminal focus: representable keys belong to the child application.".into()
+                } else if self.document.prompt_ready() {
+                    "Editor focus: local shell ready. Run, Send and completion are explicit actions."
+                        .into()
+                } else {
+                    "Editor focus: another application may own stdin; use Send to app unless the local shell reports ready."
+                        .into()
+                }
+            });
+
+        let directory = match (self.shell, self.document.directory(), self.document.prompt_ready()) {
+            (None, _, _) => "Shell directory: unavailable for this program".into(),
+            (_, Some(path), true) => format!("Current shell directory: {path}"),
+            (_, Some(path), false) => format!("Shell directory (last reported): {path}"),
+            _ => "Shell directory: waiting for shell integration".into(),
+        };
+
+        let newline_label = self.keymap.label_or(Action::Newline, "Enter");
         div()
             .id("kea")
             .size_full()
@@ -738,23 +835,15 @@ impl Render for KeaView {
                     .child(self.control("next", "Next", Action::NextEvent, cx))
                     .child(self.control(
                         "play",
-                        if self.session.is_playing() {
-                            "Pause"
-                        } else {
-                            "Play"
-                        },
+                        if self.session.is_playing() { "Pause" } else { "Play" },
                         Action::PlayPause,
                         cx,
                     ))
                     .child(self.control("live", "Live", Action::GoLive, cx))
                     .child(self.control(
-                        "mode",
-                        if self.show_blocks {
-                            "Hide blocks"
-                        } else {
-                            "Show blocks"
-                        },
-                        Action::ToggleDirect,
+                        "blocks",
+                        if self.show_blocks { "Hide blocks" } else { "Show blocks" },
+                        Action::ToggleBlocks,
                         cx,
                     ))
                     .child(self.control("copy-document", "Copy view", Action::CopyDocument, cx))
@@ -763,7 +852,7 @@ impl Render for KeaView {
                             .on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx))),
                     )
                     .child(button("focus-input", "Focus editor").on_click(
-                        cx.listener(|this, _, window, cx| this.focus_active(window, cx)),
+                        cx.listener(|this, _, window, cx| this.focus_editor(window, cx)),
                     )),
             )
             .child(
@@ -789,30 +878,37 @@ impl Render for KeaView {
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .gap_2()
                             .items_center()
                             .child(self.control(
                                 "run-draft",
-                                format!("Run in shell · {}", self.keymap.label(Action::Execute)),
-                                Action::Execute,
+                                format!(
+                                    "Run in shell · {}",
+                                    self.keymap.label(Action::RunShell)
+                                ),
+                                Action::RunShell,
                                 cx,
                             ))
                             .child(self.control(
                                 "send-draft",
-                                format!("Send to app · {}", self.keymap.label(Action::SendText)),
-                                Action::SendText,
+                                format!(
+                                    "Send to app · {}",
+                                    self.keymap.label(Action::SendApplication)
+                                ),
+                                Action::SendApplication,
                                 cx,
                             ))
-                            .child(if self.document.prompt_ready() {
-                                "Shell prompt ready"
-                            } else {
-                                "Application input / waiting for prompt"
-                            }),
+                            .child(format!(
+                                "Newline · {newline_label}   ·   Complete · {}",
+                                self.keymap.label(Action::Complete)
+                            )),
                     )
                     .child(
                         Input::new(&self.editor)
                             .h(px(100.))
                             .appearance(false)
+                            .disabled(!self.session.input_allowed())
                             .bordered(false),
                     )
                     .child(
@@ -867,7 +963,7 @@ impl Render for KeaView {
                     ),
             )
             .child(div().h(px(20.)).flex_shrink_0().child(format!(
-                "{} commands · {:.3}s / {:.3}s · {}",
+                "{} observed command blocks · {:.3}s / {:.3}s · {}",
                 self.document.blocks().len(),
                 position as f64 / 1_000_000.,
                 duration as f64 / 1_000_000.,
@@ -891,6 +987,7 @@ fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
         .cursor_pointer()
         .child(label.into())
 }
+
 fn apply_appearance(settings: &Settings, window: &mut Window, cx: &mut App) {
     match settings.appearance {
         Appearance::System => Theme::sync_system_appearance(Some(window), cx),
@@ -994,9 +1091,7 @@ fn show_message(message: String) {
             }
         })
         .detach();
-        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|_| Message(message))
-        });
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Message(message)));
         cx.activate(true);
     });
 }
