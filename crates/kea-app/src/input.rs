@@ -48,6 +48,10 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         "f18" => Some(32),
         "f19" => Some(33),
         "f20" => Some(34),
+        "f21" => Some(42),
+        "f22" => Some(43),
+        "f23" => Some(44),
+        "f24" => Some(45),
         _ => None,
     };
     if let Some(number) = numbered {
@@ -81,20 +85,13 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         // no completed text character. Do not run them through the IME text gate.
         "enter" | "return" if modifier != 1 => format!("\x1b[13;{modifier}u").into_bytes(),
         "enter" | "return" => vec![b'\r'],
-        // Windows GPUI intentionally reports named Space without key_char.
-        // It is not an unfinished composition; encode it before the text gate.
-        "space" | " " => {
-            let mut bytes = vec![if m.control { 0 } else { b' ' }];
+        "escape" => vec![27],
+        // Windows can report a named Space without a completed key_char.
+        "space" if !m.control => {
             if m.alt {
-                bytes.insert(0, 27);
-            }
-            bytes
-        }
-        "escape" => {
-            if m.alt {
-                vec![27, 27]
+                vec![27, b' ']
             } else {
-                vec![27]
+                vec![b' ']
             }
         }
         "backspace" => vec![if m.control { 8 } else { 127 }],
@@ -141,34 +138,6 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         }
     };
     Some(bytes)
-}
-
-/// Hand an unexecuted single-line draft to the running application's own
-/// completion. Never append Enter and never inject shell-specific wrappers.
-pub fn complete(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        !text.contains(['\r', '\n']),
-        "Completion handoff requires a single-line draft."
-    );
-    anyhow::ensure!(
-        !text.chars().any(char::is_control),
-        "Completion handoff refuses control characters."
-    );
-    let mut bytes = paste(text, bracketed)?;
-    bytes.push(b'\t');
-    Ok(bytes)
-}
-
-/// Explicit Send submits the text once. Multiline input requires the child's
-/// bracketed-paste support; otherwise preserve the draft instead of running lines.
-pub fn submit(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        !text.contains(['\x1b', '\0']),
-        "Input contains terminal control characters."
-    );
-    let mut bytes = paste(text, bracketed)?;
-    bytes.push(b'\r');
-    Ok(bytes)
 }
 
 pub fn paste(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
@@ -240,49 +209,40 @@ mod tests {
         );
     }
     #[test]
-    fn named_windows_space_and_all_history_function_keys_reach_child() {
-        for (spec, expected) in [
-            ("space", b" ".as_slice()),
-            ("shift-space", b" "),
-            ("ctrl-space", b"\0"),
-            ("alt-space", b"\x1b "),
-            ("f6", b"\x1b[17~"),
-            ("f7", b"\x1b[18~"),
-            ("f8", b"\x1b[19~"),
-            ("f9", b"\x1b[20~"),
-            ("ctrl-c", b"\x03"),
-            ("ctrl-v", b"\x16"),
-            ("ctrl-z", b"\x1a"),
-        ] {
-            assert_eq!(
-                encode(&Keystroke::parse(spec).unwrap(), false).as_deref(),
-                Some(expected),
-                "{spec}"
-            );
-        }
-    }
-    #[test]
-    fn draft_handoff_does_not_execute_or_strip_spaces() {
-        assert_eq!(complete("git ch", false).unwrap(), b"git ch\t");
-        assert_eq!(complete("", false).unwrap(), b"\t");
-        assert!(complete("echo one\necho two", true).is_err());
-        assert!(complete("abc\tdef", false).is_err());
-        assert_eq!(
-            submit("  hello world  ", false).unwrap(),
-            b"  hello world  \r"
-        );
-        assert!(submit("one\ntwo", false).is_err());
-        assert_eq!(
-            submit("one\ntwo", true).unwrap(),
-            b"\x1b[200~one\ntwo\x1b[201~\r"
-        );
-    }
-    #[test]
     fn paste_cannot_inject_a_bracket_terminator() {
         assert!(paste("a\nb", false).is_err());
         assert_eq!(
             paste("a\x1b[201~b", true).unwrap(),
             b"\x1b[200~a[201~b\x1b[201~"
         );
+    }
+}
+
+#[cfg(test)]
+mod passthrough_tests {
+    use super::*;
+    #[test]
+    fn space_control_and_function_keys_are_encoded() {
+        for spec in ["space", "shift-space"] {
+            assert_eq!(
+                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                b" "
+            );
+        }
+        for number in 1..=24 {
+            assert!(encode(&Keystroke::parse(&format!("f{number}")).unwrap(), false).is_some());
+        }
+        for (spec, expected) in [
+            ("ctrl-c", 3),
+            ("ctrl-v", 22),
+            ("ctrl-z", 26),
+            ("ctrl-l", 12),
+            ("ctrl-space", 0),
+        ] {
+            assert_eq!(
+                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                vec![expected]
+            );
+        }
     }
 }

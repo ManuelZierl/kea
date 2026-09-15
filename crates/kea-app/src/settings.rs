@@ -94,11 +94,11 @@ impl Settings {
                     );
                     settings.font_size = Some(size);
                 }
-                "show_blocks" => settings.show_blocks = boolean(value)?,
                 "line_numbers" => settings.line_numbers = boolean(value)?,
                 "soft_wrap" => settings.soft_wrap = boolean(value)?,
                 "output_wrap" => settings.output_wrap = boolean(value)?,
                 "syntax_highlighting" => settings.syntax_highlighting = boolean(value)?,
+                "show_blocks" => settings.show_blocks = boolean(value)?,
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }

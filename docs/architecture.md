@@ -1,51 +1,95 @@
 # Architecture
 
-## Shared-session interaction
+## One session, independent surfaces
 
-The terminal and bottom editor coexist; blocks are optional. Submission target is separate from focus and output presentation. See [shared-session input, completion and directory reporting](shared-session.md) for the current contract. Earlier Document/Direct terminology below describes projections, not mutually exclusive UI modes.
+Kea displays a live terminal and a persistent editor together. Focus decides who receives physical input. A block inspector is optional presentation, hidden by default; it is not an execution mode. See [interaction contract](unified-session.md).
 
-## Product and responsibilities
+The editor/platform owns ordinary text editing, selection, clipboard, undo and composition. Kea owns explicit submission, process/session history, optional metadata and historical inspection. A live terminal reserves no Kea semantic shortcuts.
 
-Kea is a minimal editor with executable input and persistent read-only output. Standard editing and OS integration belong to reusable host components; Kea supplies the execution/document model. Replay is a consequence of retained history.
+The same PTY is used by terminal input, **Run in shell**, and **Send to app**. There is no second shell, no submission-target mode and no application-name guessing.
 
-`kea-core` is standard-library-only canonical output/resize/lifecycle events, bounded storage format and replay traits. `kea-document` depends only on the core and derives command blocks from explicit shell markers. Neither depends on an editor, GPUI, OS UI, shell or PTY implementation.
+## Execution before metadata
 
-`kea-alacritty` provides terminal emulation/projection; `kea-pty` provides standalone Unix PTY/Windows ConPTY transport; `kea-session` coordinates live/history engines, the output observation tap and optional journal. `kea-app` composes those with GPUI Component editor surfaces, shell adapters, document presentation, action routing and settings.
+Execution is authoritative; structure observes it.
 
-An eventual Zed host should retain Zed's own editor, text services, actions, PTY and renderer around the portable Kea layers. The standalone host's component is replaceable, not part of the document format.
+`Run in shell` requires an explicit prompt-ready report, creates a shell-driver line, and sends it. It does **not** first create a queued document block. Start/done markers in later output may derive a block, but retention exhaustion, malformed/missing markers or document-parser failure cannot prevent the command from executing.
 
-## Native-feeling text surfaces
+`Send to app` never creates shell metadata or a wrapper. It sends literal editor text plus Enter to the current stdin owner, using bracketed paste for multiline content when the application enables it.
 
-Command drafts and read-only command/output text use GPUI Component `InputState`/`Input`. The component owns buffer operations, selection, grapheme-aware movement, undo/redo, mouse navigation, search and platform composition handling. The former handwritten String/cursor editor and whole-window raw key handler are removed.
+This keeps the optional block model useful without making terminal correctness depend on it.
 
-Physical shortcuts map to semantic host actions with scoped GPUI keybindings. Standard editing actions dispatch to the focused component. Execute requires the command editor itself to be focused and composition to be inactive. It does not apply to search fields, output or Direct PTY. Copy selection is separate from explicit Copy block/document/screen.
+## Crate boundaries
 
-Submitting a command creates a fresh draft entity with a fresh undo history. Historical blocks never become editable. Edit as new copies a previous command into an empty fresh draft and still requires explicit execution.
+- `kea-core`: std-only ordered output/resize/lifecycle recording, bounded file format and replay interface.
+- `kea-document`: depends only on `kea-core`; optional streaming command/output/cwd metadata derived from explicit markers. No UI, shell, PTY or OS dependency.
+- `kea-alacritty`: terminal emulation/projection.
+- `kea-pty`: Unix PTY / Windows ConPTY transport.
+- `kea-session`: live/history emulation, observation tap, application input, playback and optional journal.
+- `kea-app`: GPUI surfaces, platform-integrated editor, shell prompt hooks, completion and host actions.
 
-The document retains a bounded page of stable editor entities. Live updates do not rewrite a focused/selected output snapshot: a visible refresh action updates it explicitly. Search/filter/collapse/page selection are UI projections and cannot execute commands or rewrite recorded output.
+A Zed integration should use Zed's editor/actions/terminal renderer/PTY ownership while reusing the portable recording/document layers. The standalone GPUI UI is replaceable.
 
-Appearance follows system light/dark by default; explicit host overrides are supported. Fonts and ordinary navigation inherit component/platform defaults. Native input APIs are an integration mechanism, not certification of every OS service. See [editor-integration.md](editor-integration.md) for configuration and platform validation boundaries.
+## Canonical stream and metadata
 
-## Canonical stream and document protocol
+Raw terminal output plus ordered resize/lifecycle events are canonical. Structured records are derived from explicit OSC metadata, never prompt regexes, idle time, cursor position or `$`/`>` text.
 
-Raw output bytes plus ordered resize/lifecycle events are canonical. Application-owned wrappers emit OSC start/done markers in the current shell around the user's command. The marker carries command ID, submitted text and completion status. `kea-document` derives lifecycle, output and timing without prompt heuristics or a second authoritative database. Reopening recordings reconstructs blocks without execution.
+Integrated shell prompt hooks report cwd/readiness through bounded OSC 777 metadata. The live host also receives the effective shell `PATH` on OSC 778 for editor command completion. PATH is completion context, not required for replaying command blocks.
 
-The wrappers evaluate in the existing shell, preserving shell state between submissions. POSIX-style shells and PowerShell have adapters; other programs use Direct PTY. Switching modes does not start a second process. A TUI launched by a command is interacted with through the same terminal; the shell closes its block after control returns. See [document-protocol.md](document-protocol.md).
+Native terminal input immediately invalidates prompt-ready state. Only the next explicit shell prompt report makes **Run in shell** safe again. This prevents a shell wrapper from being appended to a partially typed prompt or injected into OpenCode/SSH/a REPL.
 
-`send_hidden` suppresses an application's exact wrapper echo before live parsing/recording. It must fail open when shells redraw rather than echo verbatim, never discard real output for cosmetic reasons. The observation tap sees the same post-filter bytes; it can maintain document lifecycle independently if recording retention stops.
+Markers are interoperability data, not authentication. Programs can forge terminal output; metadata must never become an authorization boundary.
 
-## Retention and fidelity
+## Shell integration
 
-Document limits: 64 KiB command, 4 MiB output per block, 64 MiB aggregate, 10,000 blocks. Terminal history has independent limits of 32 MiB accounted data and 100,000 events. UI editor entities are paged, not allocated for every retained block. Quota exhaustion/truncation is visible; Direct PTY can continue.
+Interactive POSIX-style shells and PowerShell receive small host-owned prompt hooks. Noninteractive command/script invocations are not injected.
 
-The document output projection handles text and basic terminal controls, not all TUI semantics. The live/history terminal projection is the fidelity path for complex TUIs. Its current canvas/keyboard transport is retained in this change; complete terminal selection, mouse protocols, IME and accessibility remain separate requirements.
+The integration preserves user shell behavior where possible:
 
-Live emulation continues during historical inspection. History creates/advances a separate silent emulator. Returning to live shows current state, never restores process state. Historical emulators cannot send terminal replies/input, mutate clipboard, open URLs or change windows. Explicit user actions such as Copy are distinct from replay side effects.
+- Bash retains existing `PROMPT_COMMAND`;
+- zsh extends `precmd_functions`;
+- PowerShell keeps the user's profile and delegates to the pre-existing prompt function;
+- unsupported/remote foreground applications are not guessed.
 
-Seeking backwards currently reconstructs from the beginning. A future checkpoint needs the full parser/UTF-8/escape state, both screens, cursor, margins, modes, tabs, colors and dimensions; a grid copy is insufficient. Snapshots/indexes are derived caches, not authoritative history.
+Prompt hooks update cwd and PATH after commands typed either through Kea or directly in the terminal. While a foreground TUI/remote program is active, the local shell metadata is explicitly treated as **last reported**.
 
-## Persistence and trust
+Shell driver input for **Run in shell** transports multiline drafts as one physical PTY line. User newline bytes are encoded as data and reconstructed inside the shell, avoiding interactive line-editor splitting before the start marker executes.
 
-Persistence is explicit and create-only. Recordings are unencrypted; submitted command markers/output can contain secrets. No raw keystroke capture is added. Shell markers are interoperability metadata, not authentication; untrusted output can forge metadata. No security decision should trust imported block provenance.
+The hidden-input echo filter fails open: if exact cosmetic suppression becomes unsafe, real output wins over hiding wrapper text.
 
-Validate complete-frame recovery, bounded data, live/history isolation and real platform behavior separately. Compilation, component tests, an X11 smoke test and an actual user desktop are different levels of evidence.
+## Text services and key routing
+
+GPUI Component supplies the editable draft, read-only block text and search fields. Platform text-input integration owns composition and replacement ranges. The terminal surface also implements GPUI's text-input handler so committed IME/composed text can reach the child without a handwritten character approximation.
+
+Editor submission keys are semantic/configurable actions. The editor-native default leaves Enter to the editor and binds Run in shell to Ctrl+Enter. A terminal/chat-style policy can instead bind Enter to Run and Shift+Enter to Newline.
+
+With live terminal focus, every Kea accelerator—defaults and user overrides—is masked at the deeper terminal key context. The terminal encoder then receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
+
+## Completion
+
+Terminal Tab is passed to the child unchanged and remains the authoritative path for shell programmable completion, REPL/application completion, aliases/functions and remote/application-specific behavior.
+
+Editor Tab uses bounded local completion on a worker thread. When an integrated shell is idle it combines:
+
+- retained command prefixes;
+- executables from the shell-reported effective `PATH`;
+- filesystem entries relative to the shell-reported cwd.
+
+Candidates are discarded if text/cursor changed and are applied as ordinary undoable editor replacements. Kea never evaluates draft shell code for completion. Complex syntax intentionally falls back to native terminal completion instead of speculative parsing.
+
+## Layout and optional blocks
+
+PTY rows/columns come from the actual laid-out terminal canvas, not guessed window offsets. The editor and optional inspector therefore cannot crop unseen terminal rows simply by changing layout.
+
+Block widgets are bounded/paged. Output text is read-only/selectable. Focused or selected live snapshots do not change under the reader; explicit refresh updates them. Block UI actions cannot execute commands or alter recorded history.
+
+## Replay and retention
+
+Live and historical emulators are separate. Live output/protocol replies continue while an older screen is inspected. Historical emulators cannot send input, issue replies, mutate the clipboard, open URLs or change windows. Returning to LIVE changes only the view.
+
+Terminal history is currently bounded to 32 MiB of accounted data/overhead or 100,000 events. Structured retention is bounded separately. Reaching a block/document limit may truncate optional structure but never stops the PTY or command execution.
+
+Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks currently replay from zero; future checkpoints must capture complete parser/emulator state, not only the visible grid.
+
+## Platform validation
+
+Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse protocols, keyboard protocol negotiation, accessibility, terminal selection/scrollback and packaging.

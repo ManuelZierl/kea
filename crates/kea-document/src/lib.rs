@@ -31,6 +31,7 @@ pub struct CommandBlock {
     pub started_at: Option<u64>,
     pub finished_at: Option<u64>,
     pub truncated: bool,
+    pub directory: Option<String>,
     output: Vec<u8>,
 }
 
@@ -71,6 +72,7 @@ pub struct Document {
     saturated: bool,
     scanner: MarkerScanner,
     directory: Option<String>,
+    prompt_ready: bool,
 }
 
 impl Document {
@@ -97,16 +99,20 @@ impl Document {
         document
     }
 
-    /// Last explicitly reported shell directory, never inferred from screen text.
-    /// A direct/remote application may have a different directory.
-    pub fn current_directory(&self) -> Option<&str> {
-        self.directory.as_deref()
-    }
-
     pub fn blocks(&self) -> &[CommandBlock] {
         &self.blocks
     }
 
+    /// Last explicit report; never inferred from prompt text.
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+    pub fn prompt_ready(&self) -> bool {
+        self.prompt_ready && !self.has_in_flight()
+    }
+    pub fn note_terminal_input(&mut self) {
+        self.prompt_ready = false;
+    }
     pub fn active(&self) -> Option<u64> {
         self.active
     }
@@ -143,8 +149,9 @@ impl Document {
         if self.blocks.iter().any(|block| block.id == id) {
             return Err(Error::DuplicateCommandId(id));
         }
+        self.prompt_ready = false;
         self.next_id = self.next_id.max(id.saturating_add(1));
-        self.retained_bytes += input.len();
+        self.retained_bytes += input.len() + self.directory.as_ref().map_or(0, String::len);
         self.blocks.push(CommandBlock {
             id,
             input,
@@ -153,6 +160,7 @@ impl Document {
             started_at: None,
             finished_at: None,
             truncated: false,
+            directory: self.directory.clone(),
             output: Vec::new(),
         });
         Ok(())
@@ -175,11 +183,18 @@ impl Document {
                         }
                     }
                 }
-                Piece::Marker(Marker::Directory(path)) => {
-                    self.directory = Some(path);
+                Piece::Marker(Marker::Prompt(directory)) => {
+                    self.abort_in_flight(at);
+                    self.directory = (!directory.is_empty()).then_some(directory);
+                    self.prompt_ready = true;
+                    changed = true;
+                }
+                Piece::Marker(Marker::Directory(directory)) => {
+                    self.directory = Some(directory);
                     changed = true;
                 }
                 Piece::Marker(Marker::Start(id, input)) => {
+                    self.prompt_ready = false;
                     if self.active.is_none() {
                         let index = if let Some(index) =
                             self.blocks.iter().position(|block| block.id == id)
@@ -191,7 +206,8 @@ impl Document {
                                 continue;
                             }
                             self.next_id = self.next_id.max(id.saturating_add(1));
-                            self.retained_bytes += input.len();
+                            self.retained_bytes +=
+                                input.len() + self.directory.as_ref().map_or(0, String::len);
                             self.blocks.push(CommandBlock {
                                 id,
                                 input: input.clone(),
@@ -200,6 +216,7 @@ impl Document {
                                 started_at: None,
                                 finished_at: None,
                                 truncated: false,
+                                directory: self.directory.clone(),
                                 output: Vec::new(),
                             });
                             self.blocks.len() - 1
@@ -270,7 +287,8 @@ impl Document {
 
     fn can_retain_block(&self, input: &str) -> bool {
         self.blocks.len() < MAX_BLOCKS
-            && input.len() <= MAX_DOCUMENT_BYTES.saturating_sub(self.retained_bytes)
+            && input.len() + self.directory.as_ref().map_or(0, String::len)
+                <= MAX_DOCUMENT_BYTES.saturating_sub(self.retained_bytes)
     }
 
     fn block_mut(&mut self, id: u64) -> Option<&mut CommandBlock> {
@@ -292,9 +310,10 @@ pub fn status_label(block: &CommandBlock) -> String {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Marker {
-    Directory(String),
     Start(u64, String),
     Done(u64, i32),
+    Directory(String),
+    Prompt(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,16 +367,21 @@ fn parse_marker(raw: &[u8]) -> Option<Marker> {
     let body = std::str::from_utf8(&raw[MARKER_PREFIX.len()..raw.len() - 1]).ok()?;
     let mut parts = body.split(';');
     match parts.next()? {
-        "cwd" => {
+        kind @ ("cwd" | "prompt") => {
             let encoded = parts.next()?;
-            if parts.next().is_some() || encoded.len() > 10924 {
+            if encoded.len() > 8192 || parts.next().is_some() {
                 return None;
             }
-            let path = String::from_utf8(base64_decode(encoded)?).ok()?;
-            if path.is_empty() || path.len() > 8192 || path.contains('\0') {
+            let directory = String::from_utf8(base64_decode(encoded)?).ok()?;
+            if (directory.is_empty() && kind != "prompt") || directory.chars().any(char::is_control)
+            {
                 return None;
             }
-            Some(Marker::Directory(path))
+            Some(if kind == "prompt" {
+                Marker::Prompt(directory)
+            } else {
+                Marker::Directory(directory)
+            })
         }
         "start" => {
             let id = parts.next()?.parse().ok()?;
@@ -738,27 +762,24 @@ mod tests {
 mod directory_tests {
     use super::*;
     #[test]
-    fn directory_metadata_is_chunk_safe_and_not_command_output() {
-        let path = "C:\\Users\\ä user;project";
-        let marker = format!("\x1b]777;kea;cwd;{}\x07", base64_encode(path.as_bytes()));
-        for split in 0..=marker.len() {
-            let mut doc = Document::new();
-            doc.ingest_output(0, &marker.as_bytes()[..split]);
-            doc.ingest_output(1, &marker.as_bytes()[split..]);
-            assert_eq!(doc.current_directory(), Some(path));
-            assert!(doc.blocks().is_empty());
+    fn explicit_directory_reports_are_chunk_independent() {
+        let mut d = Document::new();
+        let marker = format!(
+            "\x1b]777;kea;prompt;{}\x07",
+            base64_encode("/tmp/space ä;dir".as_bytes())
+        );
+        for byte in marker.as_bytes() {
+            d.ingest_output(1, &[*byte]);
         }
-    }
-    #[test]
-    fn directory_markers_do_not_close_or_corrupt_active_commands() {
-        let mut doc = Document::new();
-        doc.ingest_output(0, b"\x1b]777;kea;start;1;ZWNobyBoaQ==\x07");
-        doc.ingest_output(1, b"hi\x1b]777;kea;cwd;L3RtcA==\x07");
-        doc.ingest_output(2, b"\x1b]777;kea;done;1;0\x07");
-        assert_eq!(doc.current_directory(), Some("/tmp"));
-        assert_eq!(doc.blocks()[0].plain_output(), "hi");
-        assert_eq!(doc.blocks()[0].status, CommandStatus::Finished(0));
-        doc.ingest_output(3, b"\x1b]777;kea;cwd;AA==\x07");
-        assert_eq!(doc.current_directory(), Some("/tmp"));
+        assert_eq!(d.directory(), Some("/tmp/space ä;dir"));
+        assert!(d.prompt_ready());
+        d.note_terminal_input();
+        assert!(!d.prompt_ready());
+        d.ingest_output(2, marker.as_bytes());
+        d.queue_local(1, "pwd".into(), 3).unwrap();
+        assert!(!d.prompt_ready());
+        assert_eq!(d.blocks()[0].directory.as_deref(), d.directory());
+        d.ingest_output(4, b"\x1b]777;kea;prompt;AA==\x07");
+        assert_eq!(d.directory(), Some("/tmp/space ä;dir"));
     }
 }

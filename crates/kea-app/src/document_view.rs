@@ -4,7 +4,7 @@ use super::{button, command_editor, KeaView};
 use gpui::{prelude::*, *};
 use gpui_component::{
     input::{Input, InputState},
-    ActiveTheme, RopeExt,
+    ActiveTheme,
 };
 use kea_document::status_label;
 use std::collections::{HashMap, HashSet};
@@ -20,7 +20,6 @@ pub(super) struct DocumentUi {
     pub filter: Entity<InputState>,
     pub page_start: Option<usize>,
     pub dirty: bool,
-    scroll_pending: bool,
     query: String,
     matches: Vec<usize>,
     last_start: usize,
@@ -28,17 +27,11 @@ pub(super) struct DocumentUi {
     collapsed: HashSet<u64>,
 }
 impl DocumentUi {
-    pub fn follow_latest(&mut self) {
-        self.page_start = None;
-        self.dirty = true;
-        self.scroll_pending = true;
-    }
     pub fn new(window: &mut Window, cx: &mut App) -> Self {
         Self {
             filter: cx.new(|cx| InputState::new(window, cx).placeholder("Find in command blocks…")),
             page_start: None,
             dirty: true,
-            scroll_pending: true,
             query: String::new(),
             matches: Vec::new(),
             last_start: 0,
@@ -171,9 +164,10 @@ impl KeaView {
                             .soft_wrap(self.settings.output_wrap)
                             .default_value(text)
                     });
-                    // Ask the component to reveal the end after it has measured
-                    // its text, without taking focus away from the user's draft.
-                    reveal_end(&editor, window, cx);
+                    command_editor::follow_output_tail(&editor, window, cx);
+                    if self.document_ui.page_start.is_none() {
+                        self.document_scroll.scroll_to_bottom();
+                    }
                     self.document_ui.visible.insert(
                         id,
                         BlockText {
@@ -199,7 +193,7 @@ impl KeaView {
                         view.line_count = text.lines().count().max(1);
                         view.editor
                             .update(cx, |state, cx| state.set_value(text, window, cx));
-                        reveal_end(&view.editor, window, cx);
+                        command_editor::follow_output_tail(&view.editor, window, cx);
                         view.output_len = block.output().len();
                         view.pending = false;
                     }
@@ -238,15 +232,6 @@ impl KeaView {
             }
             blocks = blocks.child(div().id(("block", id)).flex_shrink_0().child(panel));
         }
-        if self.document_ui.scroll_pending {
-            self.document_ui.scroll_pending = false;
-            let scroll = self.document_scroll.clone();
-            let view = cx.entity().downgrade();
-            window.defer(cx, move |_, cx| {
-                scroll.scroll_to_bottom();
-                let _ = view.update(cx, |_, cx| cx.notify());
-            });
-        }
         div()
             .size_full()
             .flex()
@@ -275,7 +260,8 @@ impl KeaView {
                     .child(button("latest-blocks", "Latest").on_click(cx.listener(
                         |this, _, window, cx| {
                             this.focus_active(window, cx);
-                            this.document_ui.follow_latest();
+                            this.document_ui.page_start = None;
+                            this.document_scroll.scroll_to_bottom();
                             cx.notify();
                         },
                     )))
@@ -308,31 +294,4 @@ impl KeaView {
             cx.notify();
         }
     }
-}
-
-/// Reveal output using the editor's own cursor/scroll machinery, after layout.
-/// Preserve focus and recheck selection in case the user started reading meanwhile.
-fn reveal_end(editor: &Entity<InputState>, window: &mut Window, cx: &mut App) {
-    let editor = editor.clone();
-    window.defer(cx, move |window, cx| {
-        if editor.focus_handle(cx).is_focused(window) {
-            return;
-        }
-        let focused = window.focused(cx);
-        editor.update(cx, |state, cx| {
-            if state
-                .selected_text_range(true, window, cx)
-                .is_some_and(|selection| !selection.range.is_empty())
-            {
-                return;
-            }
-            let end = state.text().offset_to_position(state.text().len());
-            state.set_cursor_position(end, window, cx);
-        });
-        if let Some(focused) = focused {
-            window.focus(&focused);
-        } else {
-            window.blur();
-        }
-    });
 }
