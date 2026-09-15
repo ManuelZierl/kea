@@ -17,10 +17,15 @@ impl ShellMetadata {
         self.path.as_deref()
     }
 
-    /// Consume arbitrary PTY chunking. Returns true if the effective PATH changed.
+    /// Consume arbitrary PTY chunking.
+    ///
+    /// The boolean is intentionally always false. The caller combines this with
+    /// `Document::ingest_output` using `||`; returning true here would short-circuit
+    /// the document parser and could hide a prompt/start/done marker that happened
+    /// to share the same PTY read. Output itself already causes a UI notification,
+    /// so PATH changes do not need a separate `changed` signal.
     pub fn ingest(&mut self, bytes: &[u8]) -> bool {
         self.pending.extend_from_slice(bytes);
-        let mut changed = false;
         loop {
             let Some(start) = find_bytes(&self.pending, PREFIX) else {
                 let keep = suffix_prefix_len(&self.pending, PREFIX);
@@ -44,11 +49,10 @@ impl ShellMetadata {
             if let Some(path) = parse(&raw) {
                 if self.path.as_deref() != Some(&path) {
                     self.path = Some(path);
-                    changed = true;
                 }
             }
         }
-        changed
+        false
     }
 }
 
@@ -139,8 +143,8 @@ mod tests {
         let marker = b"\x1b]778;kea;path;L2Jpbg==\x07"; // /bin
         for split in 0..=marker.len() {
             let mut metadata = ShellMetadata::default();
-            metadata.ingest(&marker[..split]);
-            metadata.ingest(&marker[split..]);
+            assert!(!metadata.ingest(&marker[..split]));
+            assert!(!metadata.ingest(&marker[split..]));
             assert_eq!(metadata.path(), Some("/bin"));
         }
     }
