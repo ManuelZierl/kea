@@ -14,10 +14,6 @@ impl ShellFlavor {
             .map(|program| program.to_string_lossy().into_owned())
             .or_else(|| std::env::var("SHELL").ok())?;
         let shell = Self::from_program(&program)?;
-
-        // Only instrument launches that are known to remain interactive. Never
-        // inject prompt hooks into scripts, -c/-Command invocations or unknown
-        // argument combinations.
         let allowed: &[&str] = match shell {
             Self::Posix => &["-i", "-l", "--login", "--noprofile", "--norc"],
             Self::PowerShell => &["-nologo", "-noprofile", "-noexit"],
@@ -43,14 +39,13 @@ impl ShellFlavor {
         }
     }
 
-    /// Install a prompt hook without replacing the user's normal prompt/profile.
-    /// Every idle prompt reports the real local shell cwd and PATH. That makes cwd
-    /// tracking follow commands typed directly in the terminal as well as commands
-    /// submitted through the editor; no prompt text is scraped.
+    /// Install a prompt hook without replacing the user's profile or normal prompt.
+    /// OSC 777 remains recording/document metadata for cwd/readiness. OSC 778 is
+    /// live host metadata carrying the shell's effective PATH for completion.
     pub fn integration(self, command: &[OsString]) -> Vec<u8> {
         match self {
             Self::PowerShell => {
-                let script = r#"if (-not $global:__kea_prompt_installed) { $global:__kea_prompt_installed=$true; $global:__kea_saved_prompt=$function:prompt; function global:prompt { $keaLast=$global:LASTEXITCODE; $keaCwd=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path)); $keaPath=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$env:PATH)); [Console]::Write([char]27+']777;kea;prompt;'+$keaCwd+';'+$keaPath+[char]7); $global:LASTEXITCODE=$keaLast; if ($global:__kea_saved_prompt) { & $global:__kea_saved_prompt } else { 'PS '+(Get-Location).Path+'> ' } } }
+                let script = r#"if (-not $global:__kea_prompt_installed) { $global:__kea_prompt_installed=$true; $global:__kea_saved_prompt=$function:prompt; function global:prompt { $keaLast=$global:LASTEXITCODE; $keaCwd=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path)); $keaPath=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$env:PATH)); [Console]::Write([char]27+']777;kea;prompt;'+$keaCwd+[char]7+[char]27+']778;kea;path;'+$keaPath+[char]7); $global:LASTEXITCODE=$keaLast; if ($global:__kea_saved_prompt) { & $global:__kea_saved_prompt } else { 'PS '+(Get-Location).Path+'> ' } } }
 "#;
                 script
                     .bytes()
@@ -64,7 +59,7 @@ impl ShellFlavor {
                     .or_else(|| std::env::var("SHELL").ok())
                     .unwrap_or_else(|| "sh".into());
                 let name = program.rsplit('/').next().unwrap_or(&program);
-                let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
+                let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
                 let hook = match name {
                     "bash" => r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#,
                     "zsh" => "precmd_functions+=(__kea_prompt)",
@@ -75,9 +70,8 @@ impl ShellFlavor {
         }
     }
 
-    /// Build one *physical* line for the interactive shell. User newlines are
-    /// encoded as data and decoded inside the shell, so a multiline editor draft
-    /// cannot be split by Readline/PSReadLine before Kea's start marker executes.
+    /// Build one physical PTY line. User newlines are decoded only *inside* the
+    /// shell so an interactive line editor cannot split a multiline draft early.
     pub fn wrap(self, id: u64, input: &str) -> Result<Vec<u8>, Error> {
         let encoded = encode_input(input)?;
         let command = match self {
@@ -103,8 +97,6 @@ impl ShellFlavor {
 fn encode_posix_source(input: &str) -> String {
     let mut encoded = String::with_capacity(input.len().saturating_mul(5));
     for byte in input.as_bytes() {
-        // POSIX printf %b supports \0ddd octal escapes. No user byte is copied
-        // literally into the interactive shell line.
         write!(&mut encoded, "\\0{byte:03o}").expect("writing to String cannot fail");
     }
     encoded
@@ -116,10 +108,7 @@ mod tests {
 
     #[test]
     fn detects_only_supported_interactive_shell_launches() {
-        assert_eq!(
-            ShellFlavor::from_program("/bin/bash"),
-            Some(ShellFlavor::Posix)
-        );
+        assert_eq!(ShellFlavor::from_program("/bin/bash"), Some(ShellFlavor::Posix));
         assert_eq!(
             ShellFlavor::from_program(r"C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
             Some(ShellFlavor::PowerShell)
@@ -141,10 +130,11 @@ mod tests {
     }
 
     #[test]
-    fn prompt_integration_reports_cwd_and_path_without_replacing_profiles() {
+    fn prompt_integration_reports_cwd_and_path_and_preserves_prompt() {
         let posix = String::from_utf8(ShellFlavor::Posix.integration(&["bash".into()])).unwrap();
         assert!(posix.contains("PROMPT_COMMAND"));
-        assert!(posix.contains("kea;prompt;%s;%s"));
+        assert!(posix.contains("777;kea;prompt;%s"));
+        assert!(posix.contains("778;kea;path;%s"));
         assert!(posix.contains("$PWD"));
         assert!(posix.contains("$PATH"));
 
@@ -154,7 +144,8 @@ mod tests {
         .unwrap();
         assert!(ps.contains("__kea_saved_prompt"));
         assert!(ps.contains("$env:PATH"));
-        assert!(ps.contains("kea;prompt;"));
+        assert!(ps.contains("777;kea;prompt;"));
+        assert!(ps.contains("778;kea;path;"));
     }
 
     #[test]
@@ -163,11 +154,7 @@ mod tests {
         for shell in [ShellFlavor::Posix, ShellFlavor::PowerShell] {
             let wrapper = shell.wrap(42, input).unwrap();
             assert_eq!(wrapper.last(), Some(&b'\r'));
-            assert!(
-                !wrapper[..wrapper.len() - 1].contains(&b'\n'),
-                "wrapper contains a physical LF: {}",
-                String::from_utf8_lossy(&wrapper)
-            );
+            assert!(!wrapper[..wrapper.len() - 1].contains(&b'\n'));
             assert!(String::from_utf8_lossy(&wrapper).contains("start;42"));
             assert!(String::from_utf8_lossy(&wrapper).contains("done;42"));
         }
@@ -222,7 +209,6 @@ mod tests {
             .unwrap();
         pump_until(&mut session, &mut document, Document::prompt_ready);
         assert!(document.directory().is_some());
-        assert!(document.shell_path().is_some());
 
         session.send(b"cd /tmp\r".to_vec()).unwrap();
         document.note_terminal_input();
@@ -234,6 +220,7 @@ mod tests {
         session
             .send_hidden(ShellFlavor::Posix.wrap(9, input).unwrap())
             .unwrap();
+        document.note_terminal_input();
         pump_until(&mut session, &mut document, |d| {
             d.blocks()
                 .last()
