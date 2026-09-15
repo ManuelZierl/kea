@@ -2,7 +2,7 @@
 use crate::shell::ShellFlavor;
 use std::{
     collections::BTreeSet,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -37,8 +37,6 @@ pub fn suggest(
     let mut results = Vec::new();
     let mut seen = BTreeSet::new();
 
-    // Full-draft retained-history completion is useful even if shell metadata is
-    // unavailable (for example while an application is running).
     if cursor == text.len() && !prefix.trim().is_empty() {
         for command in history.iter().rev() {
             if command.starts_with(prefix) && command != prefix && seen.insert(command.clone()) {
@@ -188,7 +186,7 @@ fn executable_name(path: &Path) -> Option<String> {
     {
         let extension = path
             .extension()
-            .and_then(OsStr::to_str)
+            .and_then(|extension| extension.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
         if !matches!(extension.as_str(), "exe" | "com" | "bat" | "cmd" | "ps1") {
@@ -372,6 +370,8 @@ mod tests {
             &[],
             Some(ShellFlavor::Posix),
         );
-        assert!(candidates.iter().all(|candidate| !candidate.label.starts_with("Command:")));
+        assert!(candidates
+            .iter()
+            .all(|candidate| !candidate.label.starts_with("Command:")));
     }
 }
