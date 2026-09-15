@@ -2892,12 +2892,20 @@ dependencies = [
  "gpui",
  "kea-alacritty",
  "kea-core",
+ "kea-document",
  "kea-session",
 ]
 
 [[package]]
 name = "kea-core"
 version = "0.1.0"
+
+[[package]]
+name = "kea-document"
+version = "0.1.0"
+dependencies = [
+ "kea-core",
+]
 
 [[package]]
 name = "kea-pty"

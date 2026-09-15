@@ -1,0 +1,6 @@
+# GPUI's deeply nested element types can overflow rustc's default worker stack
+# while compiling kea-app, especially the test harness. This affects only the
+# compiler process, not Kea's runtime stack. rustc currently recommends 32 MiB
+# for this expansion.
+[env]
+RUST_MIN_STACK = { value = "33554432", force = false }

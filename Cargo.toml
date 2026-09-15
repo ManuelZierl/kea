@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty", "crates/kea-session", "crates/kea-app"]
+members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty", "crates/kea-session", "crates/kea-document", "crates/kea-app"]
 default-members = ["crates/kea-app"]
 resolver = "2"
 
@@ -14,6 +14,7 @@ kea-core = { path = "crates/kea-core" }
 kea-alacritty = { path = "crates/kea-alacritty" }
 kea-pty = { path = "crates/kea-pty" }
 kea-session = { path = "crates/kea-session" }
+kea-document = { path = "crates/kea-document" }
 alacritty_terminal = "=0.26.0"
 portable-pty = "=0.9.0"
 gpui = "=0.2.2"

@@ -8,11 +8,13 @@ publish.workspace = true
 [[bin]]
 name = "kea"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 kea-core.workspace = true
 kea-alacritty.workspace = true
 kea-session.workspace = true
+kea-document.workspace = true
 gpui.workspace = true
 anyhow.workspace = true
 

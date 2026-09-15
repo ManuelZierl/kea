@@ -24,8 +24,8 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session
-      - run: cargo clippy --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
+      - run: cargo test --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document
+      - run: cargo clippy --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document --all-targets -- -D warnings
   desktop-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -41,8 +41,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
       - run: cargo test --locked -p kea-app
       - run: cargo build --locked -p kea-app
-      - name: Desktop replay smoke test
-        run: timeout 90s xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash scripts/smoke-linux.sh
+      - name: Desktop document/replay smoke test
+        run: timeout 120s xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash scripts/smoke-linux.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:

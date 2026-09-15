@@ -2,54 +2,43 @@
 
 ## Product direction
 
-Kea is not primarily a replay terminal. The target is a document-native terminal: editable command input, persistent read-only output, structured command/output history, and full PTY/TUI compatibility when an application needs a terminal screen.
+Kea is a document-native terminal. Replay/time travel is a consequence of retaining terminal state, not the top-level product.
 
-Replay and time travel are consequences of retaining terminal state instead of treating the current mutable screen as the only truth.
+The core interaction model is now implemented end to end:
 
-### Interaction model
-
-- Command input behaves like an editor, not a shell line discipline.
-- Enter inserts a newline; an explicit configurable shortcut executes the buffer.
-- Output is read-only.
-- Interactive programs can switch to explicit Direct PTY input when they need individual key events.
-- All user-facing shortcuts are semantic/configurable and use host-OS defaults where practical.
-- Copy defaults to `Ctrl+C` on Linux/Windows and `Cmd+C` on macOS; terminal interrupt is a separate action.
-- Shortcut resolution belongs to the application/UI layer; `kea-core` does not encode platform keybindings.
-
-## Implemented scope
-
-The current prototype includes:
-
-- GPUI window, PTY shell/program launch and Alacritty screen projection;
-- a local multiline Document input mode where Enter inserts a newline and an explicit action executes the buffer;
-- a Direct PTY compatibility mode for TUIs, REPLs and programs that need immediate key forwarding;
-- semantic, configurable keybindings with OS-native defaults and a separate interrupt action;
-- bounded output history, resize/exit events, separate read-only historical projection, event/time seeking, playback and return to live;
-- optional persistence/reopening, whole-screen copy, paste, tests and a synthetic no-process history demo.
-
-The local editor is not yet a full structured command document: command/output blocks, selection, undo/redo, shell metadata and IDE-grade text editing remain future work.
+- editable multiline command input;
+- explicit configurable execute action;
+- first-class persistent command/output blocks;
+- block lifecycle, exit status and timing;
+- read-only document output;
+- Direct PTY compatibility over the same process;
+- explicit shell boundary protocol rather than prompt inference;
+- reconstruction of structured blocks from saved terminal recordings;
+- configurable semantic shortcuts with OS-native defaults.
 
 ## Manual Ubuntu acceptance
 
-1. Run `cargo run --release`. Type a multiline command without sending it: Enter must add lines locally; Ctrl+Enter must submit the buffer.
-2. Verify native clipboard policy: Ctrl+C copies the visible terminal output, Ctrl+V pastes into Document input, and Ctrl+Shift+C sends interrupt by default.
-3. Add `~/.config/kea/keybindings.conf` that swaps copy/interrupt; restart and verify the override is applied.
-4. Toggle Direct PTY mode with Ctrl+Shift+Space. Launch `cargo run --release -- --direct -- opencode` and check typing, Ctrl+Enter/Shift+Enter behavior, resize, colors and alternate screen.
-5. Run `cargo run --release -- --demo`. Recover the overwritten error using the timeline or F6/F7; resume with F8.
-6. Launch a shell, run `printf 'before\r'; sleep 1; printf 'after\n'`, rewind and return to LIVE. Input must be blocked in history.
-7. Record a short non-sensitive session with `--record example.kea`; reopen with `--replay example.kea` and compare old screens.
-8. Resize in live/history mode. Old dimensions must be preserved, and the current size must reach the child after return to LIVE.
+1. Launch `cargo run --release -- -- bash --noprofile --norc`. Type `printf hello`, execute with Ctrl+Enter and verify a command block appears with `hello` and exit 0.
+2. Enter a multiline shell construct. Plain Enter must add lines locally; only the execute action may submit the buffer.
+3. Execute `cd /tmp`, then `pwd` as a second block. It must run in the same shell session and print `/tmp`.
+4. Execute a TUI such as `vim` or `opencode`; while its block is running, switch to Direct PTY, interact with it, exit it, then return to Document mode. The block must finish rather than spawning a second shell.
+5. Interrupt a long Document command using the configured interrupt action. The shell should recover and the block should finish with its non-zero status when the shell wrapper regains control.
+6. Record a short non-sensitive document session with `--record example.kea`; reopen using `--replay example.kea`. Command text/output/status must reconstruct without executing anything.
+7. In terminal view/demo, recover the transient overwritten error with the timeline/F6 and return to LIVE. History must remain read-only while the live process continues.
+8. Override copy/interrupt/execute in `keybindings.conf` and verify the semantic actions follow the configured bindings.
 
-Compilation and unit tests do not substitute for these application-specific checks. Include OS, terminal application/version, keyboard layout and display backend in compatibility reports.
+Compilation and unit tests do not substitute for interactive checks. Include OS, shell/version, keyboard layout and display backend in compatibility reports.
 
-## Next capabilities
+## Next quality work
 
-**Document UX:** turn the local editor/output split into first-class structured command blocks. Add selection, copy of selections, undo/redo, richer cursor/mouse editing, IME and accessibility, command history/edit-and-rerun, collapsible output and search. Add optional shell integration for cwd, command boundaries, duration and exit status. Do not infer command boundaries from arbitrary prompt regexes.
+**Editor quality:** selections, undo/redo, better multiline navigation, IME/AltGr/non-US layouts, syntax highlighting/completion and reusable/rerunnable earlier command blocks.
 
-**Input and compatibility:** full keyboard protocol negotiation, AltGr/non-US layouts, mouse/focus events, measured font layout/shaping, clipping and ordinary scrollback. Explicitly validate OpenCode, shells, Vim, less, SSH and tmux. Add Windows/macOS desktop builds/packages. Keep Direct PTY as an explicit compatibility path rather than leaking TUI conventions into Document mode.
+**Document richness:** explicit shell-provided cwd/environment metadata where trustworthy, block collapse/bookmarks/diff/search, selectable/copyable ranges, stdout/stderr separation when execution is not PTY-merged, and better rendering choices for commands that contain heavy TUI output.
 
-**Long sessions:** async cancellable seek, full-state checkpoints with equivalence/property tests, chunked indexed/compressed storage, retention policy, historical text indexing including within-chunk transient text, latency/CPU/memory/load benchmarks.
+**Terminal correctness:** mouse/focus events, selection, accessibility, measured font shaping/layout, ordinary scrollback behavior, full keyboard protocol negotiation, image protocols and validation against OpenCode, Vim, less, SSH and tmux on real machines.
 
-**History as document data:** searchable historical states, deduplication with timestamps, bookmarks/diff, links from structured command blocks into terminal history and precise transient-output inspection. Replay remains a consequence of persistent terminal state, not the product hierarchy.
+**Long sessions:** async cancellable historical seek, full-state checkpoints with equivalence tests, indexed/compressed storage, retention configuration, historical full-text indexing and latency/CPU/memory/storage benchmarks.
 
-**Zed proposal:** once the interaction model and overhead are measured, propose the smallest reusable pieces. Reuse Zed's existing PTY, editor conventions and renderer; keep `kea-core` free of GPUI/keybinding/shell policy. Start with an isolated integration demonstrating document input plus read-only historical inspection rather than transplanting the standalone app wholesale.
+**Cross-platform desktop:** package and interactively validate Windows/macOS applications, especially PowerShell document execution, shortcut conventions, ConPTY behavior and IME.
+
+**Zed proposal:** demonstrate the document model and measured overhead in the standalone app, then propose a narrow integration that reuses Zed's PTY/renderer/editor/actions rather than transplanting the entire app. No claim that Kea is an accepted Zed feature until maintainers agree.

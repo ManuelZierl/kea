@@ -2,98 +2,108 @@
 
 **The terminal, rethought as a persistent document.**
 
-Kea explores a different terminal model: instead of treating one mutable character grid as the canonical user interface, treat the terminal session as persistent state with editor-like input and inspectable output.
+Kea explores a different terminal model: normal shell work is a sequence of persistent command/output blocks, while a real PTY remains underneath for compatibility with existing terminal software.
 
-The intended experience is closer to an editor than a traditional terminal:
+In Document mode:
 
 - command input is editable multiline text;
 - `Enter` inserts a newline and an explicit action executes the block;
-- output is read-only rather than being the place where input editing happens;
-- interactive PTY/TUI programs still work through a direct compatibility mode;
-- terminal state changes are retained instead of disappearing when a program redraws the screen.
+- an executed command becomes a first-class command block;
+- output is retained as read-only content associated with that command;
+- each block has lifecycle state, exit status and duration;
+- saved `.kea` recordings can reconstruct those blocks without guessing shell prompts;
+- interactive programs can temporarily use the exact same PTY through Direct mode.
 
-That model enables normal editor behavior, structured command/output history, better search and inspection, transient-error recovery, agent observability, and time travel through interactive applications. **Replay is a consequence of the model, not Kea's main purpose.**
+Terminal state changes are recorded too, which enables inspection and rewind of transient TUI states. **Replay is a consequence of the model, not Kea's main purpose.**
 
-## Why
+## The model
 
-A conventional terminal exposes one mutable character grid. Input and output share that grid, shell editing uses terminal-specific conventions, scrollback is only a partial history, and a TUI is free to overwrite what was visible a moment ago.
+A conventional terminal exposes one mutable character grid. Shell input, command output and interactive applications all compete for that surface, and history is mostly whatever happened to scroll off it.
 
-Kea's model is different:
+Kea separates the concepts:
 
 ```text
 Session document
 
-[read-only terminal/output]
-$ cargo test
-running 42 tests
-...
-test result: ok
+┌ command #1 · exit 0 · 1.42s ──────────────────────┐
+│ cargo test                                         │
+├ read-only output ──────────────────────────────────┤
+│ running 42 tests                                   │
+│ ...                                                │
+│ test result: ok                                    │
+└────────────────────────────────────────────────────┘
 
-[document input]
-docker compose run --rm backend \
-    python manage.py migrate
-
-Enter       -> newline
-Ctrl+Enter  -> execute (default; configurable)
+┌ command editor ────────────────────────────────────┐
+│ docker compose run --rm backend \                  │
+│     python manage.py migrate                       │
+│                                                    │
+│ Enter = newline        Ctrl+Enter = execute        │
+└────────────────────────────────────────────────────┘
 ```
 
-Interactive programs remain compatible through a PTY. Their display is backed by an ordered terminal event history, so the current screen is only one view of the session rather than the session itself.
+For something such as OpenCode, Vim, `less`, SSH or a REPL, switch to **Direct PTY**. Kea does not start a second shell: keystrokes go to the same live PTY. When the interactive program exits, switch back and continue the same document session.
 
-This makes otherwise unusual capabilities natural rather than bolted on:
+This gives Kea two complementary views over one session:
 
-- recover text that a TUI displayed only briefly and then erased;
-- inspect or search historical terminal states;
-- rewind an interactive application without rewinding or re-executing the process;
-- eventually associate commands with output, cwd, duration and exit status when shell metadata is available;
-- collapse, bookmark, compare, copy or revisit previous command results;
-- give IDEs and coding agents structured terminal history instead of forcing them to scrape an ephemeral screen.
+1. **Document view** for ordinary commands and persistent read-only output.
+2. **Terminal view** for software that genuinely needs terminal-screen semantics, including historical reconstruction.
+
+## Structured command blocks
+
+Kea does not infer command boundaries from prompt regexes. In Document mode it owns submission explicitly and wraps the command with a small shell adapter that emits private OSC markers before and after execution. The markers carry a command ID and the original command text; the completion marker carries the exit status.
+
+The markers are ordinary terminal output bytes, so the existing append-only recording remains canonical. `kea-document` derives command blocks from that stream. Reopening a recorded session therefore reconstructs the same structured document without re-executing commands or requiring a separate sidecar database.
+
+Currently supported Document-mode shell adapters are:
+
+- POSIX-style interactive shells: `sh`, `bash`, `dash`, `zsh`, `ksh`, `mksh`;
+- PowerShell: `pwsh` / Windows PowerShell.
+
+Other programs still work in Direct PTY mode. On Windows, launching Kea without an explicit program uses Windows PowerShell for Document mode rather than `cmd.exe`.
+
+Document metadata is deliberately modest for now: command text, lifecycle, exit status, timing and retained output. Working-directory metadata is not fabricated when the shell has not explicitly supplied it.
 
 ## Input modes
 
-Kea currently has two explicit input modes.
-
 ### Document mode
 
-This is the default. Keystrokes edit a local multiline command buffer instead of being sent immediately to the PTY.
+This is the default when Kea recognizes the interactive shell.
 
 - `Enter` inserts a newline.
-- `Ctrl+Enter` executes the whole buffer by default.
+- `Ctrl+Enter` executes the whole editor buffer by default.
 - arrow keys, Home/End, Backspace/Delete and Tab edit the local buffer.
 - paste inserts text into the local buffer.
-- after successful submission the buffer is cleared.
-
-The current editor is intentionally small. It does not yet have selections, undo/redo, full IME behavior, syntax highlighting, completion, or true structured command/output blocks. Submission currently feeds the buffered lines into the underlying PTY; Kea does not infer shell command boundaries from prompt text.
+- only one Document command is submitted at a time, because one interactive shell cannot reliably delimit overlapping foreground commands.
+- if a command opens a TUI, switch to Direct PTY and interact with it there; the command block stays running until the shell regains control.
 
 ### Direct PTY mode
 
-Some programs need individual key events immediately: OpenCode, Vim, REPLs, `less`, `htop`, SSH sessions and other TUIs. Direct PTY mode forwards ordinary terminal keys to the child using terminal protocol encoding.
-
-Toggle Document/Direct mode with `Ctrl+Shift+Space` by default, or start directly in compatibility mode:
+Direct mode forwards ordinary terminal key sequences to the current child. Toggle modes with `Ctrl+Shift+Space` by default, or start directly there:
 
 ```bash
 kea --direct -- opencode
 ```
 
-In Direct mode `Ctrl+Enter` is left available to the child rather than being captured as Kea's execute action. This matters for applications such as OpenCode that distinguish modified Enter from ordinary Enter.
+In Direct mode `Ctrl+Enter` is left available to the child rather than being captured as Kea's execute action. This is useful for applications such as OpenCode that distinguish modified Enter from ordinary Enter.
 
 ## Shortcuts
 
-Kea actions and physical shortcuts are separate. The defaults follow desktop conventions rather than assuming traditional terminal bindings.
+Kea actions and physical shortcuts are separate and configurable. Defaults follow desktop conventions rather than inheriting terminal conventions blindly.
 
 | Action | Linux / Windows | macOS |
 | --- | --- | --- |
-| Copy visible output | `Ctrl+C` | `Cmd+C` |
+| Copy current document/view | `Ctrl+C` | `Cmd+C` |
 | Paste | `Ctrl+V` | `Cmd+V` |
 | Interrupt child | `Ctrl+Shift+C` | `Ctrl+C` |
 | Execute document input | `Ctrl+Enter` | `Ctrl+Enter` |
 | Toggle Document / Direct PTY | `Ctrl+Shift+Space` | `Ctrl+Shift+Space` |
-| Previous / next history event | `F6` / `F7` | `F6` / `F7` |
+| Previous / next terminal-history event | `F6` / `F7` | `F6` / `F7` |
 | Back / forward five seconds | `Shift+F6` / `Shift+F7` | `Shift+F6` / `Shift+F7` |
-| Play / pause history | `F8` | `F8` |
+| Play / pause terminal history | `F8` | `F8` |
 | Return to live | `F9` | `F9` |
 | Quit | `Ctrl+Shift+Q` | `Cmd+Q` |
 
-Copy currently copies the entire visible terminal screen because text selection is not implemented yet.
+In Document view, copy currently copies the retained structured document. In terminal/history view it copies the visible terminal screen. Fine-grained text selection is not implemented yet.
 
 ### Configure shortcuts
 
@@ -104,8 +114,6 @@ Kea reads an optional `keybindings.conf` from:
 - Windows: `%APPDATA%\Kea\keybindings.conf`
 
 Set `KEA_KEYBINDINGS=/some/path` to use an explicit file instead.
-
-The format is deliberately small: one semantic action per line. Multiple shortcuts can be comma-separated and `none` unbinds an action.
 
 ```text
 # Restore traditional terminal copy/interrupt behavior on Linux:
@@ -119,22 +127,24 @@ toggle_direct = ctrl-shift-space
 go_live = f9
 ```
 
-Duplicate shortcut assignments are rejected. If the file is invalid, Kea shows a warning and falls back to the OS defaults rather than silently applying a partial configuration.
+Multiple shortcuts can be comma-separated and `none` unbinds an action. Duplicate assignments are rejected. An invalid file produces a warning and Kea falls back to OS defaults.
 
-## What exists today
+## Terminal history and replay
 
-The current prototype contains both halves needed to explore the model:
+Kea also records ordered terminal output, resizes and process lifecycle events. The live process keeps running while an older screen state is inspected. Historical replay never sends input or re-executes commands.
 
-1. **document-oriented interaction:** a basic multiline local command editor, explicit execution, configurable semantic shortcuts and Direct PTY fallback;
-2. **persistent terminal state:** native Rust/GPUI window, real PTY, Alacritty emulation, bounded terminal-event history, historical reconstruction, timeline/playback and optional recording files.
+This is especially useful for:
 
-The live process continues running while an older terminal state is inspected, and replay never re-executes commands.
+- errors that flashed briefly and were overwritten;
+- TUI redraws;
+- inspecting what a coding agent displayed earlier;
+- reopening a recorded session without starting its process again.
 
-This is still not a replacement for a mature terminal. In particular, command/output blocks are not yet first-class objects, terminal rendering/input compatibility is incomplete, and the local editor is deliberately basic. Kea is structured so the core history/session machinery can remain independent of the UI and potentially be integrated into editors such as Zed.
+Document blocks and terminal history are related but not the same abstraction. A block is structured command/output state; terminal history is the underlying compatibility/event stream.
 
 ## Try it on Ubuntu
 
-Install a current stable Rust toolchain through [rustup](https://rustup.rs/), then install the native build dependencies. The Linux desktop requires a graphical session and a working Vulkan driver.
+Install a current stable Rust toolchain through [rustup](https://rustup.rs/), then the native build dependencies. The desktop requires a graphical session and a working Vulkan driver.
 
 ```bash
 sudo apt-get update
@@ -151,20 +161,19 @@ cargo run --release
 Useful variants:
 
 ```bash
-# Start in Direct PTY mode for a TUI:
+# Start a TUI directly in compatibility mode:
 cargo run --release -- --direct -- opencode
 
-# Synthetic history demonstration:
+# Synthetic terminal-history demonstration:
 cargo run --release -- --demo
 
-# Record to a NEW file; existing files are never overwritten:
+# Record a new session. Existing files are never overwritten:
 cargo run --release -- --record session.kea -- bash
 
-# Inspect a recording without starting a process:
+# Reopen a recording without starting a process. Structured blocks are rebuilt
+# from the recorded document markers when present:
 cargo run --release -- --replay session.kea
 ```
-
-The demo briefly displays `ERROR: connection failed`, overwrites it with `Ready`, and lets you recover the error by moving backwards through history. It demonstrates one consequence of retaining terminal state changes; it is not the complete Kea UX.
 
 The executable is `target/release/kea`. `cargo install --path crates/kea-app` installs it locally. There is no crates.io release or installer yet.
 
@@ -172,37 +181,38 @@ The executable is `target/release/kea`. `cargo install --path crates/kea-app` in
 
 | Crate | Responsibility |
 | --- | --- |
-| `kea-core` | Standard-library-only events, recording format, validation, replay trait |
+| `kea-core` | Standard-library-only canonical terminal events, recording format, validation and replay trait |
+| `kea-document` | UI-independent command/output block model and streaming document-marker parser |
 | `kea-alacritty` | Replaceable Alacritty terminal projection and silent replay |
 | `kea-pty` | Standalone Unix PTY / Windows ConPTY transport |
-| `kea-session` | Separate live/history state, playback, optional disk writer |
-| `kea-app` | GPUI UI, document editor, semantic keymap, timeline and terminal rendering |
+| `kea-session` | Live/history state, observation tap, hidden application-owned input, playback and optional disk writer |
+| `kea-app` | GPUI document/terminal views, multiline editor, shell adapters, semantic keymap and timeline |
 
-The core does not depend on Zed, GPUI, a shell, a PTY library, Alacritty, or keybinding policy. The standalone application uses published Alacritty and GPUI crates; it does not copy Zed's terminal code. A future Zed integration should reuse Zed's process ownership, editor conventions and renderer rather than embedding Kea's whole standalone application.
+`kea-core` and `kea-document` do not depend on GPUI, Zed, a PTY library or an OS UI. Shell-specific command wrapping lives in the host application rather than the portable document model. A future Zed integration should reuse Zed's process ownership, editor/keybinding conventions and renderer while reusing or adapting the portable recording/document layers.
 
-See [architecture](docs/architecture.md), [recording format](docs/recording-format.md), [roadmap](docs/roadmap.md), and [development invariants](AGENTS.md).
+See [architecture](docs/architecture.md), [document protocol](docs/document-protocol.md), [recording format](docs/recording-format.md), [roadmap](docs/roadmap.md), and [development invariants](AGENTS.md).
 
-## Privacy and limits
+## Limits and privacy
 
-History stays in memory unless `--record` is supplied. **Raw keystrokes are not recorded, but output can contain echoed commands, passwords, tokens and private documents.** Recordings are neither encrypted nor automatically redacted. Unix files are created with mode `0600`; Windows files inherit directory permissions. Keep recordings private and out of Git.
+History stays in memory unless `--record` is supplied. **Terminal output can contain echoed commands, passwords, tokens and private documents. Structured command blocks explicitly retain submitted command text.** Recording files are neither encrypted nor automatically redacted. Unix files are created with mode `0600`; Windows files inherit directory permissions. Keep recordings private and out of Git.
 
-History is bounded to 32 MiB of accounted event data/overhead or 100,000 events. On exhaustion, capture stops with a warning while the live terminal continues. The retained prefix is not silently overwritten. Disk queue/storage failures stop persistence with a warning. These limits are not a claim that the whole application uses only 32 MiB of RAM.
+Terminal history is bounded to 32 MiB of accounted event data/overhead or 100,000 events. Structured document retention is separately bounded: a command is at most 64 KiB, a block retains at most 4 MiB of output, the in-memory document retains at most 64 MiB and 10,000 blocks. Hitting a limit is surfaced rather than silently pretending the document/history is complete; the underlying terminal can continue.
 
-Backward seeking currently replays from the beginning; forward playback reuses its historical engine. There are no full-state checkpoints, compression, history text search or long-session disk browsing yet. Timestamps are measured at ingestion, not at the program's internal write time. Several updates in one output chunk cannot yet be selected as separate timestamped frames.
+Backward terminal-history seeking currently replays from the beginning. There are no full-state checkpoints, compressed long-session storage or historical full-text index yet. Several terminal updates received inside one PTY read chunk cannot yet be selected as separate timestamped frames.
 
-Input/rendering remain basic: no full IME integration, mouse reporting, selection, undo/redo, traditional scrollback UI, complete Kitty keyboard protocol, terminal image protocol or accessibility implementation. Wide/combining characters are represented, but font metrics and complex shaping need work. Full interactive OpenCode compatibility still needs validation on real machines.
+The local editor and terminal renderer are still intentionally small: no selection, undo/redo, full IME integration, mouse reporting, complete Kitty keyboard protocol, terminal image protocol or accessibility implementation. Document output uses a conservative text projection for command blocks; Direct mode remains the fidelity path for complex TUIs.
 
 ## Development
 
 ```bash
 cargo fmt --all -- --check
-cargo test -p kea-core -p kea-alacritty -p kea-pty -p kea-session
-cargo clippy -p kea-core -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
+cargo test -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p kea-session
+cargo clippy -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
 cargo test -p kea-app
 cargo build -p kea-app
 ```
 
-CI runs engine/session/transport tests on Linux, macOS and Windows, and builds/tests the GPUI app on Linux. It also runs a Linux Xvfb desktop smoke test of the synthetic history demo. Check the actual results for your commit; a configured CI job is not a compatibility guarantee. macOS/Windows desktop packaging and interactive validation remain outstanding.
+CI runs portable engine/document/session tests on Linux, macOS and Windows, and builds/tests the GPUI application on Linux. The Linux desktop smoke test exercises both structured Document execution and terminal-history rewind/copy. macOS/Windows desktop packaging and interactive validation remain outstanding.
 
 ## License
 
