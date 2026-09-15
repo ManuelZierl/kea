@@ -1,6 +1,14 @@
-# Kea
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/kea-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/kea-logo.svg">
+    <img alt="Kea" src="assets/kea-logo.svg" width="220">
+  </picture>
+</p>
 
-**The terminal, rethought as a persistent document.**
+<h1 align="center">Kea</h1>
+
+<p align="center"><strong>The terminal, rethought as a persistent document.</strong></p>
 
 Kea is a minimal editor with executable input and persistent, read-only output. Write commands as ordinary multiline text, explicitly execute them, and inspect their output as document blocks. A real PTY stays underneath for existing terminal applications.
 
@@ -26,7 +34,7 @@ Session document
 └────────────────────────────────────────────────────┘
 
 ┌ command editor ────────────────────────────────────┐
-│ docker compose run --rm backend \                  │
+│ docker compose run --rm backend \\                  │
 │     python manage.py migrate                       │
 │                                                    │
 │ Enter = newline        Ctrl+Enter = execute         │
@@ -62,7 +70,7 @@ Kea reads `keybindings.conf` and `settings.conf` from:
 
 - Linux: `$XDG_CONFIG_HOME/kea/`, or `~/.config/kea/`
 - macOS: `~/Library/Application Support/Kea/`
-- Windows: `%APPDATA%\Kea\`
+- Windows: `%APPDATA%\\Kea\\`
 
 `KEA_KEYBINDINGS` and `KEA_SETTINGS` override the respective file locations. Settings are loaded at startup. Invalid files produce a warning and fall back to defaults.
 
@@ -109,9 +117,9 @@ Install a current stable Rust toolchain through [rustup](https://rustup.rs/), th
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config cmake clang libclang-dev \
-  libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \
-  libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev \
+sudo apt-get install -y build-essential pkg-config cmake clang libclang-dev \\
+  libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \\
+  libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev \\
   libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev
 
 git clone git@github.com:ManuelZierl/kea.git
