@@ -70,6 +70,7 @@ pub struct Document {
     retained_bytes: usize,
     saturated: bool,
     scanner: MarkerScanner,
+    current_directory: Option<String>,
 }
 
 impl Document {
@@ -98,6 +99,11 @@ impl Document {
 
     pub fn blocks(&self) -> &[CommandBlock] {
         &self.blocks
+    }
+
+    /// Last directory explicitly reported by the shell; never guessed from a prompt.
+    pub fn current_directory(&self) -> Option<&str> {
+        self.current_directory.as_deref()
     }
 
     pub fn active(&self) -> Option<u64> {
@@ -167,6 +173,10 @@ impl Document {
                             changed |= !data.is_empty();
                         }
                     }
+                }
+                Piece::Marker(Marker::Directory(directory)) => {
+                    changed |= self.current_directory.as_deref() != Some(directory.as_str());
+                    self.current_directory = Some(directory);
                 }
                 Piece::Marker(Marker::Start(id, input)) => {
                     if self.active.is_none() {
@@ -283,6 +293,7 @@ pub fn status_label(block: &CommandBlock) -> String {
 enum Marker {
     Start(u64, String),
     Done(u64, i32),
+    Directory(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -336,6 +347,24 @@ fn parse_marker(raw: &[u8]) -> Option<Marker> {
     let body = std::str::from_utf8(&raw[MARKER_PREFIX.len()..raw.len() - 1]).ok()?;
     let mut parts = body.split(';');
     match parts.next()? {
+        "cwd" => {
+            let encoded = parts.next()?;
+            if parts.next().is_some()
+                || encoded.is_empty()
+                || encoded.len() > 16 * 1024
+                || encoded.len() % 2 != 0
+            {
+                return None;
+            }
+            let mut bytes = Vec::with_capacity(encoded.len() / 2);
+            for pair in encoded.as_bytes().chunks_exact(2) {
+                let high = (pair[0] as char).to_digit(16)?;
+                let low = (pair[1] as char).to_digit(16)?;
+                bytes.push((high * 16 + low) as u8);
+            }
+            let directory = String::from_utf8(bytes).ok()?;
+            (!directory.contains('\0')).then_some(Marker::Directory(directory))
+        }
         "start" => {
             let id = parts.next()?.parse().ok()?;
             let encoded = parts.next()?;
@@ -708,5 +737,30 @@ mod tests {
             terminalish_text(b"\x1b[31mDownloading 10%\x1b[0m\rDownloading 100%\nDone\n"),
             "Downloading 100%\nDone"
         );
+    }
+    #[test]
+    fn directory_metadata_is_bounded_chunk_safe_and_replayable() {
+        let directory = "C:\\Users\\Müller;test";
+        let hex: String = directory
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let marker = format!("\x1b]777;kea;cwd;{hex}\x07");
+        let mut doc = Document::new();
+        let mut recording = Recording::new(Size::new(80, 24).unwrap()).unwrap();
+        for byte in marker.bytes() {
+            doc.ingest_output(0, &[byte]);
+            recording.append(0, Kind::Output(vec![byte])).unwrap();
+        }
+        assert_eq!(doc.current_directory(), Some(directory));
+        assert_eq!(
+            Document::from_recording(&recording).current_directory(),
+            Some(directory)
+        );
+        assert!(doc.blocks().is_empty());
+        for bad in ["xx", "00", "e9", "123", "2f;extra"] {
+            assert!(parse_marker(format!("\x1b]777;kea;cwd;{bad}\x07").as_bytes()).is_none());
+        }
     }
 }

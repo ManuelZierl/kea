@@ -15,6 +15,8 @@ struct BlockText {
     output_len: usize,
     line_count: usize,
     pending: bool,
+    follow: bool,
+    reveal_pending: bool,
 }
 pub(super) struct DocumentUi {
     pub filter: Entity<InputState>,
@@ -47,6 +49,11 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let query = self.document_ui.filter.read(cx).value().to_lowercase();
+        let at_bottom =
+            self.document_scroll.max_offset().height + self.document_scroll.offset().y <= px(4.);
+        if self.document_ui.dirty && self.document_ui.page_start.is_none() && at_bottom {
+            self.document_scroll.scroll_to_bottom();
+        }
         // Pin the existing page before new output/blocks change the latest-page offset.
         if self.document_ui.page_start.is_none()
             && self
@@ -171,12 +178,15 @@ impl KeaView {
                             output_len: block.output().len(),
                             line_count,
                             pending: false,
+                            follow: true,
+                            reveal_pending: true,
                         },
                     );
                 }
                 let view = self.document_ui.visible.get_mut(&id).unwrap();
                 if view.output_len != block.output().len() {
-                    let reading = view.editor.focus_handle(cx).is_focused(window)
+                    let reading = !view.follow
+                        || view.editor.focus_handle(cx).is_focused(window)
                         || view.editor.update(cx, |state, cx| {
                             state
                                 .selected_text_range(true, window, cx)
@@ -191,21 +201,81 @@ impl KeaView {
                             .update(cx, |state, cx| state.set_value(text, window, cx));
                         view.output_len = block.output().len();
                         view.pending = false;
+                        view.reveal_pending = true;
                     }
                 }
+                // Reveal the tail after the component has measured its text. Do
+                // not reset an existing reader's selection or retain input focus.
+                if view.reveal_pending {
+                    view.reveal_pending = false;
+                    let weak = cx.entity().downgrade();
+                    window.on_next_frame(move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            let Some(view) = this.document_ui.visible.get_mut(&id) else {
+                                return;
+                            };
+                            if !view.follow || view.editor.focus_handle(cx).is_focused(window) {
+                                return;
+                            }
+                            let selected = view.editor.update(cx, |state, cx| {
+                                state
+                                    .selected_text_range(true, window, cx)
+                                    .is_some_and(|s| !s.range.is_empty())
+                            });
+                            if selected {
+                                return;
+                            }
+                            if let Some(previous_focus) = window.focused(cx) {
+                                view.editor.update(cx, |state, cx| {
+                                    use gpui_component::input::RopeExt;
+                                    let end = state.text().offset_to_position(state.text().len());
+                                    state.set_cursor_position(end, window, cx);
+                                });
+                                window.focus(&previous_focus);
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+                let weak = cx.entity().downgrade();
+                // Observe scrolling in capture phase without consuming it: the
+                // editor still owns native wheel/trackpad behavior.
+                let scroll_observer = canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let weak = weak.clone();
+                        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Capture && bounds.contains(&event.position) {
+                                let _ = weak.update(cx, |this, cx| {
+                                    if let Some(view) = this.document_ui.visible.get_mut(&id) {
+                                        view.follow = false;
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full();
                 // In pinned gpui-component 0.5.1 disabled blocks mutations, not selection/search.
                 panel = panel.child(
-                    Input::new(&view.editor)
-                        .disabled(true)
-                        .appearance(false)
-                        .bordered(false)
-                        .h(px((view.line_count as f32 * 22.0 + 22.0).clamp(66.0, 330.0))),
+                    div()
+                        .relative()
+                        .child(
+                            Input::new(&view.editor)
+                                .disabled(true)
+                                .appearance(false)
+                                .bordered(false)
+                                .h(px((view.line_count as f32 * 22.0 + 22.0).clamp(66.0, 330.0))),
+                        )
+                        .child(scroll_observer),
                 );
-                if view.pending {
+                if view.pending || !view.follow {
                     panel = panel.child(
                         button(
                             "refresh-output",
-                            "New output available · refresh snapshot (clears selection)",
+                            "Follow latest output (refreshes snapshot and clears selection)",
                         )
                         .on_click(cx.listener(
                             move |this, _, window, cx| {

@@ -107,7 +107,7 @@ key ctrl+z ctrl+a ctrl+c
 assert_clipboard KEEP
 phase='read-only output'
 import -window "$window" smoke-artifacts/before-output-selection.png
-xdotool mousemove --window "$window" 140 200 click 1
+xdotool mousemove --window "$window" 140 222 click 1
 sleep 0.2
 key ctrl+a ctrl+c
 clipboard >smoke-artifacts/selected-block.txt

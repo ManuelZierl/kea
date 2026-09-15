@@ -17,6 +17,11 @@ pub enum Action {
     FocusEditor,
     Interrupt,
     Execute,
+    Complete,
+    AcceptCompletion,
+    NextCompletion,
+    PreviousCompletion,
+    DismissCompletion,
     ToggleDirect,
     PreviousEvent,
     NextEvent,
@@ -27,7 +32,7 @@ pub enum Action {
     Quit,
 }
 impl Action {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 24] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -39,6 +44,11 @@ impl Action {
         Self::FocusEditor,
         Self::Interrupt,
         Self::Execute,
+        Self::Complete,
+        Self::AcceptCompletion,
+        Self::NextCompletion,
+        Self::PreviousCompletion,
+        Self::DismissCompletion,
         Self::ToggleDirect,
         Self::PreviousEvent,
         Self::NextEvent,
@@ -61,6 +71,11 @@ impl Action {
             Self::FocusEditor => "focus_editor",
             Self::Interrupt => "interrupt",
             Self::Execute => "execute",
+            Self::Complete => "complete",
+            Self::AcceptCompletion => "accept_completion",
+            Self::NextCompletion => "next_completion",
+            Self::PreviousCompletion => "previous_completion",
+            Self::DismissCompletion => "dismiss_completion",
             Self::ToggleDirect => "toggle_direct",
             Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event",
@@ -225,6 +240,11 @@ impl Keymap {
         for (action, key) in [
             (Action::CopyDocument, "f10"),
             (Action::Execute, "ctrl-enter"),
+            (Action::Complete, "tab"),
+            (Action::AcceptCompletion, "enter"),
+            (Action::NextCompletion, "down"),
+            (Action::PreviousCompletion, "up"),
+            (Action::DismissCompletion, "escape"),
             (Action::ToggleDirect, "ctrl-shift-space"),
             (Action::PreviousEvent, "f6"),
             (Action::NextEvent, "f7"),
@@ -251,6 +271,10 @@ impl Keymap {
         ] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
+        bindings
+            .get_mut(&Action::Complete)
+            .unwrap()
+            .push(Shortcut::parse("ctrl-space").unwrap());
         Self { bindings }
     }
     fn parse_overrides(platform: Platform, text: &str) -> Result<Self> {
@@ -333,8 +357,12 @@ impl Keymap {
         }
         for action in Action::ALL {
             let contexts: &[&str] = match action {
-                Action::Execute => &["KeaCommand > Input"],
-                Action::Copy | Action::Paste => &["Kea > Input", "KeaTerminal"],
+                Action::Execute | Action::Complete => &["KeaCommand > Input"],
+                Action::AcceptCompletion
+                | Action::NextCompletion
+                | Action::PreviousCompletion
+                | Action::DismissCompletion => &["KeaCompletion > Input"],
+                Action::Copy | Action::Paste => &["Kea > Input"],
                 Action::Cut | Action::Undo | Action::Redo | Action::SelectAll | Action::Find => {
                     &["Kea > Input"]
                 }
@@ -430,10 +458,27 @@ mod tests {
         map.add_bindings(Keymap::defaults_for(Platform::current()).gpui_bindings());
         let context = [
             gpui::KeyContext::parse("Root").unwrap(),
-            gpui::KeyContext::parse("Kea").unwrap(),
+            gpui::KeyContext::parse("KeaLive").unwrap(),
             gpui::KeyContext::parse("KeaTerminal").unwrap(),
         ];
-        for spec in ["ctrl-z", "ctrl-enter", "ctrl-l", "tab", "shift-tab"] {
+        for spec in [
+            "ctrl-c",
+            "ctrl-v",
+            "ctrl-z",
+            "ctrl-enter",
+            "ctrl-l",
+            "ctrl-space",
+            "tab",
+            "shift-tab",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "ctrl-shift-space",
+            "ctrl-shift-q",
+            "cmd-q",
+        ] {
             assert!(
                 map.bindings_for_input(&[key(spec)], &context).0.is_empty(),
                 "captured {spec}"

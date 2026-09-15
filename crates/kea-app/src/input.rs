@@ -33,9 +33,21 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         "pageup" => Some(5),
         "pagedown" => Some(6),
         "f5" => Some(15),
+        "f6" => Some(17),
+        "f7" => Some(18),
+        "f8" => Some(19),
+        "f9" => Some(20),
         "f10" => Some(21),
         "f11" => Some(23),
         "f12" => Some(24),
+        "f13" => Some(25),
+        "f14" => Some(26),
+        "f15" => Some(28),
+        "f16" => Some(29),
+        "f17" => Some(31),
+        "f18" => Some(32),
+        "f19" => Some(33),
+        "f20" => Some(34),
         _ => None,
     };
     if let Some(number) = numbered {
@@ -73,6 +85,14 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         "backspace" => vec![if m.control { 8 } else { 127 }],
         "tab" if m.shift => b"\x1b[Z".to_vec(),
         "tab" => vec![b'\t'],
+        "space" if m.control => {
+            if m.alt {
+                vec![27, 0]
+            } else {
+                vec![0]
+            }
+        }
+        "space" if m.alt => vec![27, b' '],
         _ => {
             if key.is_ime_in_progress() {
                 return None;
@@ -183,6 +203,25 @@ mod tests {
             encode(&Keystroke::parse("ctrl-left").unwrap(), true).unwrap(),
             b"\x1b[1;5D"
         );
+    }
+    #[test]
+    fn all_history_keys_are_encodable_for_the_child() {
+        for (key, code) in [("f6", 17), ("f7", 18), ("f8", 19), ("f9", 20), ("f10", 21)] {
+            assert_eq!(
+                encode(&Keystroke::parse(key).unwrap(), false).unwrap(),
+                format!("\x1b[{code}~").as_bytes()
+            );
+        }
+        assert_eq!(
+            encode(&Keystroke::parse("ctrl-v").unwrap(), false).unwrap(),
+            vec![22]
+        );
+        assert_eq!(
+            encode(&Keystroke::parse("ctrl-space").unwrap(), false).unwrap(),
+            vec![0]
+        );
+        // Windows must be allowed to deliver the later committed-text event.
+        assert!(encode(&Keystroke::parse("space").unwrap(), false).is_none());
     }
     #[test]
     fn paste_cannot_inject_a_bracket_terminator() {

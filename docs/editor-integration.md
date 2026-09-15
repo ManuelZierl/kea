@@ -61,3 +61,7 @@ Synthetic component input tests are not real IBus/Fcitx, Wayland, macOS or Windo
 ## Zed integration
 
 `kea-core` and `kea-document` remain free of GPUI/editor/OS dependencies. The standalone host uses GPUI Component; a Zed host should use Zed's editor, text services and action system instead. Do not transplant the standalone UI or copy GPL Zed code into Kea's MIT crates.
+
+## Desktop usability updates
+
+See [Direct input, directory reporting, completion and tail following](windows-feedback.md) for the current interaction contract. Live Direct mode reserves no Kea shortcuts; toolbar controls remain available.
