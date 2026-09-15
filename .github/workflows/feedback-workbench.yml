@@ -22,7 +22,7 @@ jobs:
         with:
           key: desktop-linux
           cache-on-failure: true
-      - name: Apply reviewed source changes and format
+      - name: Apply source changes and format
         run: |
           if test -f scripts/feedback-ui.patch; then
             git apply --recount --check scripts/feedback-ui.patch scripts/feedback-directory.patch
@@ -34,21 +34,12 @@ jobs:
           t = p.read_text()
           assert '140 200 click 1' in t
           p.write_text(t.replace('140 200 click 1', '140 222 click 1'))
-          p = Path('.github/workflows/ci.yml')
-          t = p.read_text()
-          needle = '      - uses: actions/upload-artifact@v4\n        if: always()'
-          assert needle in t
-          t = t.replace(needle, "      - name: Direct input and completion acceptance\n        run: timeout 120s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-feedback.sh\n" + needle)
-          needle = '      - run: cargo build --release --locked -p kea-app'
-          assert needle in t
-          t = t.replace(needle, '      - run: cargo test --locked -p kea-app\n' + needle + '\n      - run: python scripts/check-windows-subsystem.py target/release/kea.exe')
-          p.write_text(t)
           p = Path('docs/editor-integration.md')
           p.write_text(p.read_text() + '\n## Desktop usability updates\n\nSee [Direct input, directory reporting, completion and tail following](windows-feedback.md) for the current interaction contract. Live Direct mode reserves no Kea shortcuts; toolbar controls remain available.\n')
           PY
           fi
           cargo fmt --all
-          git add -A
+          git add crates scripts docs
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Apply and format Windows terminal usability fixes'
             git push origin HEAD:fix/windows-terminal-usability

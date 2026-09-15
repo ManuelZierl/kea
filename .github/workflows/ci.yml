@@ -43,6 +43,8 @@ jobs:
       - run: cargo build --locked -p kea-app
       - name: Desktop document/replay smoke test
         run: timeout 120s xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash scripts/smoke-linux.sh
+      - name: Direct input and completion acceptance
+        run: timeout 120s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-feedback.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,7 +64,9 @@ jobs:
         with:
           key: desktop-windows
           cache-on-failure: true
+      - run: cargo test --locked -p kea-app
       - run: cargo build --release --locked -p kea-app
+      - run: python scripts/check-windows-subsystem.py target/release/kea.exe
       - uses: actions/upload-artifact@v4
         with:
           name: kea-windows-x86_64
