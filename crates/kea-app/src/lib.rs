@@ -2,6 +2,8 @@
 pub mod command_editor;
 pub mod input;
 pub mod keybindings;
+pub mod logo;
+mod logo_frames;
 pub mod settings;
 pub mod shell;
 
