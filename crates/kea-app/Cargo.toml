@@ -16,6 +16,7 @@ kea-alacritty.workspace = true
 kea-session.workspace = true
 kea-document.workspace = true
 gpui.workspace = true
+gpui-component = { version = "=0.5.1", default-features = false }
 anyhow.workspace = true
 
 [lints]
