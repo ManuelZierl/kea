@@ -1,0 +1,75 @@
+name: Unified input workbench
+on:
+  push:
+    branches: [feature/unified-session-input]
+    paths:
+      - 'scripts/unified-*.py'
+      - '.github/workflows/unified-workbench.yml'
+permissions:
+  contents: write
+concurrency:
+  group: unified-input-workbench
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-linux
+          cache-on-failure: true
+      - name: Apply source migration and remove workbench
+        run: |
+          python3 scripts/unified-update.py
+          python3 scripts/unified-main.py
+          rm scripts/unified-update.py scripts/unified-main.py .github/workflows/unified-workbench.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('README.md','docs/architecture.md','docs/editor-integration.md'):
+              p=Path(name)
+              text=p.read_text()
+              lines=text.splitlines(keepends=True)
+              index=next((i for i,line in enumerate(lines) if line.startswith('# ')),0)+1
+              link='docs/unified-session.md' if name=='README.md' else 'unified-session.md'
+              lines.insert(index, '\n> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior]('+link+') supersedes the older Document/Direct mode descriptions below.\n')
+              p.write_text(''.join(lines))
+          p=Path('AGENTS.md')
+          text=p.read_text().replace('## Product and host invariants','## Product and host invariants\n\n- Read docs/unified-session.md: one terminal and persistent editor; blocks are optional presentation, never an execution mode.\n- Live terminal focus reserves no Kea shortcuts. Use editor/chrome contexts and visible toolbar controls.\n- Run in shell requires an explicit ready marker. Send to app never adds shell wrappers. Never infer readiness from prompt text.\n- Directory is last reported shell metadata, not a fabricated process/remote path. Completion never evaluates draft code.')
+          p.write_text(text)
+          PY
+          cargo fmt --all
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Apply unified terminal/editor surfaces, prompt metadata and input regression tests'
+          git push origin HEAD:feature/unified-session-input
+      - name: Export exact tested source
+        run: |
+          mkdir -p verified-source
+          git archive HEAD | tar -x -C verified-source
+          git rev-parse HEAD > verified-source/TESTED_COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-source
+          path: verified-source/
+          include-hidden-files: true
+          retention-days: 2
+      - name: Install desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
+      - run: cargo test --locked -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p kea-session
+      - run: cargo clippy --locked -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
+      - run: cargo test --locked -p kea-app --lib
+      - run: cargo build --locked -p kea-app
+      - name: Graphical acceptance
+        run: timeout 180s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unified-smoke
+          path: smoke-artifacts/
+          retention-days: 2
