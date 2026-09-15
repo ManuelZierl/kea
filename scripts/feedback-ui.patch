@@ -1,0 +1,506 @@
+diff --git a/crates/kea-app/src/document_view.rs b/crates/kea-app/src/document_view.rs
+--- a/crates/kea-app/src/document_view.rs
++++ b/crates/kea-app/src/document_view.rs
+@@ -15,6 +15,8 @@ struct BlockText {
+     output_len: usize,
+     line_count: usize,
+     pending: bool,
++    follow: bool,
++    reveal_pending: bool,
+ }
+ pub(super) struct DocumentUi {
+     pub filter: Entity<InputState>,
+@@ -47,6 +49,10 @@ impl KeaView {
+         cx: &mut Context<Self>,
+     ) -> AnyElement {
+         let query = self.document_ui.filter.read(cx).value().to_lowercase();
++        let at_bottom = self.document_scroll.max_offset().height + self.document_scroll.offset().y <= px(4.);
++        if self.document_ui.dirty && self.document_ui.page_start.is_none() && at_bottom {
++            self.document_scroll.scroll_to_bottom();
++        }
+         // Pin the existing page before new output/blocks change the latest-page offset.
+         if self.document_ui.page_start.is_none()
+             && self
+@@ -171,12 +177,14 @@ impl KeaView {
+                             output_len: block.output().len(),
+                             line_count,
+                             pending: false,
++                            follow: true,
++                            reveal_pending: true,
+                         },
+                     );
+                 }
+                 let view = self.document_ui.visible.get_mut(&id).unwrap();
+                 if view.output_len != block.output().len() {
+-                    let reading = view.editor.focus_handle(cx).is_focused(window)
++                    let reading = !view.follow || view.editor.focus_handle(cx).is_focused(window)
+                         || view.editor.update(cx, |state, cx| {
+                             state
+                                 .selected_text_range(true, window, cx)
+@@ -191,21 +199,59 @@ impl KeaView {
+                             .update(cx, |state, cx| state.set_value(text, window, cx));
+                         view.output_len = block.output().len();
+                         view.pending = false;
++                        view.reveal_pending = true;
+                     }
+                 }
++                // Reveal the tail after the component has measured its text. Do
++                // not reset an existing reader's selection or retain input focus.
++                if view.reveal_pending {
++                    view.reveal_pending = false;
++                    let weak = cx.entity().downgrade();
++                    window.on_next_frame(move |window, cx| {
++                        let _ = weak.update(cx, |this, cx| {
++                            let Some(view) = this.document_ui.visible.get_mut(&id) else { return; };
++                            if !view.follow || view.editor.focus_handle(cx).is_focused(window) { return; }
++                            let selected = view.editor.update(cx, |state,cx| state.selected_text_range(true,window,cx).is_some_and(|s| !s.range.is_empty()));
++                            if selected { return; }
++                            if let Some(previous_focus) = window.focused(cx) {
++                                view.editor.update(cx, |state,cx| {
++                                    use gpui_component::input::RopeExt;
++                                    let end = state.text().offset_to_position(state.text().len());
++                                    state.set_cursor_position(end,window,cx);
++                                });
++                                window.focus(&previous_focus);
++                            }
++                            cx.notify();
++                        });
++                    });
++                }
++                let weak = cx.entity().downgrade();
++                // Observe scrolling in capture phase without consuming it: the
++                // editor still owns native wheel/trackpad behavior.
++                let scroll_observer = canvas(|_,_,_| (), move |bounds,_,window,_| {
++                    let weak = weak.clone();
++                    window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _, cx| {
++                        if phase == DispatchPhase::Capture && bounds.contains(&event.position) {
++                            let _ = weak.update(cx, |this,cx| {
++                                if let Some(view) = this.document_ui.visible.get_mut(&id) { view.follow = false; }
++                                cx.notify();
++                            });
++                        }
++                    });
++                }).absolute().size_full();
+                 // In pinned gpui-component 0.5.1 disabled blocks mutations, not selection/search.
+-                panel = panel.child(
++                panel = panel.child(div().relative().child(
+                     Input::new(&view.editor)
+                         .disabled(true)
+                         .appearance(false)
+                         .bordered(false)
+                         .h(px((view.line_count as f32 * 22.0 + 22.0).clamp(66.0, 330.0))),
+-                );
+-                if view.pending {
++                ).child(scroll_observer));
++                if view.pending || !view.follow {
+                     panel = panel.child(
+                         button(
+                             "refresh-output",
+-                            "New output available · refresh snapshot (clears selection)",
++                            "Follow latest output (refreshes snapshot and clears selection)",
+                         )
+                         .on_click(cx.listener(
+                             move |this, _, window, cx| {
+diff --git a/crates/kea-app/src/input.rs b/crates/kea-app/src/input.rs
+--- a/crates/kea-app/src/input.rs
++++ b/crates/kea-app/src/input.rs
+@@ -33,9 +33,21 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
+         "pageup" => Some(5),
+         "pagedown" => Some(6),
+         "f5" => Some(15),
++        "f6" => Some(17),
++        "f7" => Some(18),
++        "f8" => Some(19),
++        "f9" => Some(20),
+         "f10" => Some(21),
+         "f11" => Some(23),
+         "f12" => Some(24),
++        "f13" => Some(25),
++        "f14" => Some(26),
++        "f15" => Some(28),
++        "f16" => Some(29),
++        "f17" => Some(31),
++        "f18" => Some(32),
++        "f19" => Some(33),
++        "f20" => Some(34),
+         _ => None,
+     };
+     if let Some(number) = numbered {
+@@ -73,6 +85,8 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
+         "backspace" => vec![if m.control { 8 } else { 127 }],
+         "tab" if m.shift => b"\x1b[Z".to_vec(),
+         "tab" => vec![b'\t'],
++        "space" if m.control => if m.alt { vec![27, 0] } else { vec![0] },
++        "space" if m.alt => vec![27, b' '],
+         _ => {
+             if key.is_ime_in_progress() {
+                 return None;
+@@ -185,6 +199,16 @@ mod tests {
+         );
+     }
+     #[test]
++    fn all_history_keys_are_encodable_for_the_child() {
++        for (key, code) in [("f6", 17), ("f7", 18), ("f8", 19), ("f9", 20), ("f10", 21)] {
++            assert_eq!(encode(&Keystroke::parse(key).unwrap(), false).unwrap(), format!("\x1b[{code}~").as_bytes());
++        }
++        assert_eq!(encode(&Keystroke::parse("ctrl-v").unwrap(), false).unwrap(), vec![22]);
++        assert_eq!(encode(&Keystroke::parse("ctrl-space").unwrap(), false).unwrap(), vec![0]);
++        // Windows must be allowed to deliver the later committed-text event.
++        assert!(encode(&Keystroke::parse("space").unwrap(), false).is_none());
++    }
++    #[test]
+     fn paste_cannot_inject_a_bracket_terminator() {
+         assert!(paste("a\nb", false).is_err());
+         assert_eq!(
+diff --git a/crates/kea-app/src/keybindings.rs b/crates/kea-app/src/keybindings.rs
+--- a/crates/kea-app/src/keybindings.rs
++++ b/crates/kea-app/src/keybindings.rs
+@@ -17,6 +17,11 @@ pub enum Action {
+     FocusEditor,
+     Interrupt,
+     Execute,
++    Complete,
++    AcceptCompletion,
++    NextCompletion,
++    PreviousCompletion,
++    DismissCompletion,
+     ToggleDirect,
+     PreviousEvent,
+     NextEvent,
+@@ -27,7 +32,7 @@ pub enum Action {
+     Quit,
+ }
+ impl Action {
+-    const ALL: [Self; 19] = [
++    const ALL: [Self; 24] = [
+         Self::Copy,
+         Self::Cut,
+         Self::Paste,
+@@ -39,6 +44,11 @@ impl Action {
+         Self::FocusEditor,
+         Self::Interrupt,
+         Self::Execute,
++        Self::Complete,
++        Self::AcceptCompletion,
++        Self::NextCompletion,
++        Self::PreviousCompletion,
++        Self::DismissCompletion,
+         Self::ToggleDirect,
+         Self::PreviousEvent,
+         Self::NextEvent,
+@@ -61,6 +71,11 @@ impl Action {
+             Self::FocusEditor => "focus_editor",
+             Self::Interrupt => "interrupt",
+             Self::Execute => "execute",
++            Self::Complete => "complete",
++            Self::AcceptCompletion => "accept_completion",
++            Self::NextCompletion => "next_completion",
++            Self::PreviousCompletion => "previous_completion",
++            Self::DismissCompletion => "dismiss_completion",
+             Self::ToggleDirect => "toggle_direct",
+             Self::PreviousEvent => "previous_event",
+             Self::NextEvent => "next_event",
+@@ -225,6 +240,11 @@ impl Keymap {
+         for (action, key) in [
+             (Action::CopyDocument, "f10"),
+             (Action::Execute, "ctrl-enter"),
++            (Action::Complete, "tab"),
++            (Action::AcceptCompletion, "enter"),
++            (Action::NextCompletion, "down"),
++            (Action::PreviousCompletion, "up"),
++            (Action::DismissCompletion, "escape"),
+             (Action::ToggleDirect, "ctrl-shift-space"),
+             (Action::PreviousEvent, "f6"),
+             (Action::NextEvent, "f7"),
+@@ -251,6 +271,7 @@ impl Keymap {
+         ] {
+             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
+         }
++        bindings.get_mut(&Action::Complete).unwrap().push(Shortcut::parse("ctrl-space").unwrap());
+         Self { bindings }
+     }
+     fn parse_overrides(platform: Platform, text: &str) -> Result<Self> {
+@@ -333,8 +354,9 @@ impl Keymap {
+         }
+         for action in Action::ALL {
+             let contexts: &[&str] = match action {
+-                Action::Execute => &["KeaCommand > Input"],
+-                Action::Copy | Action::Paste => &["Kea > Input", "KeaTerminal"],
++                Action::Execute | Action::Complete => &["KeaCommand > Input"],
++                Action::AcceptCompletion | Action::NextCompletion | Action::PreviousCompletion | Action::DismissCompletion => &["KeaCompletion > Input"],
++                Action::Copy | Action::Paste => &["Kea > Input"],
+                 Action::Cut | Action::Undo | Action::Redo | Action::SelectAll | Action::Find => {
+                     &["Kea > Input"]
+                 }
+@@ -430,10 +452,10 @@ mod tests {
+         map.add_bindings(Keymap::defaults_for(Platform::current()).gpui_bindings());
+         let context = [
+             gpui::KeyContext::parse("Root").unwrap(),
+-            gpui::KeyContext::parse("Kea").unwrap(),
++            gpui::KeyContext::parse("KeaLive").unwrap(),
+             gpui::KeyContext::parse("KeaTerminal").unwrap(),
+         ];
+-        for spec in ["ctrl-z", "ctrl-enter", "ctrl-l", "tab", "shift-tab"] {
++        for spec in ["ctrl-c", "ctrl-v", "ctrl-z", "ctrl-enter", "ctrl-l", "ctrl-space", "tab", "shift-tab", "f6", "f7", "f8", "f9", "f10", "ctrl-shift-space", "ctrl-shift-q", "cmd-q"] {
+             assert!(
+                 map.bindings_for_input(&[key(spec)], &context).0.is_empty(),
+                 "captured {spec}"
+diff --git a/crates/kea-app/src/lib.rs b/crates/kea-app/src/lib.rs
+--- a/crates/kea-app/src/lib.rs
++++ b/crates/kea-app/src/lib.rs
+@@ -1,5 +1,6 @@
+ //! Reusable host adapters; platform/editor functionality stays in upstream components.
+ pub mod command_editor;
++pub mod completion;
+ pub mod input;
+ pub mod keybindings;
+ pub mod settings;
+diff --git a/crates/kea-app/src/main.rs b/crates/kea-app/src/main.rs
+--- a/crates/kea-app/src/main.rs
++++ b/crates/kea-app/src/main.rs
+@@ -1,4 +1,8 @@
++#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
++
+ mod document_view;
++mod completion_view;
++mod terminal_text;
+ 
+ use anyhow::{Context as _, Result};
+ use gpui::{prelude::*, *};
+@@ -85,7 +89,7 @@ fn run() -> Result<()> {
+     } else {
+         ShellFlavor::detect(&command)
+     };
+-    let session = if demo {
++    let mut session = if demo {
+         Session::demo()?
+     } else if let Some(path) = replay {
+         let loaded = kea_core::read_from(File::open(path)?)?;
+@@ -99,6 +103,11 @@ fn run() -> Result<()> {
+     } else {
+         Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
+     };
++    if !demo && !replay_requested && !direct {
++        if let Some(shell) = shell {
++            session.send_hidden(shell.report_directory())?;
++        }
++    }
+     let document = Document::from_recording(session.recording());
+     let mode = if demo {
+         InputMode::Direct
+@@ -174,6 +183,10 @@ struct KeaView {
+     document_scroll: ScrollHandle,
+     focus: FocusHandle,
+     notice: Option<String>,
++    terminal_preedit: Option<String>,
++    completion: Option<completion_view::CompletionMenu>,
++    completion_busy: bool,
++    completion_task: Option<Task<()>>,
+     _pump: Task<()>,
+     _appearance: Subscription,
+     _filter_change: Subscription,
+@@ -248,6 +261,10 @@ impl KeaView {
+             document_scroll: ScrollHandle::new(),
+             focus,
+             notice,
++            terminal_preedit: None,
++            completion: None,
++            completion_busy: false,
++            completion_task: None,
+             _pump: pump,
+             _appearance: appearance,
+             _filter_change: filter_change,
+@@ -328,6 +345,7 @@ impl KeaView {
+                 .map_err(anyhow::Error::from)
+         });
+         if result.is_ok() {
++            self.completion = None;
+             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
+             self.focus_active(window, cx);
+             self.document_ui.page_start = None;
+@@ -391,6 +409,11 @@ impl KeaView {
+                 self.result(result, cx);
+             }
+             Action::Execute => self.execute_editor(window, cx),
++            Action::Complete => self.complete(window, cx),
++            Action::AcceptCompletion => self.accept_completion(window, cx),
++            Action::NextCompletion => self.move_completion(1, cx),
++            Action::PreviousCompletion => self.move_completion(-1, cx),
++            Action::DismissCompletion => { self.completion = None; cx.notify(); },
+             Action::ToggleDirect => self.toggle_direct(window, cx),
+             Action::PreviousEvent | Action::NextEvent => {
+                 let result = self.session.step(if event.action == Action::PreviousEvent {
+@@ -427,14 +450,21 @@ impl KeaView {
+     // Text components receive platform text input themselves. This fallback belongs
+     // only to the compatibility terminal, never to the command editor.
+     fn terminal_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+-        if self.session.input_allowed() {
+-            if let Some(bytes) = input::encode(&event.keystroke, self.session.application_cursor())
+-            {
+-                let result = self.session.send(bytes);
+-                self.result(result, cx);
+-            }
++        if !self.session.input_allowed() {
++            cx.stop_propagation();
++            return;
+         }
+-        cx.stop_propagation();
++        if self.terminal_preedit.is_some() {
++            // Candidate confirmation and dead-key composition belong to the OS.
++            return;
++        }
++        if let Some(bytes) = input::encode(&event.keystroke, self.session.application_cursor()) {
++            let result = self.session.send(bytes);
++            self.result(result, cx);
++            cx.stop_propagation();
++        }
++        // Do NOT consume an unhandled printable key. Windows delivers its text
++        // later through WM_CHAR / EntityInputHandler (Space included).
+     }
+     fn control(
+         &self,
+@@ -451,21 +481,24 @@ impl Render for KeaView {
+ 
+ impl Render for KeaView {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        self.clear_stale_completion(window, cx);
+         let viewport = window.viewport_size();
+         let width = (f32::from(viewport.width) - 24.).max(18.);
+         let show_document = self.input_mode == InputMode::Document && !self.session.is_history();
+         let input_height = if show_document && self.session.input_allowed() {
+-            160.
++            160. + if self.completion.is_some() { 145. } else { 0. }
+         } else {
+             0.
+         };
+         let height = (f32::from(viewport.height) - 150. - input_height).max(20.);
+-        if let Ok(size) = kea_core::Size::new(
+-            (width / CELL_WIDTH).floor().clamp(2., 512.) as u16,
+-            (height / LINE_HEIGHT).floor().clamp(1., 256.) as u16,
+-        ) {
+-            if let Err(error) = self.session.resize(size) {
+-                self.notice = Some(error.to_string());
++        if show_document {
++            if let Ok(size) = kea_core::Size::new(
++                (width / CELL_WIDTH).floor().clamp(2., 512.) as u16,
++                (height / LINE_HEIGHT).floor().clamp(1., 256.) as u16,
++            ) {
++                if let Err(error) = self.session.resize(size) {
++                    self.notice = Some(error.to_string());
++                }
+             }
+         }
+         let duration = self.session.recording().duration();
+@@ -482,11 +515,11 @@ impl Render for KeaView {
+         } else {
+             "Direct PTY"
+         };
+-        let status = self
++        let status = self.terminal_preedit.as_ref().map(|text| format!("Composing: {text}")).or_else(|| self
+             .session
+             .warning
+             .clone()
+-            .or_else(|| self.notice.clone())
++            .or_else(|| self.notice.clone()))
+             .unwrap_or_else(|| {
+                 if self.session.is_history() {
+                     "Historical state is read only. The live process continues.".into()
+@@ -498,13 +531,16 @@ impl Render for KeaView {
+                 } else if show_document {
+                     "Select and edit text normally. Only the execute action runs a command.".into()
+                 } else {
+-                    "Compatibility terminal · editor controls are not forwarded as text.".into()
++                    "All delivered keys go to the application. Use the toolbar for Paste, history, or Document mode.".into()
+                 }
+             });
+         let main_panel = if show_document {
+             self.render_document(window, cx)
+         } else {
+             let screen = self.session.screen();
++            let view = cx.entity();
++            let focus = self.focus.clone();
++            let live = self.session.input_allowed();
+             div()
+                 .size_full()
+                 .key_context("KeaTerminal")
+@@ -518,7 +554,26 @@ impl Render for KeaView {
+                 .child(
+                     canvas(
+                         |_, _, _| (),
+-                        move |bounds, _, window, cx| paint_screen(&screen, bounds, window, cx),
++                        move |bounds, _, window, cx| {
++                            paint_screen(&screen, bounds, window, cx);
++                            if live {
++                                window.handle_input(&focus, ElementInputHandler::new(bounds, view.clone()), cx);
++                                // Use the actual terminal rectangle, not a guessed
++                                // toolbar/editor height which can clip the last row.
++                                if let Ok(size) = kea_core::Size::new(
++                                    (f32::from(bounds.size.width) / CELL_WIDTH).floor().clamp(2., 512.) as u16,
++                                    (f32::from(bounds.size.height) / LINE_HEIGHT).floor().clamp(1., 256.) as u16,
++                                ) {
++                                    if size != screen.size {
++                                        let view = view.clone();
++                                        window.defer(cx, move |_, cx| view.update(cx, |this, cx| {
++                                            let result = this.session.resize(size);
++                                            this.result(result, cx);
++                                        }));
++                                    }
++                                }
++                            }
++                        },
+                     )
+                     .size_full(),
+                 )
+@@ -527,7 +582,7 @@ impl Render for KeaView {
+         let input_panel = if input_height != 0. {
+             div()
+                 .id("command-editor")
+-                .key_context("KeaCommand")
++                .key_context(if self.completion.is_some() { "KeaCommand KeaCompletion" } else { "KeaCommand" })
+                 .h(px(input_height))
+                 .flex_shrink_0()
+                 .flex()
+@@ -542,10 +597,11 @@ impl Render for KeaView {
+                 )))
+                 .child(
+                     Input::new(&self.editor)
+-                        .h(px(input_height - 38.))
++                        .h(px(122.))
+                         .appearance(false)
+                         .bordered(false),
+                 )
++                .child(self.render_completions(cx))
+                 .into_any_element()
+         } else {
+             div().h(px(0.)).into_any_element()
+@@ -580,6 +636,9 @@ impl Render for KeaView {
+             ))
+             .child(self.control("live", "Live", Action::GoLive, cx))
+             .child(self.control("mode", mode, Action::ToggleDirect, cx))
++            .when(!show_document, |bar| bar.child(
++                button("paste-terminal", "Paste").on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx)))
++            ))
+             .child(self.control(
+                 "copy-document",
+                 format!(
+@@ -598,6 +657,10 @@ impl Render for KeaView {
+             .gap_2()
+             .key_context(if show_document {
+                 "Kea KeaDocument"
++            } else if self.session.input_allowed() {
++                // No ancestor Kea bindings in live Direct mode. Every delivered
++                // key belongs to the child; use the toolbar to leave this mode.
++                "KeaLive"
+             } else {
+                 "Kea"
+             })
+@@ -607,6 +670,9 @@ impl Render for KeaView {
+             .text_size(cx.theme().mono_font_size)
+             .font_family(cx.theme().mono_font_family.clone())
+             .child(toolbar)
++            .child(div().h(px(22.)).flex_shrink_0().overflow_hidden().child(
++                format!("Directory{}: {}", if self.input_mode == InputMode::Direct { " (last reported)" } else { "" }, self.document.current_directory().unwrap_or("awaiting shell report"))
++            ))
+             .child(
+                 div()
+                     .h(px(20.))
