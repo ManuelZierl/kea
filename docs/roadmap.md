@@ -2,43 +2,42 @@
 
 ## Product direction
 
-Kea is a document-native terminal. Replay/time travel is a consequence of retaining terminal state, not the top-level product.
+Kea is a minimal editor with executable input and persistent read-only output. Replay follows from its history model. Platform services and mature editor components supply normal editing; Kea supplies execution and document semantics.
 
-The core interaction model is now implemented end to end:
+## Implemented host direction
 
-- editable multiline command input;
-- explicit configurable execute action;
-- first-class persistent command/output blocks;
-- block lifecycle, exit status and timing;
-- read-only document output;
-- Direct PTY compatibility over the same process;
-- explicit shell boundary protocol rather than prompt inference;
-- reconstruction of structured blocks from saved terminal recordings;
-- configurable semantic shortcuts with OS-native defaults.
+- GPUI Component replaces the handwritten String/cursor command editor.
+- Selection-only copy, cut, paste, undo/redo, navigation and text composition use the focused editor component.
+- Execute is explicit and composition/focus guarded; every successful submission creates a fresh undo history.
+- Read-only command/output editor surfaces retain selection during live output changes with explicit snapshot refresh.
+- Bash Tree-sitter highlighting, optional line numbers/wrapping, system light/dark appearance and configurable host settings.
+- Collapse/expand, command/output filtering, bounded widget pages, Copy block/document, and safe Edit as new.
+- The persistent command/document/recording model and same-PTY Direct compatibility remain unchanged.
 
-## Manual Ubuntu acceptance
+## Acceptance
 
-1. Launch `cargo run --release -- -- bash --noprofile --norc`. Type `printf hello`, execute with Ctrl+Enter and verify a command block appears with `hello` and exit 0.
-2. Enter a multiline shell construct. Plain Enter must add lines locally; only the execute action may submit the buffer.
-3. Execute `cd /tmp`, then `pwd` as a second block. It must run in the same shell session and print `/tmp`.
-4. Execute a TUI such as `vim` or `opencode`; while its block is running, switch to Direct PTY, interact with it, exit it, then return to Document mode. The block must finish rather than spawning a second shell.
-5. Interrupt a long Document command using the configured interrupt action. The shell should recover and the block should finish with its non-zero status when the shell wrapper regains control.
-6. Record a short non-sensitive document session with `--record example.kea`; reopen using `--replay example.kea`. Command text/output/status must reconstruct without executing anything.
-7. In terminal view/demo, recover the transient overwritten error with the timeline/F6 and return to LIVE. History must remain read-only while the live process continues.
-8. Override copy/interrupt/execute in `keybindings.conf` and verify the semantic actions follow the configured bindings.
+1. Type, select with keyboard/mouse, copy just the selection, cut, undo and redo. Empty selection must not overwrite the clipboard.
+2. Paste multiline Unicode text. It must remain a draft; Enter adds lines. Only the configured execute action submits it.
+3. Compose text with an OS input method. Confirming a candidate must not execute a command; Ctrl+Enter cannot execute unfinished composition. Record actual OS/IME/display-backend results separately from simulated API tests.
+4. Execute `cd /tmp`, then `pwd`; shell state and structured block metadata must remain consistent.
+5. Undo immediately after successful execution. It must not alter/rerun the prior block or resurrect it through the fresh draft's undo history.
+6. Select output and try typing, paste, cut, deletion, undo and platform text replacement. Output remains read-only but Copy/Find/navigation work.
+7. Inspect a running block while new output arrives. The selection stays stable; refresh explicitly updates the snapshot. Collapsing/filtering/paging are presentation-only actions.
+8. Edit an earlier command as new; the original stays immutable and a nonempty draft is protected. Execution still requires an explicit action.
+9. Remap/unbind shortcuts and verify old component bindings do not remain active. Direct PTY still receives ordinary terminal keys such as Ctrl+Z, Ctrl+L and Tab.
+10. Change system light/dark appearance; follow-system updates, explicit theme override does not. Test font/wrapping settings and invalid-file fallback.
+11. Record and reopen a short document session without command re-execution; recover a transient TUI error in replay.
 
-Compilation and unit tests do not substitute for interactive checks. Include OS, shell/version, keyboard layout and display backend in compatibility reports.
+## Remaining work
 
-## Next quality work
+**OS service acceptance:** actual IBus/Fcitx/Wayland/dead-key/AltGr layouts, macOS/Windows IMEs, system prediction/dictation, screen readers and accessibility tree. Integration APIs alone do not certify these.
 
-**Editor quality:** selections, undo/redo, better multiline navigation, IME/AltGr/non-US layouts, syntax highlighting/completion and reusable/rerunnable earlier command blocks.
+**Document richness:** trustworthy shell cwd/environment metadata, virtualized large-document navigation, output styles, bookmarks/diffs, historical full-text indexing and stdout/stderr separation where the transport provides it.
 
-**Document richness:** explicit shell-provided cwd/environment metadata where trustworthy, block collapse/bookmarks/diff/search, selectable/copyable ranges, stdout/stderr separation when execution is not PTY-merged, and better rendering choices for commands that contain heavy TUI output.
+**Direct terminal correctness:** reusable complete terminal input/selection component, mouse/focus events, terminal IME, full keyboard negotiation, image protocols, measured font metrics, scrollback and accessibility. Validate OpenCode/Vim/less/SSH/tmux on real systems.
 
-**Terminal correctness:** mouse/focus events, selection, accessibility, measured font shaping/layout, ordinary scrollback behavior, full keyboard protocol negotiation, image protocols and validation against OpenCode, Vim, less, SSH and tmux on real machines.
+**Long sessions:** asynchronous cancellable seeks, complete-state checkpoints, compressed/indexed storage, configurable retention, and measured memory/CPU/latency overhead.
 
-**Long sessions:** async cancellable historical seek, full-state checkpoints with equivalence tests, indexed/compressed storage, retention configuration, historical full-text indexing and latency/CPU/memory/storage benchmarks.
+**Packaging:** native platform installation/build tooling, Linux desktop integration and packaged macOS/Windows validation. Build systems require project configuration; OS packaging is not inherited from a text editor widget.
 
-**Cross-platform desktop:** package and interactively validate Windows/macOS applications, especially PowerShell document execution, shortcut conventions, ConPTY behavior and IME.
-
-**Zed proposal:** demonstrate the document model and measured overhead in the standalone app, then propose a narrow integration that reuses Zed's PTY/renderer/editor/actions rather than transplanting the entire app. No claim that Kea is an accepted Zed feature until maintainers agree.
+**Zed:** reuse host editor/text services/actions/PTY/renderer around portable Kea state. Measure overhead, privacy and retention before a narrow upstream proposal; no claim of acceptance by Zed maintainers.
