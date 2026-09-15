@@ -1,12 +1,9 @@
 //! Platform-, shell- and renderer-independent terminal recordings.
-//! Output is opaque bytes. Raw keystrokes are deliberately absent; explicitly
-//! submitted document commands may be retained as structured events.
+//! Output is opaque bytes, not text. Input is deliberately absent.
 use std::io::{self, Read, Write};
 
-const MAGIC_V1: &[u8; 8] = b"KEA\x01\r\n\x1a\n";
-const MAGIC_V2: &[u8; 8] = b"KEA\x02\r\n\x1a\n";
+const MAGIC: &[u8; 8] = b"KEA\x01\r\n\x1a\n";
 pub const MAX_OUTPUT: usize = 1024 * 1024;
-pub const MAX_COMMAND: usize = 1024 * 1024;
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EVENTS: usize = 100_000;
 
@@ -32,9 +29,6 @@ pub enum Kind {
     Output(Vec<u8>),
     Resize(Size),
     Exit(u32),
-    /// A complete command explicitly submitted from Kea's document editor.
-    /// This is not a recording of individual keyboard input.
-    Command(Vec<u8>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,12 +88,6 @@ impl Recording {
                 }
                 bytes.len()
             }
-            Kind::Command(bytes) => {
-                if bytes.is_empty() || bytes.len() > MAX_COMMAND {
-                    return Err(invalid("invalid command length"));
-                }
-                bytes.len()
-            }
             Kind::Resize(size) => {
                 Size::new(size.columns, size.rows)?;
                 4
@@ -127,7 +115,7 @@ impl Recording {
 }
 
 /// A projection is supplied by the embedding application. It must start empty
-/// at the recording's initial size. Document metadata is deliberately ignored.
+/// at the recording's initial size. No input or process-execution API is exposed.
 pub trait Projection {
     fn output(&mut self, bytes: &[u8]);
     fn resize(&mut self, size: Size);
@@ -141,7 +129,7 @@ pub fn replay(recording: &Recording, end: usize, into: &mut impl Projection) -> 
         match &event.kind {
             Kind::Output(bytes) => into.output(bytes),
             Kind::Resize(size) => into.resize(*size),
-            Kind::Exit(_) | Kind::Command(_) => (),
+            Kind::Exit(_) => (),
         }
     }
     Ok(())
@@ -155,7 +143,7 @@ pub struct Loaded {
 
 pub fn write_header(mut out: impl Write, size: Size) -> io::Result<()> {
     Size::new(size.columns, size.rows)?;
-    out.write_all(MAGIC_V2)?;
+    out.write_all(MAGIC)?;
     out.write_all(&size.columns.to_le_bytes())?;
     out.write_all(&size.rows.to_le_bytes())
 }
@@ -181,13 +169,6 @@ pub fn write_event(mut out: impl Write, event: &Event) -> io::Result<()> {
             body.push(2);
             body.extend_from_slice(&code.to_le_bytes());
         }
-        Kind::Command(bytes) => {
-            if bytes.is_empty() || bytes.len() > MAX_COMMAND {
-                return Err(invalid("invalid command length"));
-            }
-            body.push(3);
-            body.extend_from_slice(bytes);
-        }
     }
     out.write_all(&(body.len() as u32).to_le_bytes())?;
     out.write_all(&body)?;
@@ -197,13 +178,9 @@ pub fn write_event(mut out: impl Write, event: &Event) -> io::Result<()> {
 pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
     let mut header = [0; 12];
     input.read_exact(&mut header)?;
-    let version = if &header[..8] == MAGIC_V1 {
-        1
-    } else if &header[..8] == MAGIC_V2 {
-        2
-    } else {
-        return Err(invalid("not a supported Kea recording"));
-    };
+    if &header[..8] != MAGIC {
+        return Err(invalid("not a supported Kea v1 recording"));
+    }
     let initial = Size::new(
         u16::from_le_bytes([header[8], header[9]]),
         u16::from_le_bytes([header[10], header[11]]),
@@ -225,7 +202,7 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
             });
         }
         let length = u32::from_le_bytes(length) as usize;
-        if !(10..=MAX_OUTPUT.max(MAX_COMMAND) + 9).contains(&length) {
+        if !(10..=MAX_OUTPUT + 9).contains(&length) {
             return Err(invalid("invalid frame length"));
         }
         let mut body = vec![0; length];
@@ -252,7 +229,6 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
                     .try_into()
                     .map_err(|_| invalid("bad exit code"))?,
             )),
-            3 if version >= 2 => Kind::Command(body[9..].to_vec()),
             _ => return Err(invalid("unknown or malformed event")),
         };
         recording.append(at, kind)?;
@@ -294,9 +270,8 @@ mod tests {
         Recording::new(Size::new(80, 24).unwrap()).unwrap()
     }
     #[test]
-    fn round_trip_preserves_commands_non_utf8_and_equal_timestamp_order() {
+    fn round_trip_preserves_non_utf8_and_equal_timestamp_order() {
         let mut r = recording();
-        r.append(3, Kind::Command(b"printf hello".to_vec())).unwrap();
         r.append(3, Kind::Output(vec![0xff, 0, 27])).unwrap();
         r.append(3, Kind::Resize(Size::new(40, 12).unwrap()))
             .unwrap();
@@ -306,25 +281,8 @@ mod tests {
         let loaded = read_from(bytes.as_slice()).unwrap();
         assert_eq!(loaded.recording.events(), r.events());
         assert_eq!(loaded.recording.initial_size(), r.initial_size());
-        assert_eq!(loaded.recording.end_at(3), 3);
+        assert_eq!(loaded.recording.end_at(3), 2);
         assert!(!loaded.truncated_tail);
-    }
-    #[test]
-    fn v1_recordings_remain_readable() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC_V1);
-        bytes.extend_from_slice(&80u16.to_le_bytes());
-        bytes.extend_from_slice(&24u16.to_le_bytes());
-        write_event(
-            &mut bytes,
-            &Event {
-                at: 1,
-                kind: Kind::Output(b"old".to_vec()),
-            },
-        )
-        .unwrap();
-        let loaded = read_from(bytes.as_slice()).unwrap();
-        assert_eq!(loaded.recording.events().len(), 1);
     }
     #[test]
     fn truncated_tail_recovers_only_complete_events() {
