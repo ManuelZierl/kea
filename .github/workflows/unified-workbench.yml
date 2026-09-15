@@ -3,7 +3,7 @@ on:
   push:
     branches: [feature/unified-session-input]
     paths:
-      - 'scripts/unified-*.py'
+      - 'scripts/unified-finish.py'
       - '.github/workflows/unified-workbench.yml'
 permissions:
   contents: write
@@ -25,28 +25,13 @@ jobs:
         with:
           key: desktop-linux
           cache-on-failure: true
-      - name: Apply reviewed source migration
+      - name: Apply final integration corrections
         run: |
-          python3 scripts/unified-update.py
-          python3 scripts/unified-main.py
-          rm scripts/unified-update.py scripts/unified-main.py
-          git restore .github/workflows/ci.yml
-          python3 - <<'PY'
-          from pathlib import Path
-          for name in ('README.md','docs/architecture.md','docs/editor-integration.md'):
-              p=Path(name)
-              lines=p.read_text().splitlines(keepends=True)
-              index=next((i for i,line in enumerate(lines) if line.startswith('# ')),0)+1
-              link='docs/unified-session.md' if name=='README.md' else 'unified-session.md'
-              lines.insert(index, '\n> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior]('+link+') supersedes the older Document/Direct mode descriptions below.\n')
-              p.write_text(''.join(lines))
-          p=Path('AGENTS.md')
-          text=p.read_text().replace('## Product and host invariants','## Product and host invariants\n\n- Read docs/unified-session.md: one terminal and persistent editor; blocks are optional presentation, never an execution mode.\n- Live terminal focus reserves no Kea shortcuts. Use editor/chrome contexts and visible toolbar controls.\n- Run in shell requires an explicit ready marker. Send to app never adds shell wrappers. Never infer readiness from prompt text.\n- Directory is last reported shell metadata, not a fabricated process/remote path. Completion never evaluates draft code.')
-          p.write_text(text)
-          PY
+          python3 scripts/unified-finish.py
+          rm scripts/unified-finish.py
           cargo fmt --all
           git add -A
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Apply unified terminal/editor surfaces, prompt metadata and input regression tests'
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Finalize focus routing and completion acceptance'
           git push origin HEAD:feature/unified-session-input
       - name: Export exact tested source
         run: |

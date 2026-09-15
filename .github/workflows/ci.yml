@@ -42,7 +42,7 @@ jobs:
       - run: cargo test --locked -p kea-app
       - run: cargo build --locked -p kea-app
       - name: Desktop document/replay smoke test
-        run: timeout 120s xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash scripts/smoke-linux.sh
+        run: timeout 180s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-linux.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,7 +62,16 @@ jobs:
         with:
           key: desktop-windows
           cache-on-failure: true
+      - run: cargo test --locked -p kea-app --lib
       - run: cargo build --release --locked -p kea-app
+      - name: Verify Windows GUI subsystem
+        shell: python
+        run: |
+          import struct
+          from pathlib import Path
+          data = Path('target/release/kea.exe').read_bytes()
+          pe = struct.unpack_from('<I', data, 0x3c)[0]
+          assert struct.unpack_from('<H', data, pe + 24 + 68)[0] == 2
       - uses: actions/upload-artifact@v4
         with:
           name: kea-windows-x86_64
