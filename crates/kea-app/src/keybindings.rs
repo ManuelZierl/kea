@@ -1,4 +1,4 @@
-//! Configurable semantic actions. Text input and navigation stay in the editor.
+//! Configurable semantic actions. Ordinary text input/navigation stay with the editor.
 use anyhow::{Context as _, Result};
 use gpui::{KeyBinding, Keystroke, NoAction};
 use serde::Deserialize;
@@ -16,10 +16,11 @@ pub enum Action {
     CopyDocument,
     FocusEditor,
     Interrupt,
-    Execute,
-    SendText,
+    RunShell,
+    SendApplication,
+    Newline,
     Complete,
-    ToggleDirect,
+    ToggleBlocks,
     PreviousEvent,
     NextEvent,
     BackFiveSeconds,
@@ -28,8 +29,9 @@ pub enum Action {
     GoLive,
     Quit,
 }
+
 impl Action {
-    const ALL: [Self; 21] = [
+    const ALL: [Self; 22] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -40,10 +42,11 @@ impl Action {
         Self::CopyDocument,
         Self::FocusEditor,
         Self::Interrupt,
-        Self::Execute,
-        Self::SendText,
+        Self::RunShell,
+        Self::SendApplication,
+        Self::Newline,
         Self::Complete,
-        Self::ToggleDirect,
+        Self::ToggleBlocks,
         Self::PreviousEvent,
         Self::NextEvent,
         Self::BackFiveSeconds,
@@ -52,6 +55,7 @@ impl Action {
         Self::GoLive,
         Self::Quit,
     ];
+
     fn config_name(self) -> &'static str {
         match self {
             Self::Copy => "copy",
@@ -64,10 +68,11 @@ impl Action {
             Self::CopyDocument => "copy_document",
             Self::FocusEditor => "focus_editor",
             Self::Interrupt => "interrupt",
-            Self::Execute => "execute",
-            Self::SendText => "send_text",
+            Self::RunShell => "run_shell",
+            Self::SendApplication => "send_application",
+            Self::Newline => "newline",
             Self::Complete => "complete",
-            Self::ToggleDirect => "toggle_direct",
+            Self::ToggleBlocks => "toggle_blocks",
             Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event",
             Self::BackFiveSeconds => "back_5s",
@@ -77,22 +82,25 @@ impl Action {
             Self::Quit => "quit",
         }
     }
+
     fn parse(name: &str) -> Option<Self> {
         let name = name.trim().to_ascii_lowercase().replace('-', "_");
-        let name = match name.as_str() {
-            "submit" => "execute",
-            "direct" => "toggle_direct",
+        let canonical = match name.as_str() {
+            // Backwards-compatible names from the earlier Document/Direct design.
+            "execute" | "submit" => "run_shell",
+            "send_text" => "send_application",
+            "direct" | "toggle_direct" | "toggle_input_target" => "toggle_blocks",
             "previous" => "previous_event",
             "next" => "next_event",
             "back_five_seconds" => "back_5s",
             "forward_five_seconds" => "forward_5s",
             "play" => "play_pause",
             "live" => "go_live",
-            name => name,
+            other => other,
         };
         Self::ALL
             .into_iter()
-            .find(|action| action.config_name() == name)
+            .find(|action| action.config_name() == canonical)
     }
 }
 
@@ -104,6 +112,7 @@ struct Shortcut {
     control: bool,
     platform: bool,
 }
+
 impl Shortcut {
     fn parse(value: &str) -> Result<Self> {
         let text = value.trim().to_ascii_lowercase();
@@ -111,6 +120,7 @@ impl Shortcut {
             .map_err(|error| anyhow::anyhow!("invalid shortcut `{text}`: {error}"))?;
         Ok(Self::from_keystroke(&key))
     }
+
     fn from_keystroke(key: &Keystroke) -> Self {
         Self {
             key: if key.key == "return" {
@@ -124,6 +134,7 @@ impl Shortcut {
             platform: key.modifiers.platform,
         }
     }
+
     fn specification(&self) -> String {
         let mut parts = Vec::new();
         if self.platform {
@@ -141,6 +152,7 @@ impl Shortcut {
         parts.push(&self.key);
         parts.join("-")
     }
+
     fn display(&self) -> String {
         self.specification()
             .split('-')
@@ -163,6 +175,7 @@ enum Platform {
     Mac,
     Other,
 }
+
 impl Platform {
     fn current() -> Self {
         if cfg!(target_os = "macos") {
@@ -176,6 +189,7 @@ impl Platform {
 pub struct Keymap {
     bindings: HashMap<Action, Vec<Shortcut>>,
 }
+
 impl Keymap {
     pub fn load() -> (Self, Option<String>) {
         let Some(path) = config_path() else {
@@ -193,13 +207,14 @@ impl Keymap {
                 Err(error) => (
                     Self::defaults_for(Platform::current()),
                     Some(format!(
-                        "Keybindings {} ignored: {error}. Using OS defaults.",
+                        "Keybindings {} ignored: {error}. Using OS/editor defaults.",
                         path.display()
                     )),
                 ),
             },
         }
     }
+
     fn defaults_for(platform: Platform) -> Self {
         let modifier = if matches!(platform, Platform::Mac) {
             "cmd"
@@ -228,12 +243,13 @@ impl Keymap {
                 .unwrap()
                 .push(Shortcut::parse("ctrl-y").unwrap());
         }
+
         for (action, key) in [
             (Action::CopyDocument, "f10"),
-            (Action::Execute, "ctrl-enter"),
-            (Action::SendText, "ctrl-shift-enter"),
+            (Action::RunShell, "ctrl-enter"),
+            (Action::SendApplication, "ctrl-shift-enter"),
             (Action::Complete, "tab"),
-            (Action::ToggleDirect, "ctrl-shift-space"),
+            (Action::ToggleBlocks, "ctrl-shift-space"),
             (Action::PreviousEvent, "f6"),
             (Action::NextEvent, "f7"),
             (Action::BackFiveSeconds, "shift-f6"),
@@ -259,8 +275,15 @@ impl Keymap {
         ] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
+
+        // Editor-native default: Enter remains the component's newline action.
+        // Users who prefer terminal/chat semantics can configure:
+        //   run_shell = enter
+        //   newline = shift-enter
+        bindings.insert(Action::Newline, Vec::new());
         Self { bindings }
     }
+
     fn parse_overrides(platform: Platform, text: &str) -> Result<Self> {
         let mut keymap = Self::defaults_for(platform);
         for (number, line) in text.lines().enumerate() {
@@ -283,6 +306,7 @@ impl Keymap {
             };
             keymap.bindings.insert(action, values);
         }
+
         let mut seen = HashMap::new();
         for action in Action::ALL {
             for shortcut in &keymap.bindings[&action] {
@@ -298,30 +322,44 @@ impl Keymap {
         }
         Ok(keymap)
     }
+
     pub fn action_for(&self, key: &Keystroke) -> Option<Action> {
         let shortcut = Shortcut::from_keystroke(key);
         Action::ALL
             .into_iter()
             .find(|action| self.bindings[action].contains(&shortcut))
     }
+
     pub fn label(&self, action: Action) -> String {
         self.bindings
             .get(&action)
             .and_then(|values| values.first())
             .map_or_else(|| "unbound".into(), Shortcut::display)
     }
+
+    pub fn label_or(&self, action: Action, fallback: &str) -> String {
+        self.bindings
+            .get(&action)
+            .and_then(|values| values.first())
+            .map_or_else(|| fallback.into(), Shortcut::display)
+    }
+
     pub fn install(&self, cx: &mut gpui::App) {
         cx.bind_keys(self.gpui_bindings());
     }
 
-    /// Overlay bindings at the component's context depth; actions precede raw keys.
+    /// Kea actions are scoped to editor/chrome contexts. With a live terminal
+    /// focused, every Kea accelerator is masked so the raw terminal handler sees
+    /// it instead. OS/window-manager-reserved shortcuts remain outside our control.
     pub fn gpui_bindings(&self) -> Vec<KeyBinding> {
         let defaults = Self::defaults_for(Platform::current());
-        // Root's Tab traversal must not steal a terminal child's input.
         let mut result = vec![
+            // Root uses Tab for focus traversal; the terminal owns it instead.
             KeyBinding::new("tab", NoAction, Some("KeaTerminal")),
             KeyBinding::new("shift-tab", NoAction, Some("KeaTerminal")),
         ];
+
+        // Mask component defaults before installing remapped/unbound editing actions.
         for action in [
             Action::Copy,
             Action::Cut,
@@ -339,9 +377,13 @@ impl Keymap {
                 ));
             }
         }
+
         for action in Action::ALL {
             let contexts: &[&str] = match action {
-                Action::Execute | Action::SendText | Action::Complete => &["KeaCommand > Input"],
+                Action::RunShell
+                | Action::SendApplication
+                | Action::Newline
+                | Action::Complete => &["KeaCommand > Input"],
                 _ => &["Kea > Input", "KeaChrome"],
             };
             for shortcut in &self.bindings[&action] {
@@ -350,6 +392,20 @@ impl Keymap {
                         &shortcut.specification(),
                         Invoke { action },
                         Some(context),
+                    ));
+                }
+            }
+        }
+
+        // Mask both defaults and user overrides at the deepest live-terminal
+        // context. No Kea semantic shortcut should win over a TUI key binding.
+        for keymap in [&defaults, self] {
+            for shortcuts in keymap.bindings.values() {
+                for shortcut in shortcuts {
+                    result.push(KeyBinding::new(
+                        &shortcut.specification(),
+                        NoAction,
+                        Some("KeaTerminal"),
                     ));
                 }
             }
@@ -391,9 +447,50 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn key(spec: &str) -> Keystroke {
         Keystroke::parse(spec).unwrap()
     }
+
+    #[test]
+    fn defaults_are_editor_native_and_submission_actions_are_distinct() {
+        let map = Keymap::defaults_for(Platform::Other);
+        assert_eq!(map.action_for(&key("ctrl-enter")), Some(Action::RunShell));
+        assert_eq!(
+            map.action_for(&key("ctrl-shift-enter")),
+            Some(Action::SendApplication)
+        );
+        assert_eq!(map.action_for(&key("tab")), Some(Action::Complete));
+        assert_eq!(map.action_for(&key("enter")), None);
+        assert_eq!(map.action_for(&key("shift-enter")), None);
+    }
+
+    #[test]
+    fn terminal_like_enter_policy_is_configurable() {
+        let map = Keymap::parse_overrides(
+            Platform::Other,
+            "run_shell = enter\nnewline = shift-enter",
+        )
+        .unwrap();
+        assert_eq!(map.action_for(&key("enter")), Some(Action::RunShell));
+        assert_eq!(map.action_for(&key("shift-enter")), Some(Action::Newline));
+    }
+
+    #[test]
+    fn legacy_names_map_to_new_semantics() {
+        let map = Keymap::parse_overrides(
+            Platform::Other,
+            "execute = alt-enter\nsend_text = ctrl-alt-enter\ntoggle_direct = alt-b",
+        )
+        .unwrap();
+        assert_eq!(map.action_for(&key("alt-enter")), Some(Action::RunShell));
+        assert_eq!(
+            map.action_for(&key("ctrl-alt-enter")),
+            Some(Action::SendApplication)
+        );
+        assert_eq!(map.action_for(&key("alt-b")), Some(Action::ToggleBlocks));
+    }
+
     #[test]
     fn platform_defaults_separate_copy_from_interrupt() {
         let linux = Keymap::defaults_for(Platform::Other);
@@ -405,27 +502,26 @@ mod tests {
         );
         assert_eq!(mac.action_for(&key("cmd-c")), Some(Action::Copy));
         assert_eq!(mac.action_for(&key("ctrl-c")), Some(Action::Interrupt));
-        assert_eq!(linux.action_for(&key("ctrl-enter")), Some(Action::Execute));
     }
+
     #[test]
     fn configuration_remaps_unbinds_and_rejects_ambiguity() {
         let map = Keymap::parse_overrides(
             Platform::Other,
-            "copy = ctrl-shift-c\ninterrupt = ctrl-c\nexecute = alt-enter\nundo = none",
+            "copy = ctrl-shift-c\ninterrupt = ctrl-c\nrun_shell = alt-enter\nundo = none",
         )
         .unwrap();
         assert_eq!(map.action_for(&key("ctrl-c")), Some(Action::Interrupt));
         assert_eq!(map.action_for(&key("ctrl-shift-c")), Some(Action::Copy));
-        assert_eq!(map.action_for(&key("alt-enter")), Some(Action::Execute));
+        assert_eq!(map.action_for(&key("alt-enter")), Some(Action::RunShell));
         assert_eq!(map.action_for(&key("ctrl-z")), None);
         assert!(
             Keymap::parse_overrides(Platform::Other, "copy = ctrl-c\ninterrupt = ctrl-c").is_err()
         );
     }
+
     #[test]
-    fn editing_bindings_do_not_capture_direct_terminal_controls() {
-        // Stand-ins exercise the same parent-context precedence as Root's private
-        // focus traversal actions without coupling to their private Rust types.
+    fn live_terminal_context_does_not_capture_kea_shortcuts() {
         let mut map = gpui::Keymap::new(vec![
             KeyBinding::new("tab", gpui_component::input::MoveDown, Some("Root")),
             KeyBinding::new("shift-tab", gpui_component::input::MoveUp, Some("Root")),
@@ -459,8 +555,9 @@ mod tests {
             );
         }
     }
+
     #[test]
-    fn unbinding_copy_really_masks_the_component_default() {
+    fn unbinding_copy_masks_the_component_default() {
         let modifier = if cfg!(target_os = "macos") {
             "cmd-c"
         } else {
