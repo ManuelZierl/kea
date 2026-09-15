@@ -18,6 +18,8 @@ pub enum Action {
     Interrupt,
     Execute,
     ToggleDirect,
+    ToggleBlocks,
+    Complete,
     PreviousEvent,
     NextEvent,
     BackFiveSeconds,
@@ -27,7 +29,7 @@ pub enum Action {
     Quit,
 }
 impl Action {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 21] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -40,6 +42,8 @@ impl Action {
         Self::Interrupt,
         Self::Execute,
         Self::ToggleDirect,
+        Self::ToggleBlocks,
+        Self::Complete,
         Self::PreviousEvent,
         Self::NextEvent,
         Self::BackFiveSeconds,
@@ -62,6 +66,8 @@ impl Action {
             Self::Interrupt => "interrupt",
             Self::Execute => "execute",
             Self::ToggleDirect => "toggle_direct",
+            Self::ToggleBlocks => "toggle_blocks",
+            Self::Complete => "complete",
             Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event",
             Self::BackFiveSeconds => "back_5s",
@@ -75,7 +81,7 @@ impl Action {
         let name = name.trim().to_ascii_lowercase().replace('-', "_");
         let name = match name.as_str() {
             "submit" => "execute",
-            "direct" => "toggle_direct",
+            "direct" | "toggle_input_target" => "toggle_direct",
             "previous" => "previous_event",
             "next" => "next_event",
             "back_five_seconds" => "back_5s",
@@ -226,6 +232,8 @@ impl Keymap {
             (Action::CopyDocument, "f10"),
             (Action::Execute, "ctrl-enter"),
             (Action::ToggleDirect, "ctrl-shift-space"),
+            (Action::ToggleBlocks, "ctrl-shift-b"),
+            (Action::Complete, "ctrl-space"),
             (Action::PreviousEvent, "f6"),
             (Action::NextEvent, "f7"),
             (Action::BackFiveSeconds, "shift-f6"),
@@ -333,8 +341,8 @@ impl Keymap {
         }
         for action in Action::ALL {
             let contexts: &[&str] = match action {
-                Action::Execute => &["KeaCommand > Input"],
-                Action::Copy | Action::Paste => &["Kea > Input", "KeaTerminal"],
+                Action::Execute | Action::Complete => &["KeaCommand > Input"],
+                Action::Copy | Action::Paste => &["Kea > Input"],
                 Action::Cut | Action::Undo | Action::Redo | Action::SelectAll | Action::Find => {
                     &["Kea > Input"]
                 }
@@ -347,6 +355,21 @@ impl Keymap {
                         &shortcut.specification(),
                         Invoke { action },
                         Some(context),
+                    ));
+                }
+            }
+        }
+        // Terminal focus is an application-owned input surface, not an editor
+        // context. Mask every Kea accelerator (including user overrides) at this
+        // deeper context so the raw key handler receives it. Toolbar controls
+        // remain clickable; OS/window-manager shortcuts remain outside our control.
+        for keymap in [&defaults, self] {
+            for shortcuts in keymap.bindings.values() {
+                for shortcut in shortcuts {
+                    result.push(KeyBinding::new(
+                        &shortcut.specification(),
+                        NoAction,
+                        Some("KeaTerminal"),
                     ));
                 }
             }
@@ -433,7 +456,23 @@ mod tests {
             gpui::KeyContext::parse("Kea").unwrap(),
             gpui::KeyContext::parse("KeaTerminal").unwrap(),
         ];
-        for spec in ["ctrl-z", "ctrl-enter", "ctrl-l", "tab", "shift-tab"] {
+        for spec in [
+            "ctrl-z",
+            "ctrl-enter",
+            "ctrl-l",
+            "ctrl-c",
+            "ctrl-v",
+            "ctrl-shift-q",
+            "ctrl-shift-space",
+            "ctrl-space",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "tab",
+            "shift-tab",
+        ] {
             assert!(
                 map.bindings_for_input(&[key(spec)], &context).0.is_empty(),
                 "captured {spec}"

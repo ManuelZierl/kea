@@ -19,6 +19,7 @@ pub struct Settings {
     pub soft_wrap: bool,
     pub output_wrap: bool,
     pub syntax_highlighting: bool,
+    pub show_blocks: bool,
 }
 
 impl Default for Settings {
@@ -31,6 +32,7 @@ impl Default for Settings {
             soft_wrap: true,
             output_wrap: true,
             syntax_highlighting: true,
+            show_blocks: false,
         }
     }
 }
@@ -92,6 +94,7 @@ impl Settings {
                     );
                     settings.font_size = Some(size);
                 }
+                "show_blocks" => settings.show_blocks = boolean(value)?,
                 "line_numbers" => settings.line_numbers = boolean(value)?,
                 "soft_wrap" => settings.soft_wrap = boolean(value)?,
                 "output_wrap" => settings.output_wrap = boolean(value)?,

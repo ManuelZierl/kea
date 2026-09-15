@@ -53,7 +53,7 @@ impl EchoFilter {
         // its bytes verbatim. Once the private start marker appears, execution has
         // definitely begun; fail open rather than buffering real command output or
         // blocking future document submissions forever.
-        if find_bytes(&self.pending, b"\x1b]777;kea;start;").is_some() {
+        if find_bytes(&self.pending, b"\x1b]777;kea;").is_some() {
             return (std::mem::take(&mut self.pending), true);
         }
 

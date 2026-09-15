@@ -13,6 +13,17 @@ impl ShellFlavor {
             .first()
             .map(|program| program.to_string_lossy().into_owned())
             .or_else(|| std::env::var("SHELL").ok())?;
+        if command.iter().skip(1).any(|arg| {
+            let arg = arg.to_string_lossy().to_ascii_lowercase();
+            arg == "-c"
+                || arg == "-command"
+                || arg == "-encodedcommand"
+                || arg == "-file"
+                || arg == "-noninteractive"
+                || arg == "--command"
+        }) {
+            return None;
+        }
         Self::from_program(&program)
     }
 
@@ -26,6 +37,19 @@ impl ShellFlavor {
             "sh" | "bash" | "dash" | "zsh" | "ksh" | "mksh" => Some(Self::Posix),
             "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => Some(Self::PowerShell),
             _ => None,
+        }
+    }
+
+    /// Metadata-only request for a known shell. Never use it inside an arbitrary
+    /// TUI/REPL. The terminal output is canonical, so recordings retain the report.
+    pub fn directory_query(self) -> Vec<u8> {
+        format!("{}\r", self.directory_statement()).into_bytes()
+    }
+
+    fn directory_statement(self) -> &'static str {
+        match self {
+            Self::Posix => r#"printf '\033]777;kea;cwd;%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\r\n')""#,
+            Self::PowerShell => "[Console]::Write([char]27 + ']777;kea;cwd;' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pwd.Path)) + [char]7)",
         }
     }
 
@@ -45,7 +69,15 @@ impl ShellFlavor {
                 )
             }
         };
-        Ok(command.into_bytes())
+        // Emit after the done marker, so metadata collection cannot replace the
+        // real command exit status. Never parse a formatted prompt for the cwd.
+        let command = command.trim_end_matches('\r');
+        Ok(format!(
+            "{}; {command}; {}\r",
+            self.directory_statement(),
+            self.directory_statement()
+        )
+        .into_bytes())
     }
 }
 
@@ -81,6 +113,10 @@ mod tests {
             Some(ShellFlavor::PowerShell)
         );
         assert_eq!(ShellFlavor::from_program("opencode"), None);
+        assert_eq!(
+            ShellFlavor::detect(&["bash".into(), "-c".into(), "opencode".into()]),
+            None
+        );
     }
 
     #[test]
@@ -125,7 +161,9 @@ mod tests {
                     }
                 }
             }
-            if matches!(document.blocks()[0].status, CommandStatus::Finished(0)) {
+            if matches!(document.blocks()[0].status, CommandStatus::Finished(0))
+                && document.current_directory().is_some()
+            {
                 break;
             }
             assert!(started.elapsed() < Duration::from_secs(10));

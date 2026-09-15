@@ -1,5 +1,9 @@
 # Platform-integrated editing
 
+## Shared-session interaction
+
+The terminal and bottom editor coexist; blocks are optional. Submission target is separate from focus and output presentation. See [shared-session input, completion and directory reporting](shared-session.md) for the current contract. Earlier Document/Direct terminology below describes projections, not mutually exclusive UI modes.
+
 ## Product contract
 
 Kea is a minimal editor with executable input and persistent, read-only output. It should not impose terminal conventions on ordinary text editing or duplicate services the platform/editor already supplies.

@@ -10,7 +10,7 @@
 
 <p align="center"><strong>The terminal, rethought as a persistent document.</strong></p>
 
-Kea is a minimal editor with executable input and persistent, read-only output. Write commands as ordinary multiline text, explicitly execute them, and inspect their output as document blocks. A real PTY stays underneath for existing terminal applications.
+Kea is a minimal editor with executable input and persistent, read-only output. The live terminal and bottom text editor are available together. Write multiline input in the editor or click the terminal to interact directly. Command blocks are an optional view, not a requirement for using Kea.
 
 Everyday editing belongs to a reusable, platform-integrated editor—not a terminal pretending to be a text field. Kea adds the execution and document model around it. Terminal replay is a consequence of retained output history, not the main purpose.
 
@@ -41,7 +41,7 @@ Session document
 └────────────────────────────────────────────────────┘
 ```
 
-For OpenCode, Vim, `less`, SSH or a REPL, switch to **Direct PTY** with Ctrl+Shift+Space. It is the same process, not a second shell. When the interactive program exits, return to the document. Direct mode retains terminal-screen/key semantics; the new editor is used for document text, not for rewriting arbitrary TUI input.
+For OpenCode, Vim, `less`, SSH or a REPL, click the terminal: its keystrokes belong to the child application. The bottom editor remains available for composing text. Use Show blocks to inspect tracked commands alongside the terminal. These are views of one process, never separate shells. See [shared session and input ownership](docs/shared-session.md).
 
 ## Shortcuts and system defaults
 
@@ -53,14 +53,16 @@ For OpenCode, Vim, `less`, SSH or a REPL, switch to **Direct PTY** with Ctrl+Shi
 | Focus command editor | Ctrl+L | Cmd+L |
 | Execute focused command draft | Ctrl+Enter | Ctrl+Enter |
 | Interrupt child | Ctrl+Shift+C | Ctrl+C |
-| Toggle Document / Direct PTY | Ctrl+Shift+Space | Ctrl+Shift+Space |
+| Change composer submission target | Ctrl+Shift+Space | Ctrl+Shift+Space |
+| Complete single-line draft (handoff, no Enter) | Ctrl+Space | Ctrl+Space |
+| Show / hide optional blocks | Ctrl+Shift+B | Ctrl+Shift+B |
 | Copy whole document / terminal screen | F10 | F10 |
 | Previous / next terminal-history event | F6 / F7 | F6 / F7 |
 | Back / forward five seconds | Shift+F6 / Shift+F7 | Shift+F6 / Shift+F7 |
 | Play / pause history; return to live | F8; F9 | F8; F9 |
 | Quit | Ctrl+Shift+Q | Cmd+Q |
 
-Editing shortcuts apply to the focused text component. They do not swallow ordinary terminal control keys in Direct mode. Execute is not intercepted there. Fine-grained Direct PTY selection is still outstanding: selection-copy there does not replace your clipboard with the whole screen; use the explicit F10 action instead.
+The table applies to editor/history focus. With a live terminal focused, Kea does not reserve these shortcuts: Ctrl+C/V/Z/L, Tab and F6–F10 go to the terminal application. Use the clickable toolbar to focus the editor, paste to the terminal, copy all, or inspect history. OS-reserved shortcuts and unsupported extended terminal protocols remain platform/compatibility limitations.
 
 Appearance follows system light/dark by default. Clipboard, composition and text layout are integrated through GPUI Component and GPUI's platform interfaces. This does **not** guarantee every OS autocomplete, dictation, accessibility or IME service on every platform; see [platform integration and validation](docs/editor-integration.md).
 
@@ -82,7 +84,7 @@ execute = alt-enter
 copy_document = f10
 ```
 
-Multiple shortcuts can be comma-separated; `none` unbinds an action, including its usual editor binding. Duplicate semantic assignments are rejected. Other configurable actions include `cut`, `paste`, `undo`, `redo`, `select_all`, `find`, `focus_editor`, `toggle_direct`, `previous_event`, `next_event`, `back_5s`, `forward_5s`, `play_pause`, `go_live`, and `quit`. Ordinary editor navigation retains component/platform defaults.
+Multiple shortcuts can be comma-separated; `none` unbinds an action, including its usual editor binding. Duplicate semantic assignments are rejected. Other configurable actions include `cut`, `paste`, `undo`, `redo`, `select_all`, `find`, `focus_editor`, `complete`, `toggle_blocks`, `toggle_direct` (also `toggle_input_target`), `previous_event`, `next_event`, `back_5s`, `forward_5s`, `play_pause`, `go_live`, and `quit`. Ordinary editor navigation retains component/platform defaults.
 
 ```text
 # settings.conf: defaults shown
@@ -93,6 +95,7 @@ syntax_highlighting = true
 line_numbers = false
 soft_wrap = true
 output_wrap = true
+show_blocks = false
 ```
 
 Font `system` means no Kea override of the component defaults. Explicit font sizes from 9 to 40 are accepted. Only Bash highlighting is currently configured; PowerShell uses the multiline text editor without a grammar. No automatic smart-quote or spelling substitutions are added to command text.
@@ -101,7 +104,7 @@ Font `system` means no Kea override of the component defaults. Explicit font siz
 
 Kea does not guess command boundaries from prompts, regexes or idle time. Application-owned shell wrappers emit explicit OSC markers with command ID/text and completion status. The marker bytes enter the ordinary recording; `kea-document` derives blocks from that stream. Reopening a `.kea` recording reconstructs those blocks without re-executing commands.
 
-Document adapters currently support `sh`, `bash`, `dash`, `zsh`, `ksh`, `mksh`, `pwsh` and Windows PowerShell. Other programs start in Direct mode. Windows defaults to PowerShell for Document mode rather than `cmd.exe`. Working directory/environment metadata is not fabricated when no explicit adapter data exists.
+Document adapters currently support `sh`, `bash`, `dash`, `zsh`, `ksh`, `mksh`, `pwsh` and Windows PowerShell. Other programs start in Direct mode. Windows defaults to PowerShell for Document mode rather than `cmd.exe`. The status bar shows the last directory explicitly reported by the shell at startup and around managed command submissions. Direct terminal commands and remote shells can make that report stale; it is labeled last reported, not guessed from prompts.
 
 Direct mode retains the existing terminal renderer/keyboard adapter. Full mouse reporting, keyboard protocol negotiation, terminal IME, images and accessibility are separate compatibility work, not capabilities automatically provided by an editor dependency.
 
