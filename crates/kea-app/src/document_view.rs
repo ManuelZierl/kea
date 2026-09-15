@@ -165,7 +165,9 @@ impl KeaView {
                             .default_value(text)
                     });
                     command_editor::follow_output_tail(&editor, window, cx);
-                    self.document_scroll.scroll_to_bottom();
+                    if self.document_ui.page_start.is_none() {
+                        self.document_scroll.scroll_to_bottom();
+                    }
                     self.document_ui.visible.insert(
                         id,
                         BlockText {

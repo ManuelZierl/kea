@@ -261,7 +261,7 @@ impl KeaView {
                                 this.completion_text = text;
                                 this.completion_cursor = cursor;
                                 this.candidates = candidates;
-                                this.notice = Some(if this.candidates.is_empty() { "No local path/history matches. Native shell Tab is available in terminal focus.".into() } else { "Choose a completion below. Nothing is executed.".into() });
+                                this.notice = Some(if this.candidates.is_empty() { "No local path/history matches. Native shell Tab is available in terminal focus.".into() } else { "Choose a completion below, or press Tab again to accept the first. Nothing is executed.".into() });
                                 cx.notify();
                             }
                         }
@@ -340,6 +340,9 @@ impl KeaView {
         };
         let result = input::paste(&text, self.session.bracketed_paste())
             .and_then(|bytes| self.session.send(bytes));
+        if result.is_ok() {
+            self.document.note_terminal_input();
+        }
         self.result(result, cx);
     }
     fn execute_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -355,9 +358,7 @@ impl KeaView {
         }
         if !self.session.input_allowed() {
             self.result(
-                Err(anyhow::anyhow!(
-                    "Return to LIVE before executing a document command."
-                )),
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
                 cx,
             );
             return;
@@ -369,7 +370,7 @@ impl KeaView {
         let Some(shell) = self.shell else {
             self.result(
                 Err(anyhow::anyhow!(
-                    "Document execution is unavailable for this program."
+                    "Run in shell requires an integrated shell; use Send to app instead."
                 )),
                 cx,
             );
@@ -435,6 +436,13 @@ impl KeaView {
         let line_prefix = text[..cursor].rsplit('\n').next().unwrap_or("");
         if line_prefix.trim().is_empty() {
             window.dispatch_action(Box::new(edit::Indent), cx);
+            return;
+        }
+        if !self.candidates.is_empty()
+            && text == self.completion_text
+            && cursor == self.completion_cursor
+        {
+            self.apply_completion(0, window, cx);
             return;
         }
         if self.completion_rx.is_some() {
@@ -679,7 +687,7 @@ impl Render for KeaView {
         }
         let mut completions = div().flex().flex_wrap().gap_1();
         if self.editor.read(cx).value().as_ref() == self.completion_text {
-            for (index, candidate) in self.candidates.iter().take(8).enumerate() {
+            for (index, candidate) in self.candidates.iter().enumerate() {
                 let label: String = candidate.label.chars().take(100).collect();
                 completions = completions.child(
                     div()
@@ -809,9 +817,9 @@ impl Render for KeaView {
                     )
                     .child(
                         div()
+                            .id("completion-list")
                             .flex_1()
                             .overflow_y_scroll()
-                            .id("completion-list")
                             .child(completions),
                     ),
             )

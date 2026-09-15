@@ -1,6 +1,5 @@
 # Platform-integrated editing
 
-> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior](unified-session.md) supersedes the older Document/Direct mode descriptions below.
 
 ## Product contract
 
@@ -22,11 +21,11 @@ Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatche
 
 `copy` copies only the selection. An empty selection leaves the clipboard unchanged. `copy_document` explicitly exports the retained document (or the visible terminal screen in Direct/history mode). Each block has its own Copy block action. No selection in Direct PTY currently means no selection-copy there; do not silently substitute the entire screen.
 
-Execute applies only to the focused command editor, not a block, filter, embedded find field or Direct PTY. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
+Run in shell and Send to app apply only to the focused command editor, not a block, filter, embedded find field or terminal. Run in shell additionally requires an explicit prompt-ready report; Send to app never wraps its text in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
 
 A successful submission replaces the draft editor with a fresh entity and fresh undo history. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
 
-Direct PTY has its own focus/key context and retains the same process. Editor-only controls such as Undo, Execute and Focus editor must not steal control sequences there. The compatibility terminal is still the existing Alacritty/canvas/input adapter, not a claim of a complete new terminal component.
+The simultaneously visible terminal has its own focus/key context and retains the same process. No Kea action reserves a live-terminal shortcut. Toolbar buttons remain available without stealing control sequences. The optional block inspector changes presentation only; see unified-session.md. The compatibility terminal is still the existing Alacritty/canvas/input adapter, not a claim of a complete new terminal component.
 
 ## Read-only output
 
@@ -44,6 +43,7 @@ Appearance defaults to system light/dark and observes appearance changes. Fonts 
 
 ```text
 theme = system
+show_blocks = false
 font_family = system
 font_size = system
 syntax_highlighting = true
