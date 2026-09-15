@@ -19,8 +19,16 @@ use kea_document::Document;
 use kea_session::{Observed, Session};
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
-const CELL_WIDTH: f32 = 9.0;
-const LINE_HEIGHT: f32 = 20.0;
+const TERMINAL_LINE_HEIGHT: f32 = 1.2;
+const FALLBACK_CELL_WIDTH_EM: f32 = 0.6;
+
+#[derive(Clone)]
+struct TerminalFontMetrics {
+    font: Font,
+    font_size: Pixels,
+    cell_width: Pixels,
+    line_height: Pixels,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputTarget {
@@ -547,6 +555,9 @@ impl Render for KeaView {
         let screen = self.session.screen();
         let terminal_entity = cx.entity();
         let layout_entity = cx.entity().downgrade();
+        let terminal_metrics = terminal_font_metrics(window, cx);
+        let layout_metrics = terminal_metrics.clone();
+        let paint_metrics = terminal_metrics;
         let terminal = div()
             .id("terminal-surface")
             .size_full()
@@ -565,12 +576,13 @@ impl Render for KeaView {
             .child(
                 canvas(
                     move |bounds, window, cx| {
-                        // Use the actual viewport, not guessed toolbar/editor heights.
-                        // The old estimate could hide the last row/prompt entirely.
-                        let columns = (f32::from(bounds.size.width) / CELL_WIDTH)
+                        // Size the PTY from the actual configured monospace metrics.
+                        let columns = (f32::from(bounds.size.width)
+                            / f32::from(layout_metrics.cell_width))
                             .floor()
                             .clamp(2., 512.) as u16;
-                        let rows = (f32::from(bounds.size.height) / LINE_HEIGHT)
+                        let rows = (f32::from(bounds.size.height)
+                            / f32::from(layout_metrics.line_height))
                             .floor()
                             .clamp(1., 256.) as u16;
                         if let Ok(size) = kea_core::Size::new(columns, rows) {
@@ -590,7 +602,7 @@ impl Render for KeaView {
                     },
                     move |bounds, _, window, cx| {
                         let _ = &terminal_entity; // keep the owning view alive through paint
-                        paint_screen(&screen, bounds, window, cx);
+                        paint_screen(&screen, bounds, &paint_metrics, window, cx);
                     },
                 )
                 .size_full(),
@@ -799,25 +811,62 @@ fn apply_appearance(settings: &Settings, window: &mut Window, cx: &mut App) {
     }
 }
 
-fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+fn terminal_font_metrics(window: &mut Window, cx: &mut App) -> TerminalFontMetrics {
+    let (font_family, font_size) = {
+        let theme = cx.theme();
+        (theme.mono_font_family.clone(), theme.mono_font_size)
+    };
+    let mut terminal_font = font(font_family);
+    // Terminal cells must not change width because a programming font turns
+    // character sequences into contextual ligatures.
+    terminal_font.features = FontFeatures::disable_ligatures();
+
+    let text_system = window.text_system();
+    let font_id = text_system.resolve_font(&terminal_font);
+    let cell_width = text_system
+        .advance(font_id, font_size, 'M')
+        .map(|advance| advance.width)
+        .unwrap_or_else(|_| px(f32::from(font_size) * FALLBACK_CELL_WIDTH_EM));
+    let line_height = px(f32::from(font_size) * TERMINAL_LINE_HEIGHT);
+
+    TerminalFontMetrics {
+        font: terminal_font,
+        font_size,
+        cell_width,
+        line_height,
+    }
+}
+
+fn paint_screen(
+    screen: &Screen,
+    bounds: Bounds<Pixels>,
+    metrics: &TerminalFontMetrics,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let cell_width = f32::from(metrics.cell_width);
+    let line_height = f32::from(metrics.line_height);
     for (index, cell) in screen.cells.iter().enumerate() {
         let row = index / usize::from(screen.size.columns);
         let column = index % usize::from(screen.size.columns);
-        let origin =
-            bounds.origin + point(px(column as f32 * CELL_WIDTH), px(row as f32 * LINE_HEIGHT));
+        let origin = bounds.origin
+            + point(
+                px(column as f32 * cell_width),
+                px(row as f32 * line_height),
+            );
         if origin.x >= bounds.right() || origin.y >= bounds.bottom() {
             continue;
         }
         if cell.background != 0x11151a {
             window.paint_quad(fill(
-                Bounds::new(origin, size(px(CELL_WIDTH), px(LINE_HEIGHT))),
+                Bounds::new(origin, size(metrics.cell_width, metrics.line_height)),
                 rgb(cell.background),
             ));
         }
         if cell.spacer || cell.text == " " {
             continue;
         }
-        let mut cell_font = font("monospace");
+        let mut cell_font = metrics.font.clone();
         if cell.bold {
             cell_font.weight = FontWeight::BOLD;
         }
@@ -829,20 +878,26 @@ fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx
             underline: None,
             strikethrough: None,
         };
-        let shaped =
-            window
-                .text_system()
-                .shape_line(cell.text.clone().into(), px(14.), &[run], None);
-        let _ = shaped.paint(origin, px(LINE_HEIGHT), window, cx);
+        let shaped = window.text_system().shape_line(
+            cell.text.clone().into(),
+            metrics.font_size,
+            &[run],
+            Some(px(if cell.wide {
+                cell_width * 2.
+            } else {
+                cell_width
+            })),
+        );
+        let _ = shaped.paint(origin, metrics.line_height, window, cx);
         if cell.underline {
             window.paint_quad(fill(
                 Bounds::new(
-                    origin + point(px(0.), px(LINE_HEIGHT - 2.)),
+                    origin + point(px(0.), px(line_height - 2.)),
                     size(
                         px(if cell.wide {
-                            CELL_WIDTH * 2.
+                            cell_width * 2.
                         } else {
-                            CELL_WIDTH
+                            cell_width
                         }),
                         px(1.),
                     ),
@@ -854,12 +909,12 @@ fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx
     if let Some((row, column)) = screen.cursor {
         let origin = bounds.origin
             + point(
-                px(column as f32 * CELL_WIDTH),
-                px(row as f32 * LINE_HEIGHT + LINE_HEIGHT - 2.),
+                px(column as f32 * cell_width),
+                px(row as f32 * line_height + line_height - 2.),
             );
         if origin.x < bounds.right() && origin.y < bounds.bottom() {
             window.paint_quad(fill(
-                Bounds::new(origin, size(px(CELL_WIDTH), px(2.))),
+                Bounds::new(origin, size(metrics.cell_width, px(2.))),
                 rgb(0x61afef),
             ));
         }
