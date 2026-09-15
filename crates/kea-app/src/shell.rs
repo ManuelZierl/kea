@@ -13,18 +13,19 @@ impl ShellFlavor {
             .first()
             .map(|program| program.to_string_lossy().into_owned())
             .or_else(|| std::env::var("SHELL").ok())?;
-        if command.iter().skip(1).any(|arg| {
-            let arg = arg.to_string_lossy().to_ascii_lowercase();
-            arg == "-c"
-                || arg == "-command"
-                || arg == "-encodedcommand"
-                || arg == "-file"
-                || arg == "-noninteractive"
-                || arg == "--command"
-        }) {
-            return None;
+        let shell = Self::from_program(&program)?;
+        // Only instrument launches known to remain interactive. Scripts, -c,
+        // abbreviated PowerShell switches and unknown arguments use literal input.
+        let flags: &[&str] = match shell {
+            Self::Posix => &["-i", "-l", "--login", "--noprofile", "--norc"],
+            Self::PowerShell => &["-nologo", "-noprofile", "-noexit"],
+        };
+        for arg in command.iter().skip(1) {
+            if !flags.contains(&arg.to_string_lossy().to_ascii_lowercase().as_str()) {
+                return None;
+            }
         }
-        Self::from_program(&program)
+        Some(shell)
     }
 
     pub fn from_program(program: &str) -> Option<Self> {
@@ -117,6 +118,23 @@ mod tests {
             ShellFlavor::detect(&["bash".into(), "-c".into(), "opencode".into()]),
             None
         );
+    }
+
+    #[test]
+    fn scripts_and_unknown_shell_arguments_do_not_receive_startup_metadata() {
+        for args in [
+            vec!["bash", "script.sh"],
+            vec!["bash", "-lc", "opencode"],
+            vec!["pwsh", "-Command", "opencode"],
+            vec!["pwsh", "-e", "encoded-command"],
+        ] {
+            let command = args.into_iter().map(OsString::from).collect::<Vec<_>>();
+            assert_eq!(ShellFlavor::detect(&command), None);
+        }
+        let command = ["bash", "--noprofile", "--norc"].map(OsString::from);
+        assert_eq!(ShellFlavor::detect(&command), Some(ShellFlavor::Posix));
+        let command = ["powershell.exe", "-NoLogo", "-NoProfile", "-NoExit"].map(OsString::from);
+        assert_eq!(ShellFlavor::detect(&command), Some(ShellFlavor::PowerShell));
     }
 
     #[test]
