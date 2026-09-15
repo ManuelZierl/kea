@@ -32,10 +32,6 @@ jobs:
           subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
           subprocess.run(['git', 'apply', '-'], input=patch, check=True)
           pathlib.Path('scripts/smoke-linux.sh').write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec bash "$(dirname "$0")/smoke-shared-session.sh"\n')
-          p = pathlib.Path('.github/workflows/ci.yml')
-          text = p.read_text().replace('timeout 120s xvfb-run', 'timeout 180s xvfb-run').replace('1280x800x24', '1280x900x24')
-          text = text.replace('      - run: cargo build --release --locked -p kea-app\n', '      - run: cargo build --release --locked -p kea-app\n      - name: Verify Windows GUI subsystem\n        run: python scripts/verify-windows-subsystem.py target/release/kea.exe\n')
-          p.write_text(text)
           p = pathlib.Path('README.md')
           text = p.read_text()
           text = text.replace('Write commands as ordinary multiline text, explicitly execute them, and inspect their output as document blocks. A real PTY stays underneath for existing terminal applications.', 'The live terminal and bottom text editor are available together. Write multiline input in the editor or click the terminal to interact directly. Command blocks are an optional view, not a requirement for using Kea.')
@@ -53,17 +49,15 @@ jobs:
           p.write_text(text)
           p = pathlib.Path('AGENTS.md')
           text = p.read_text().replace('Read README.md, docs/architecture.md and docs/editor-integration.md before changing the design.', 'Read README.md, docs/architecture.md, docs/editor-integration.md and docs/shared-session.md before changing the design.')
-          text = text.replace('- Direct PTY and Document mode refer to the same process/session. Do not silently spawn a second shell.', '- The live terminal and composer coexist over the same process. Blocks are an optional projection, not an exclusive operating mode. Never silently spawn a second shell.\n- All Kea accelerators are masked with live-terminal focus. The composer owns normal editing; toolbar controls provide access without reserving child keys.\n- After unmanaged terminal input, shell ownership is unknown: composer sends literal application text, never eval wrappers. Explicitly restore managed shell submission only after returning to the shell.\n- Completion handoff uses the running application\'s Tab behavior and does not send Enter. Refuse multiline/control-character completion drafts rather than executing them.')
+          text = text.replace('- Direct PTY and Document mode refer to the same process/session. Do not silently spawn a second shell.', '- The live terminal and composer coexist over the same process. Blocks are optional. Never silently spawn a second shell.\n- Mask all Kea accelerators with live-terminal focus; keep clickable controls for host actions.\n- Unmanaged terminal input invalidates shell readiness. Application text must never receive eval wrappers.\n- Completion handoff uses the running application\'s Tab handling, without Enter; reject multiline/control-character drafts.')
           p.write_text(text)
           for name in ('docs/architecture.md', 'docs/editor-integration.md'):
               p = pathlib.Path(name)
               text = p.read_text()
               line = text.find('\n')
-              text = text[:line+1] + '\n## Shared-session interaction\n\nThe terminal and bottom editor now coexist; command blocks are optional. Submission target is distinct from focus and output presentation. Live-terminal focus masks Kea shortcuts; normal editing remains with the focused editor. See [shared-session input ownership, completion and directory reporting](shared-session.md) for the current contract. Earlier Document/Direct terminology below describes projections, not mutually exclusive UI modes.\n' + text[line+1:]
-              text = text.replace('The compatibility terminal retains its ANSI palette and current fixed metrics.', 'The compatibility terminal retains its ANSI palette and fixed cell metrics, but is resized from its actual rendered viewport.')
+              text = text[:line+1] + '\n## Shared-session interaction\n\nThe terminal and bottom editor coexist; blocks are optional. Submission target is separate from focus and output presentation. See [shared-session input, completion and directory reporting](shared-session.md) for the current contract. Earlier Document/Direct terminology below describes projections, not mutually exclusive UI modes.\n' + text[line+1:]
               p.write_text(text)
           shutil.rmtree('.kea-work')
-          pathlib.Path('.github/workflows/shared-session-workbench.yml').unlink()
           PY
           cargo fmt --all
           git add -A
