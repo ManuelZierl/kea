@@ -1,5 +1,5 @@
 use kea_document::{encode_input, Error};
-use std::ffi::OsString;
+use std::{ffi::OsString, fmt::Write as _};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellFlavor {
@@ -58,15 +58,25 @@ impl ShellFlavor {
         let encoded = encode_input(input)?;
         let command = match self {
             Self::Posix => {
-                let quoted = quote_posix(input);
+                // Interactive line editors treat literal LF/CR bytes as input
+                // submission. Encode the complete draft as octal data so even a
+                // multiline command is transported as exactly one physical line.
+                // The trailing '_' prevents command substitution from stripping a
+                // user-supplied trailing newline; `${var%_}` removes only sentinel.
+                let source = encode_posix_source(input);
+                let source_var = format!("__kea_source_{id}");
+                let status_var = format!("__kea_status_{id}");
                 format!(
-                    "printf '\\033]777;kea;start;{id};{encoded}\\007'; eval {quoted}; printf '\\033]777;kea;done;{id};%d\\007' \"$?\"\r"
+                    "{source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; unset {source_var} {status_var}\r"
                 )
             }
             Self::PowerShell => {
-                let quoted = quote_powershell(input);
+                // PowerShell has a built-in base64 decoder. Decode into a String
+                // before Invoke-Expression so PTY input itself contains no embedded
+                // newline from the user's draft.
+                let source_var = format!("$__kea_source_{id}");
                 format!(
-                    "[Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $__kea_previous=$global:LASTEXITCODE; $global:LASTEXITCODE=$null; Invoke-Expression {quoted}; $__kea_ok=$?; $__kea_native=$global:LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; if ($null -eq $__kea_native) {{ $global:LASTEXITCODE=$__kea_previous }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7)\r"
+                    "{source_var}=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')); [Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $__kea_previous=$global:LASTEXITCODE; $global:LASTEXITCODE=$null; Invoke-Expression {source_var}; $__kea_ok=$?; $__kea_native=$global:LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; if ($null -eq $__kea_native) {{ $global:LASTEXITCODE=$__kea_previous }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7); Remove-Variable __kea_source_{id} -ErrorAction SilentlyContinue\r"
                 )
             }
         };
@@ -82,21 +92,15 @@ impl ShellFlavor {
     }
 }
 
-fn quote_posix(input: &str) -> String {
-    let mut quoted = String::with_capacity(input.len() + 2);
-    quoted.push('\'');
-    for (index, part) in input.split('\'').enumerate() {
-        if index != 0 {
-            quoted.push_str("'\"'\"'");
-        }
-        quoted.push_str(part);
+/// Encode arbitrary UTF-8 command bytes for POSIX `printf %b` without placing
+/// any byte from the user's command directly into the interactive input line.
+fn encode_posix_source(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len().saturating_mul(5));
+    for byte in input.as_bytes() {
+        // POSIX printf %b specifies \0ddd octal escapes (up to three digits).
+        write!(&mut encoded, "\\0{byte:03o}").expect("writing to String cannot fail");
     }
-    quoted.push('\'');
-    quoted
-}
-
-fn quote_powershell(input: &str) -> String {
-    format!("'{}'", input.replace('\'', "''"))
+    encoded
 }
 
 #[cfg(test)]
@@ -138,6 +142,30 @@ mod tests {
     }
 
     #[test]
+    fn wrappers_transport_multiline_input_as_one_physical_line() {
+        let input = "ls\nls\nprintf 'ä\\n'\n";
+        for shell in [ShellFlavor::Posix, ShellFlavor::PowerShell] {
+            let wrapper = shell.wrap(42, input).unwrap();
+            assert_eq!(wrapper.last(), Some(&b'\r'));
+            assert!(
+                !wrapper[..wrapper.len() - 1].contains(&b'\n'),
+                "wrapper contains a physical LF: {}",
+                String::from_utf8_lossy(&wrapper)
+            );
+            assert!(String::from_utf8_lossy(&wrapper).contains("start;42"));
+            assert!(String::from_utf8_lossy(&wrapper).contains("done;42"));
+        }
+    }
+
+    #[test]
+    fn posix_source_encoding_preserves_newlines_quotes_and_unicode_as_data() {
+        let encoded = encode_posix_source("ls\nls\n'ä'");
+        assert!(!encoded.contains('\n'));
+        assert!(!encoded.contains('\''));
+        assert!(encoded.starts_with("\\0154\\0163\\0012\\0154\\0163"));
+    }
+
+    #[test]
     fn posix_wrapper_quotes_user_text_as_data_and_carries_document_metadata() {
         let bytes = ShellFlavor::Posix
             .wrap(42, "printf '%s\\n' \"it's safe\"")
@@ -145,7 +173,7 @@ mod tests {
         let wrapper = String::from_utf8(bytes).unwrap();
         assert!(wrapper.contains("start;42"));
         assert!(wrapper.contains("done;42"));
-        assert!(wrapper.contains("'\"'\"'"));
+        assert!(!wrapper.contains("it's safe"));
         assert!(!wrapper.contains("start;42;printf"));
     }
 
@@ -162,6 +190,7 @@ mod tests {
         let input = "printf 'KEA_DOC_ONE\\n'\nprintf 'KEA_DOC_TWO\\n'";
         let id = document.allocate_id();
         let wrapper = ShellFlavor::Posix.wrap(id, input).unwrap();
+        assert!(!wrapper[..wrapper.len() - 1].contains(&b'\n'));
         let queued_at = session.elapsed_micros();
         document.queue_local(id, input.into(), queued_at).unwrap();
         session.send_hidden(wrapper).unwrap();
@@ -194,18 +223,20 @@ mod tests {
     }
 
     #[test]
-    fn powershell_wrapper_uses_current_scope_eval_and_markers() {
+    fn powershell_wrapper_decodes_source_before_eval_and_keeps_it_one_line() {
         let wrapper = String::from_utf8(
             ShellFlavor::PowerShell
-                .wrap(9, "Write-Output 'hello'")
+                .wrap(9, "Write-Output 'hello'\nWrite-Output 'again'")
                 .unwrap(),
         )
         .unwrap();
-        assert!(wrapper.contains("Invoke-Expression"));
+        assert!(wrapper.contains("FromBase64String"));
+        assert!(wrapper.contains("Invoke-Expression $__kea_source_9"));
         assert!(wrapper.contains("start;9"));
         assert!(wrapper.contains("done;9"));
         assert!(wrapper.contains("$__kea_previous=$global:LASTEXITCODE"));
-        assert!(wrapper.contains("$global:LASTEXITCODE=$__kea_previous")); // preserves the previous native exit code
-        assert!(wrapper.contains("''hello''"));
+        assert!(wrapper.contains("$global:LASTEXITCODE=$__kea_previous"));
+        assert!(!wrapper.trim_end_matches('\r').contains('\n'));
+        assert!(!wrapper.contains("Write-Output 'hello'"));
     }
 }
