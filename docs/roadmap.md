@@ -15,6 +15,7 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 - Editor completion uses retained history, shell-reported PATH executables and shell-reported cwd paths; terminal Tab remains native application completion.
 - Command blocks are optional/fail-open observers. Execution does not queue or depend on a block.
 - Read-only command/output surfaces preserve selection during live output changes.
+- The primary terminal screen has bounded local scrollback, viewport-aware pointer selection and selection-only copy.
 - Replay uses a separate silent historical emulator while live capture continues.
 
 ## Acceptance
@@ -34,7 +35,7 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 
 ## Remaining work
 
-**Terminal protocol completeness:** mouse/focus reporting, terminal selection/scrollback, modern keyboard protocol negotiation, image protocols, measured font metrics and accessibility. The invariant is to reuse established terminal machinery rather than invent Kea-specific behavior.
+**Terminal protocol completeness:** mouse/focus protocol forwarding, advanced and long-session selection/scrollback behavior, modern keyboard protocol negotiation, image protocols and accessibility. The invariant is to reuse established terminal machinery rather than invent Kea-specific behavior.
 
 **OS service acceptance:** actual IBus/Fcitx/Wayland/dead-key/AltGr layouts, macOS/Windows IMEs, system prediction/dictation and screen readers. API integration alone is not certification.
 

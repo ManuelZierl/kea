@@ -2,3 +2,5 @@
 *.kea
 *.log
 .DS_Store
+
+.opencode/

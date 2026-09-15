@@ -74,22 +74,28 @@ impl ShellFlavor {
 
     /// Build one physical PTY line. User newlines are decoded only *inside* the
     /// shell so an interactive line editor cannot split a multiline draft early.
-    pub fn wrap(self, id: u64, input: &str) -> Result<Vec<u8>, Error> {
+    pub fn wrap(self, id: u64, input: &str, prompt_column: usize) -> Result<Vec<u8>, Error> {
         let encoded = encode_input(input)?;
+        let display = display_source(input);
+        let display_column = prompt_column.saturating_add(1);
         let command = match self {
             Self::Posix => {
                 let source = encode_posix_source(input);
+                let display = encode_posix_source(&display);
                 let source_var = format!("__kea_source_{id}");
                 let status_var = format!("__kea_status_{id}");
-                format!(
+                let command = format!(
                     "{source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; unset {source_var} {status_var}\r"
-                )
+                );
+                format!("printf '\\033[{display_column}G%b' '{display}'; {command}")
             }
             Self::PowerShell => {
                 let source_var = format!("$__kea_source_{id}");
-                format!(
+                let display = encode_input(&display)?;
+                let command = format!(
                     "{source_var}=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')); [Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $__kea_previous=$global:LASTEXITCODE; $global:LASTEXITCODE=$null; Invoke-Expression {source_var}; $__kea_ok=$?; $__kea_native=$global:LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; if ($null -eq $__kea_native) {{ $global:LASTEXITCODE=$__kea_previous }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7); Remove-Variable __kea_source_{id} -ErrorAction SilentlyContinue\r"
-                )
+                );
+                format!("[Console]::Write([char]27 + '[{display_column}G' + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{display}'))); {command}")
             }
         };
         Ok(command.into_bytes())
@@ -102,6 +108,24 @@ fn encode_posix_source(input: &str) -> String {
         write!(&mut encoded, "\\0{byte:03o}").expect("writing to String cannot fail");
     }
     encoded
+}
+
+fn display_source(input: &str) -> String {
+    let mut display = String::with_capacity(input.len().saturating_add(1));
+    for character in input.chars() {
+        match character {
+            '\n' | '\t' => display.push(character),
+            character if character.is_control() => {
+                write!(&mut display, "\\u{{{:x}}}", u32::from(character))
+                    .expect("writing to String cannot fail");
+            }
+            character => display.push(character),
+        }
+    }
+    if !display.ends_with('\n') {
+        display.push('\n');
+    }
+    display
 }
 
 #[cfg(test)]
@@ -155,7 +179,7 @@ mod tests {
     fn wrappers_transport_multiline_input_as_one_physical_line() {
         let input = "ls\nls\nprintf 'ä\\n'\n";
         for shell in [ShellFlavor::Posix, ShellFlavor::PowerShell] {
-            let wrapper = shell.wrap(42, input).unwrap();
+            let wrapper = shell.wrap(42, input, 7).unwrap();
             assert_eq!(wrapper.last(), Some(&b'\r'));
             assert!(!wrapper[..wrapper.len() - 1].contains(&b'\n'));
             assert!(String::from_utf8_lossy(&wrapper).contains("start;42"));
@@ -169,6 +193,14 @@ mod tests {
         assert!(!encoded.contains('\n'));
         assert!(!encoded.contains('\''));
         assert!(encoded.starts_with("\\0154\\0163\\0012\\0154\\0163"));
+    }
+
+    #[test]
+    fn command_presentation_preserves_lines_but_escapes_terminal_controls() {
+        assert_eq!(
+            display_source("printf ok\nprintf '\u{1b}'"),
+            "printf ok\nprintf '\\u{1b}'\n"
+        );
     }
 
     #[cfg(unix)]
@@ -212,6 +244,39 @@ mod tests {
             .unwrap();
         pump_until(&mut session, &mut document, Document::prompt_ready);
         assert!(document.directory().is_some());
+        assert!(
+            !session.screen().text().contains("__kea_prompt"),
+            "private shell integration leaked into the terminal: {:?}",
+            session.screen().text()
+        );
+        let canonical_output = session
+            .recording()
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                kea_core::Kind::Output(bytes) => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert!(
+            String::from_utf8_lossy(&canonical_output).contains("__kea_prompt"),
+            "canonical recording must retain unmodified PTY output"
+        );
+        session.seek(session.recording().events().len()).unwrap();
+        assert!(
+            !session.screen().text().contains("__kea_prompt"),
+            "historical presentation exposed private shell integration: {:?}",
+            session.screen().text()
+        );
+        session.go_live();
+
+        session.send(b"abc\x7f\x7f\x7f".to_vec()).unwrap();
+        document.note_terminal_input();
+        assert!(!document.prompt_ready());
+        session.send(vec![3]).unwrap();
+        pump_until(&mut session, &mut document, Document::prompt_ready);
 
         session.send(b"cd /tmp\r".to_vec()).unwrap();
         document.note_terminal_input();
@@ -221,7 +286,7 @@ mod tests {
 
         let input = "printf 'KEA_ONE\\n'\nprintf 'KEA_TWO\\n'";
         session
-            .send_hidden(ShellFlavor::Posix.wrap(9, input).unwrap())
+            .send_hidden(ShellFlavor::Posix.wrap(9, input, 10).unwrap())
             .unwrap();
         document.note_terminal_input();
         pump_until(&mut session, &mut document, |d| {
@@ -233,13 +298,25 @@ mod tests {
         let block = document.blocks().last().unwrap();
         assert_eq!(block.input, input);
         assert_eq!(block.plain_output(), "KEA_ONE\nKEA_TWO");
+        let screen = session.screen().text();
+        assert!(screen.contains("bash-5.3$ printf 'KEA_ONE\\n'"));
+        assert!(screen.contains("printf 'KEA_TWO\\n'"));
+        assert!(!screen.contains("__kea_source_9"));
+
+        session.seek(session.recording().events().len()).unwrap();
+        let replayed = session.screen().text();
+        assert!(replayed.contains("bash-5.3$ printf 'KEA_ONE\\n'"));
+        assert!(replayed.contains("printf 'KEA_TWO\\n'"));
+        assert!(replayed.contains("KEA_ONE"));
+        assert!(replayed.contains("KEA_TWO"));
+        assert!(!replayed.contains("__kea_source_9"));
     }
 
     #[test]
     fn powershell_wrapper_decodes_source_before_eval() {
         let wrapper = String::from_utf8(
             ShellFlavor::PowerShell
-                .wrap(9, "Write-Output 'hello'\nWrite-Output 'again'")
+                .wrap(9, "Write-Output 'hello'\nWrite-Output 'again'", 4)
                 .unwrap(),
         )
         .unwrap();

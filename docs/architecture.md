@@ -31,7 +31,7 @@ A Zed integration should use Zed's editor/actions/terminal renderer/PTY ownershi
 
 ## Canonical stream and metadata
 
-Raw terminal output plus ordered resize/lifecycle events are canonical. Structured records are derived from explicit OSC metadata, never prompt regexes, idle time, cursor position or `$`/`>` text.
+Raw terminal output plus ordered resize/lifecycle events are canonical. Live sessions also retain a bounded, event-aligned presentation stream for rewind, so application-owned shell driver echoes hidden from the live terminal remain hidden during playback without changing raw bytes, timestamps or journal data. Imported v1 recordings have no separate presentation data and replay their canonical stream. Structured records are derived from explicit OSC metadata, never prompt regexes, idle time, cursor position or `$`/`>` text.
 
 Integrated shell prompt hooks report cwd/readiness through bounded OSC 777 metadata. The live host also receives the effective shell `PATH` on OSC 778 for editor command completion. PATH is completion context, not required for replaying command blocks.
 
@@ -52,7 +52,7 @@ The integration preserves user shell behavior where possible:
 
 Prompt hooks update cwd and PATH after commands typed either through Kea or directly in the terminal. While a foreground TUI/remote program is active, the local shell metadata is explicitly treated as **last reported**.
 
-Shell driver input for **Run in shell** transports multiline drafts as one physical PTY line. User newline bytes are encoded as data and reconstructed inside the shell, avoiding interactive line-editor splitting before the start marker executes.
+Shell driver input for **Run in shell** transports multiline drafts as one physical PTY line. User newline bytes are encoded as data and reconstructed inside the shell, avoiding interactive line-editor splitting before the start marker executes. Before the start marker, the driver prints a control-safe presentation of the original draft at the terminal's measured prompt column; private transport text remains hidden.
 
 The hidden-input echo filter fails open: if exact cosmetic suppression becomes unsafe, real output wins over hiding wrapper text.
 
@@ -78,7 +78,9 @@ Candidates are discarded if text/cursor changed and are applied as ordinary undo
 
 ## Layout and optional blocks
 
-PTY rows/columns come from the actual laid-out terminal canvas, not guessed window offsets. The editor and optional inspector therefore cannot crop unseen terminal rows simply by changing layout.
+PTY rows/columns come from the actual laid-out terminal canvas, not guessed window offsets. The terminal/command-draft divider is draggable, and each resulting layout remeasures the terminal rather than cropping unseen rows. The optional inspector follows the same rule.
+
+The terminal emulator retains a bounded 10,000-line visual scrollback projection. Scrolling changes only the selected emulator viewport: live PTY output, recording and protocol replies continue, and new output does not force a reader back to the tail. When the child requests mouse reporting, ordinary vertical wheel input uses its negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains an explicit local-scrollback override. Pointer selection and selection text extraction reuse Alacritty's grid, wrapping and wide-cell semantics rather than implementing a second terminal text model. Whole-view copy remains a separate explicit action.
 
 Block widgets are bounded/paged. Output text is read-only/selectable. Focused or selected live snapshots do not change under the reader; explicit refresh updates them. Block UI actions cannot execute commands or alter recorded history.
 
@@ -92,4 +94,4 @@ Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks
 
 ## Platform validation
 
-Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse protocols, keyboard protocol negotiation, accessibility, terminal selection/scrollback and packaging.
+Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, keyboard protocol negotiation, accessibility, long-session scrollback/selection behavior and packaging.

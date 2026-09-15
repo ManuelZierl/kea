@@ -17,15 +17,17 @@ Bash syntax highlighting is provided by Tree-sitter through the editor's languag
 
 ## Focus and actions
 
-Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatched to the focused editor. Do not intercept all window key events. Kea installs configurable bindings at the editor context so a remapped/unbound shortcut actually overrides the component's default. Ordinary navigation and text entry remain with the editor and platform.
+Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatched to the focused editor. Do not intercept all window key events. Kea installs configurable bindings at the editor context so a remapped/unbound shortcut actually overrides the component's default. Ordinary navigation and text entry remain with the editor and platform. The terminal canvas uses Alacritty's selection model for pointer selection, wrapping-aware extraction and visible highlighting.
 
-`copy` copies only the selection. An empty selection leaves the clipboard unchanged. `copy_document` explicitly exports the retained document (or the visible terminal screen in Direct/history mode). Each block has its own Copy block action. No selection in Direct PTY currently means no selection-copy there; do not silently substitute the entire screen.
+`copy` copies only the focused selection. An empty selection leaves the clipboard unchanged. `copy_document` explicitly exports the retained command history or visible terminal screen. Each block has its own Copy block action. Terminal selection-copy uses the visible Alacritty viewport and never silently substitutes the entire screen.
 
 Run in shell and Send to app apply only to the focused command editor, not a block, filter, embedded find field or terminal. Run in shell additionally requires an explicit prompt-ready report; Send to app never wraps its text in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
 
 A successful submission replaces the draft editor with a fresh entity and fresh undo history. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
 
-The simultaneously visible terminal has its own focus/key context and retains the same process. No Kea action reserves a live-terminal shortcut. Toolbar buttons remain available without stealing control sequences. The optional block inspector changes presentation only; see unified-session.md. The compatibility terminal is still the existing Alacritty/canvas/input adapter, not a claim of a complete new terminal component.
+The terminal and editor are separated by a draggable platform-component divider. Resizing changes presentation and the measured PTY dimensions; it does not create another session or execution mode.
+
+The simultaneously visible terminal has its own focus/key context and retains the same process. No Kea action reserves a live-terminal shortcut. Toolbar buttons remain available without stealing control sequences. The optional block inspector changes presentation only; see unified-session.md. The Alacritty/canvas/input adapter provides bounded local scrollback and pointer selection. It forwards vertical wheel input when the child requests mouse reporting, while button/drag/motion protocols and wider platform acceptance remain compatibility work.
 
 ## Read-only output
 

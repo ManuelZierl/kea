@@ -1,14 +1,17 @@
 //! Alacritty adapter. Historical engines cannot emit external effects.
 use alacritty_terminal::{
     event::{Event as TerminalEvent, EventListener},
-    grid::Dimensions,
-    index::{Column, Line},
+    grid::{Dimensions, Scroll},
+    index::{Column, Point as GridPoint, Side},
+    selection::{Selection, SelectionType},
     term::{cell::Flags, Config, TermMode},
     vte::ansi::{Color, NamedColor, Processor},
     Term,
 };
 use kea_core::{Projection, Recording, Size};
 use std::sync::{Arc, Mutex};
+
+pub const TERMINAL_SCROLLBACK_LINES: usize = 10_000;
 
 #[derive(Clone, Default)]
 struct Listener {
@@ -57,6 +60,7 @@ pub struct Cell {
     pub underline: bool,
     pub wide: bool,
     pub spacer: bool,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +68,8 @@ pub struct Screen {
     pub size: Size,
     pub cells: Vec<Cell>,
     pub cursor: Option<(usize, usize)>,
+    pub display_offset: usize,
+    pub history_size: usize,
 }
 impl Screen {
     pub fn text(&self) -> String {
@@ -82,6 +88,19 @@ impl Screen {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalPoint {
+    pub row: usize,
+    pub column: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseEncoding {
+    Legacy,
+    Utf8,
+    Sgr,
+}
+
 impl Engine {
     pub fn new(size: Size, live: bool) -> Self {
         let replies = live.then(|| Arc::new(Mutex::new(Vec::new())));
@@ -89,7 +108,7 @@ impl Engine {
             replies: replies.clone(),
         };
         let config = Config {
-            scrolling_history: 0,
+            scrolling_history: TERMINAL_SCROLLBACK_LINES,
             ..Config::default()
         };
         Self {
@@ -113,6 +132,69 @@ impl Engine {
     pub fn bracketed_paste(&self) -> bool {
         self.terminal.mode().contains(TermMode::BRACKETED_PASTE)
     }
+    pub fn mouse_reporting(&self) -> bool {
+        self.mouse_encoding().is_some()
+    }
+    pub fn mouse_encoding(&self) -> Option<MouseEncoding> {
+        let mode = self.terminal.mode();
+        if !mode.intersects(TermMode::MOUSE_MODE) {
+            None
+        } else if mode.contains(TermMode::SGR_MOUSE) {
+            Some(MouseEncoding::Sgr)
+        } else if mode.contains(TermMode::UTF8_MOUSE) {
+            Some(MouseEncoding::Utf8)
+        } else {
+            Some(MouseEncoding::Legacy)
+        }
+    }
+    pub fn display_offset(&self) -> usize {
+        self.terminal.grid().display_offset()
+    }
+    pub fn history_size(&self) -> usize {
+        self.terminal.grid().history_size()
+    }
+    pub fn scroll_lines(&mut self, lines: i32) {
+        self.terminal.scroll_display(Scroll::Delta(lines));
+    }
+    pub fn scroll_bottom(&mut self) {
+        self.terminal.scroll_display(Scroll::Bottom);
+    }
+    pub fn begin_selection(&mut self, point: TerminalPoint) {
+        let point = self.grid_point(point);
+        self.terminal.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));
+    }
+    pub fn update_selection(&mut self, point: TerminalPoint) {
+        let point = self.grid_point(point);
+        if let Some(selection) = &mut self.terminal.selection {
+            selection.update(point, Side::Right);
+            selection.include_all();
+        }
+    }
+    pub fn clear_selection(&mut self) {
+        self.terminal.selection = None;
+    }
+    pub fn selection_text(&self) -> Option<String> {
+        self.terminal
+            .selection_to_string()
+            .filter(|text| !text.is_empty())
+    }
+    pub fn has_selection(&self) -> bool {
+        self.terminal
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(&self.terminal))
+            .is_some()
+    }
+    fn grid_point(&self, point: TerminalPoint) -> GridPoint {
+        let row = point.row.min(usize::from(self.size.rows).saturating_sub(1));
+        let column = point
+            .column
+            .min(usize::from(self.size.columns).saturating_sub(1));
+        alacritty_terminal::term::viewport_to_point(
+            self.display_offset(),
+            GridPoint::new(row, Column(column)),
+        )
+    }
     pub fn drain_replies(&mut self) -> Vec<String> {
         self.replies
             .as_ref()
@@ -120,47 +202,55 @@ impl Engine {
             .unwrap_or_default()
     }
     pub fn screen(&self) -> Screen {
+        let history_size = self.history_size();
+        let content = self.terminal.renderable_content();
+        let selection = content.selection;
+        let cursor_shape = content.cursor.shape;
+        let cursor_point = content.cursor.point;
+        let display_offset = content.display_offset;
         let mut cells =
             Vec::with_capacity(usize::from(self.size.rows) * usize::from(self.size.columns));
-        for row in 0..self.size.rows {
-            for col in 0..self.size.columns {
-                let cell = &self.terminal.grid()[Line(i32::from(row))][Column(usize::from(col))];
-                let mut text = cell.c.to_string();
-                if let Some(extra) = cell.zerowidth() {
-                    text.extend(extra);
-                }
-                let mut foreground = self.color(cell.fg);
-                let mut background = self.color(cell.bg);
-                if cell.flags.contains(Flags::INVERSE) {
-                    std::mem::swap(&mut foreground, &mut background);
-                }
-                if cell.flags.contains(Flags::HIDDEN) {
-                    foreground = background;
-                }
-                cells.push(Cell {
-                    text,
-                    foreground,
-                    background,
-                    bold: cell.flags.contains(Flags::BOLD),
-                    italic: cell.flags.contains(Flags::ITALIC),
-                    underline: cell.flags.contains(Flags::UNDERLINE),
-                    wide: cell.flags.contains(Flags::WIDE_CHAR),
-                    spacer: cell
-                        .flags
-                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER),
-                });
+        for indexed in content.display_iter {
+            let cell = indexed.cell;
+            let mut text = cell.c.to_string();
+            if let Some(extra) = cell.zerowidth() {
+                text.extend(extra);
             }
+            let mut foreground = self.color(cell.fg);
+            let mut background = self.color(cell.bg);
+            if cell.flags.contains(Flags::INVERSE) {
+                std::mem::swap(&mut foreground, &mut background);
+            }
+            if cell.flags.contains(Flags::HIDDEN) {
+                foreground = background;
+            }
+            cells.push(Cell {
+                text,
+                foreground,
+                background,
+                bold: cell.flags.contains(Flags::BOLD),
+                italic: cell.flags.contains(Flags::ITALIC),
+                underline: cell.flags.contains(Flags::UNDERLINE),
+                wide: cell.flags.contains(Flags::WIDE_CHAR),
+                spacer: cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER),
+                selected: selection.is_some_and(|selection| {
+                    selection.contains_cell(&indexed, cursor_point, cursor_shape)
+                }),
+            });
         }
-        let point = self.terminal.grid().cursor.point;
-        let cursor = self
-            .terminal
-            .mode()
-            .contains(TermMode::SHOW_CURSOR)
-            .then_some((point.line.0.max(0) as usize, point.column.0));
+        let cursor = (display_offset == 0 && self.terminal.mode().contains(TermMode::SHOW_CURSOR))
+            .then(|| {
+                let point = self.terminal.grid().cursor.point;
+                (point.line.0.max(0) as usize, point.column.0)
+            });
         Screen {
             size: self.size,
             cells,
             cursor,
+            display_offset,
+            history_size,
         }
     }
     fn color(&self, color: Color) -> u32 {
@@ -273,5 +363,111 @@ mod tests {
         let mut live = Engine::new(log.initial_size(), true);
         live.output(b"\x1b[6n");
         assert!(!live.drain_replies().is_empty());
+    }
+
+    #[test]
+    fn scrollback_projects_the_selected_viewport_and_returns_to_tail() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"one\r\ntwo\r\nthree\r\nfour");
+
+        assert_eq!(engine.display_offset(), 0);
+        assert!(engine.history_size() > 0);
+        assert!(engine.screen().text().contains("four"));
+
+        engine.scroll_lines(2);
+        let scrolled = engine.screen();
+        assert!(scrolled.display_offset > 0);
+        assert!(scrolled.text().contains("one"));
+
+        engine.scroll_bottom();
+        assert_eq!(engine.display_offset(), 0);
+        assert!(engine.screen().text().contains("four"));
+    }
+
+    #[test]
+    fn terminal_selection_uses_viewport_coordinates_and_copies_only_selection() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"hello");
+        engine.begin_selection(TerminalPoint { row: 0, column: 1 });
+        engine.update_selection(TerminalPoint { row: 0, column: 3 });
+
+        assert_eq!(engine.selection_text().as_deref(), Some("ell"));
+        let screen = engine.screen();
+        let selected = screen
+            .cells
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| cell.selected.then_some(index))
+            .collect::<Vec<_>>();
+        assert_eq!(selected, vec![1, 2, 3]);
+
+        engine.begin_selection(TerminalPoint { row: 0, column: 3 });
+        engine.update_selection(TerminalPoint { row: 0, column: 1 });
+        assert_eq!(engine.selection_text().as_deref(), Some("ell"));
+
+        engine.clear_selection();
+        assert!(engine.selection_text().is_none());
+        assert!(engine.screen().cells.iter().all(|cell| !cell.selected));
+    }
+
+    #[test]
+    fn terminal_selection_works_in_a_mouse_reporting_alternate_screen() {
+        let mut engine = Engine::new(Size::new(16, 3).unwrap(), false);
+        engine.output(b"\x1b[?1049h\x1b[H\x1b[?1000hOpenCode output");
+        assert!(engine.mouse_reporting());
+
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 7 });
+
+        assert_eq!(engine.selection_text().as_deref(), Some("OpenCode"));
+        assert!(engine.screen().cells.iter().any(|cell| cell.selected));
+    }
+
+    #[test]
+    fn output_does_not_return_a_scrolled_reader_to_the_tail() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"one\r\ntwo\r\nthree\r\nfour");
+        engine.scroll_lines(1);
+        let before = engine.display_offset();
+
+        engine.output(b"\r\nfive");
+
+        assert!(engine.display_offset() >= before);
+        assert_ne!(engine.display_offset(), 0);
+    }
+
+    #[test]
+    fn appended_output_preserves_a_scrollback_selection() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"one\r\ntwo\r\nthree\r\nfour");
+        engine.scroll_lines(1);
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        let selected = engine.selection_text();
+
+        engine.output(b"\r\nfive");
+
+        assert_eq!(engine.selection_text(), selected);
+        assert!(engine.screen().cells.iter().any(|cell| cell.selected));
+    }
+
+    #[test]
+    fn scrollback_retention_and_mouse_reporting_are_explicitly_bounded() {
+        let mut engine = Engine::new(Size::new(4, 2).unwrap(), false);
+        for _ in 0..TERMINAL_SCROLLBACK_LINES + 20 {
+            engine.output(b"x\r\n");
+        }
+        assert_eq!(engine.history_size(), TERMINAL_SCROLLBACK_LINES);
+
+        assert_eq!(engine.mouse_encoding(), None);
+        engine.output(b"\x1b[?1000h");
+        assert!(engine.mouse_reporting());
+        assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Legacy));
+        engine.output(b"\x1b[?1005h");
+        assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Utf8));
+        engine.output(b"\x1b[?1006h");
+        assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Sgr));
+        engine.output(b"\x1b[?1000l");
+        assert_eq!(engine.mouse_encoding(), None);
     }
 }

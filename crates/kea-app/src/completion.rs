@@ -240,12 +240,11 @@ fn complete_paths(
     names.sort();
     for (name, is_dir) in names {
         let value = format!("{parent}{name}{}", if is_dir { "/" } else { "" });
-        let replacement = if value.starts_with("~/") {
+        let replacement = if let Some(relative) = value.strip_prefix("~/") {
             match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-                Some(home) => shell_quote(
-                    &PathBuf::from(home).join(&value[2..]).to_string_lossy(),
-                    shell,
-                ),
+                Some(home) => {
+                    shell_quote(&PathBuf::from(home).join(relative).to_string_lossy(), shell)
+                }
                 None => continue,
             }
         } else {

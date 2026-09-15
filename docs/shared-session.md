@@ -23,7 +23,7 @@ Known interactive shells emit an explicit `OSC 777;kea;cwd;<base64 UTF-8 path> B
 
 ## Viewport and scrolling
 
-Terminal dimensions come from the measured canvas, not a guessed subtraction of toolbar heights. This keeps the bottom prompt/cursor visible even when toolbars wrap or the block pane opens. The live screen already represents the latest terminal state; this change does not add traditional terminal scrollback.
+Terminal dimensions come from the measured canvas, not a guessed subtraction of toolbar heights. This keeps the bottom prompt/cursor visible even when toolbars wrap or the block pane opens. The primary screen retains up to 10,000 visual scrollback lines; wheel scrolling and pointer selection change only the emulator viewport while live PTY output and recording continue. New output does not force a reader back to the bottom.
 
 New block pages follow the newest block after layout. Read-only block editors reveal the end of new output through the component's scrolling machinery while preserving focus. Focused/selected snapshots remain protected from live replacement; explicit refresh is still available. History remains observation, never process restoration or execution.
 

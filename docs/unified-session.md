@@ -30,6 +30,8 @@ newline = shift-enter
 
 A successful Run/Send creates a fresh draft and focuses the terminal. Undo never changes a completed execution or reverses process side effects. Historical/replay views reject input.
 
+Direct terminal input invalidates Run readiness until another explicit prompt report arrives. Kea may automate recovery only when it observed plain ASCII insertion followed by the exact number of ordinary Backspaces: Ctrl+Enter sends Ctrl+C, waits for a new prompt marker, revalidates the unchanged focused draft, and then uses the normal Run path. It does not restore readiness from that local observation or apply this recovery to arbitrary controls, pastes, Unicode editing, commands or TUIs.
+
 ## Blocks are fail-open observers
 
 `Run in shell` does **not** create a queued block before sending. Kea sends the shell driver line first. If the shell subsequently emits valid start/done markers, `kea-document` may derive a block.
@@ -77,7 +79,11 @@ Markers are interoperability metadata, not authenticated provenance. Untrusted t
 
 ## Viewport and scrolling
 
-PTY rows/columns are derived from the actual laid-out terminal canvas instead of guessed toolbar/editor heights. Opening the editor or block inspector therefore cannot silently hide the terminal's last row.
+PTY rows/columns are derived from the actual laid-out terminal canvas instead of guessed toolbar/editor heights. Dragging the terminal/command-draft divider or opening the block inspector therefore remeasures the PTY and cannot silently hide the terminal's last row.
+
+The primary terminal screen retains up to 10,000 visual scrollback lines. Scrolling changes the emulator viewport without pausing the PTY or replay timeline. New output follows normally at the tail; while the reader is above the tail it stays there until **Return to bottom** or new terminal input explicitly returns it. Drag selection is viewport-aware, and selection copy never falls back to copying the whole screen.
+
+Ordinary local selection and scrollback apply when the child has not requested mouse reporting. While reporting is active, vertical wheel input is forwarded with the negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains local scrollback. Shift+drag explicitly selects locally. Button, drag, motion and the rest of the terminal mouse-protocol family remain compatibility work.
 
 New block views reveal their tail after layout without stealing focus. Focused/selected read-only snapshots are not replaced beneath a reader; explicit refresh remains available.
 
@@ -89,4 +95,4 @@ This does not bypass SmartScreen/application-control policies, and unsigned deve
 
 ## Validation boundary
 
-Compilation/unit tests, graphical acceptance and real OS testing are separate evidence. Important ongoing compatibility targets include Windows + OpenCode, actual macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse protocols, extended keyboard protocol negotiation, accessibility and terminal scrollback/selection.
+Compilation/unit tests, graphical acceptance and real OS testing are separate evidence. Important ongoing compatibility targets include Windows + OpenCode, actual macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, extended keyboard protocol negotiation, accessibility and long-session scrollback/selection behavior.

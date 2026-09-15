@@ -61,8 +61,12 @@ impl EntityInputHandler for KeaView {
         });
         self.terminal_composition = cx.new(|cx| InputState::new(window, cx));
         if !text.is_empty() {
-            let result = self.session.send(text.into_bytes());
+            let result = self.session.send(text.as_bytes().to_vec());
             if result.is_ok() {
+                self.session.scroll_bottom();
+                self.session.clear_terminal_selection();
+                self.pending_run = None;
+                self.prompt_line.note_text(&text);
                 self.document.note_terminal_input();
             }
             self.result(result, cx);

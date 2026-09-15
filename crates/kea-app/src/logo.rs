@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn animation_contains_motion() {
-        assert!(logo_frames::FRAME_COUNT > 2);
+        const { assert!(logo_frames::FRAME_COUNT > 2) };
         assert!((1..logo_frames::FRAME_COUNT - 1)
             .map(logo_frames::path)
             .any(|frame| frame != logo_frames::path(0)));

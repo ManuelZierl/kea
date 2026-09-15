@@ -90,7 +90,7 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::with_capacity(input.len() / 4 * 3);
-    for (index, chunk) in input.as_bytes().chunks_exact(4).enumerate() {
+    for (index, chunk) in input.as_bytes().as_chunks::<4>().0.iter().enumerate() {
         let last = index + 1 == input.len() / 4;
         let a = value(chunk[0])?;
         let b = value(chunk[1])?;

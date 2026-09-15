@@ -10,7 +10,7 @@
 
 <p align="center"><strong>A persistent terminal workspace built around a normal text editor.</strong></p>
 
-Kea keeps a real terminal and a normal multiline editor visible over **one process/session**. Existing shells, SSH, OpenCode, Vim, REPLs and other TUIs keep a PTY. The editor supplies ordinary desktop editing. Kea adds explicit execution, retained history and optional structure around them.
+Kea keeps a real terminal and a normal multiline editor visible over **one process/session**. Existing shells, SSH, OpenCode, Vim, REPLs and other TUIs keep a PTY. The editor supplies ordinary desktop editing. Kea adds explicit execution, retained history and optional structure around them. The divider between the terminal and command draft is draggable.
 
 Replay is a consequence of the persistent event history, not the main product.
 
@@ -71,7 +71,9 @@ These are separate **actions**, never hidden modes.
 
 **Send to app** sends the draft literally to whichever application currently owns stdin and then sends Enter. It never injects shell wrappers. Multiline Send requires bracketed-paste support; otherwise Kea refuses rather than accidentally executing lines separately.
 
-A successful submission creates a fresh editor draft and fresh undo history. Undo edits text; it never pretends to undo a shell side effect.
+A successful submission creates a fresh editor draft and fresh undo history. Undo edits text; it never pretends to undo a shell side effect. Kea prints a safe presentation of an editor-run draft at the shell's rendered prompt before command output, so multiline runs remain understandable without exposing the private shell driver line.
+
+Typing in the terminal invalidates Run readiness until the shell explicitly reports another prompt. For the narrow case where plain ASCII text was typed and exactly erased with Backspace, Ctrl+Enter safely sends Ctrl+C, waits for that real prompt report, and then runs the unchanged draft. Other uncertain terminal states require explicit recovery and are never guessed from screen text or cursor position.
 
 ## Terminal input and TUIs
 
@@ -86,6 +88,10 @@ OS key/text event → GPUI → terminal encoding → bytes/escape sequence → P
 Some physical keys are indistinguishable in classic terminal protocols (`Ctrl+I` and Tab, `Ctrl+M` and Enter, for example), some OS/window-manager shortcuts may never reach Kea, and newer distinctions such as modified Enter depend on terminal keyboard-protocol support. Kea's rule is therefore: **never steal child input, and preserve every distinction the OS + terminal protocol make available**. Broader modern keyboard-protocol negotiation remains compatibility work.
 
 Toolbar controls remain clickable while the terminal owns the keyboard.
+
+The primary terminal screen keeps up to 10,000 lines of visual scrollback. Mouse-wheel scrolling leaves live output running without pulling the reader back to the bottom; the terminal header shows the distance from the bottom and provides **Return to bottom**. Dragging selects terminal text, including text in the visible scrollback viewport, and **Copy selection** copies only that selection. Whole-view export remains a separate explicit action.
+
+When a terminal application requests mouse reporting, Kea forwards ordinary vertical wheel input using the negotiated legacy, UTF-8 or SGR encoding. Hold Shift while scrolling to use Kea's local scrollback instead. Button, drag and motion forwarding remain compatibility work; Shift+drag explicitly uses Kea's local selection.
 
 ## Current directory: explicit, not guessed
 

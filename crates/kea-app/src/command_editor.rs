@@ -77,6 +77,30 @@ pub fn submission_text(
     })
 }
 
+/// Use the component's scrolling after layout; do not steal focus or a selection.
+pub fn follow_output_tail(editor: &Entity<InputState>, window: &mut Window, _cx: &mut App) {
+    let editor = editor.downgrade();
+    window.on_next_frame(move |window, cx| {
+        let previous = window.focused(cx);
+        let _ = editor.update(cx, |state, cx| {
+            use gpui_component::input::RopeExt as _;
+            if state
+                .selected_text_range(true, window, cx)
+                .is_some_and(|s| !s.range.is_empty())
+            {
+                return;
+            }
+            let position = state.text().offset_to_position(state.text().len());
+            state.set_cursor_position(position, window, cx);
+        });
+        if let Some(previous) = previous {
+            window.focus(&previous);
+        } else {
+            window.blur();
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,28 +194,4 @@ mod tests {
             })
             .unwrap();
     }
-}
-
-/// Use the component's scrolling after layout; do not steal focus or a selection.
-pub fn follow_output_tail(editor: &Entity<InputState>, window: &mut Window, _cx: &mut App) {
-    let editor = editor.downgrade();
-    window.on_next_frame(move |window, cx| {
-        let previous = window.focused(cx);
-        let _ = editor.update(cx, |state, cx| {
-            use gpui_component::input::RopeExt as _;
-            if state
-                .selected_text_range(true, window, cx)
-                .is_some_and(|s| !s.range.is_empty())
-            {
-                return;
-            }
-            let position = state.text().offset_to_position(state.text().len());
-            state.set_cursor_position(position, window, cx);
-        });
-        if let Some(previous) = previous {
-            window.focus(&previous);
-        } else {
-            window.blur();
-        }
-    });
 }
