@@ -62,6 +62,7 @@ jobs:
         with:
           key: desktop-windows
           cache-on-failure: true
+      - run: cargo test --locked -p kea-app --lib
       - run: cargo build --release --locked -p kea-app
       - name: Verify Windows GUI subsystem
         run: python scripts/verify-windows-subsystem.py target/release/kea.exe
