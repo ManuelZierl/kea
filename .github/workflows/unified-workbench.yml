@@ -11,7 +11,7 @@ concurrency:
   group: unified-input-workbench
   cancel-in-progress: true
 jobs:
-  verify:
+  desktop-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -25,17 +25,17 @@ jobs:
         with:
           key: desktop-linux
           cache-on-failure: true
-      - name: Apply source migration and remove workbench
+      - name: Apply reviewed source migration
         run: |
           python3 scripts/unified-update.py
           python3 scripts/unified-main.py
-          rm scripts/unified-update.py scripts/unified-main.py .github/workflows/unified-workbench.yml
+          rm scripts/unified-update.py scripts/unified-main.py
+          git restore .github/workflows/ci.yml
           python3 - <<'PY'
           from pathlib import Path
           for name in ('README.md','docs/architecture.md','docs/editor-integration.md'):
               p=Path(name)
-              text=p.read_text()
-              lines=text.splitlines(keepends=True)
+              lines=p.read_text().splitlines(keepends=True)
               index=next((i for i,line in enumerate(lines) if line.startswith('# ')),0)+1
               link='docs/unified-session.md' if name=='README.md' else 'unified-session.md'
               lines.insert(index, '\n> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior]('+link+') supersedes the older Document/Direct mode descriptions below.\n')
