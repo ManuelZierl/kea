@@ -1,385 +1,232 @@
+//! Configurable semantic actions. Text input and navigation stay in the editor.
 use anyhow::{Context as _, Result};
-use gpui::Keystroke;
+use gpui::{KeyBinding, Keystroke, NoAction};
+use serde::Deserialize;
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize)]
 pub enum Action {
-    Copy,
-    Paste,
-    Interrupt,
-    Execute,
-    ToggleDirect,
-    PreviousEvent,
-    NextEvent,
-    BackFiveSeconds,
-    ForwardFiveSeconds,
-    PlayPause,
-    GoLive,
-    Quit,
+    Copy, Cut, Paste, Undo, Redo, SelectAll, Find, CopyDocument, FocusEditor,
+    Interrupt, Execute, ToggleDirect, PreviousEvent, NextEvent,
+    BackFiveSeconds, ForwardFiveSeconds, PlayPause, GoLive, Quit,
 }
-
 impl Action {
-    const ALL: [Self; 12] = [
-        Self::Copy,
-        Self::Paste,
-        Self::Interrupt,
-        Self::Execute,
-        Self::ToggleDirect,
-        Self::PreviousEvent,
-        Self::NextEvent,
-        Self::BackFiveSeconds,
-        Self::ForwardFiveSeconds,
-        Self::PlayPause,
-        Self::GoLive,
-        Self::Quit,
-    ];
-
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-            "copy" => Some(Self::Copy),
-            "paste" => Some(Self::Paste),
-            "interrupt" => Some(Self::Interrupt),
-            "execute" | "submit" => Some(Self::Execute),
-            "toggle_direct" | "direct" => Some(Self::ToggleDirect),
-            "previous_event" | "previous" => Some(Self::PreviousEvent),
-            "next_event" | "next" => Some(Self::NextEvent),
-            "back_five_seconds" | "back_5s" => Some(Self::BackFiveSeconds),
-            "forward_five_seconds" | "forward_5s" => Some(Self::ForwardFiveSeconds),
-            "play_pause" | "play" => Some(Self::PlayPause),
-            "go_live" | "live" => Some(Self::GoLive),
-            "quit" => Some(Self::Quit),
-            _ => None,
-        }
-    }
-
+    const ALL: [Self; 19] = [Self::Copy, Self::Cut, Self::Paste, Self::Undo,
+        Self::Redo, Self::SelectAll, Self::Find, Self::CopyDocument, Self::FocusEditor,
+        Self::Interrupt, Self::Execute, Self::ToggleDirect, Self::PreviousEvent,
+        Self::NextEvent, Self::BackFiveSeconds, Self::ForwardFiveSeconds,
+        Self::PlayPause, Self::GoLive, Self::Quit];
     fn config_name(self) -> &'static str {
         match self {
-            Self::Copy => "copy",
-            Self::Paste => "paste",
-            Self::Interrupt => "interrupt",
-            Self::Execute => "execute",
-            Self::ToggleDirect => "toggle_direct",
-            Self::PreviousEvent => "previous_event",
-            Self::NextEvent => "next_event",
-            Self::BackFiveSeconds => "back_5s",
-            Self::ForwardFiveSeconds => "forward_5s",
-            Self::PlayPause => "play_pause",
-            Self::GoLive => "go_live",
-            Self::Quit => "quit",
+            Self::Copy => "copy", Self::Cut => "cut", Self::Paste => "paste",
+            Self::Undo => "undo", Self::Redo => "redo", Self::SelectAll => "select_all",
+            Self::Find => "find", Self::CopyDocument => "copy_document", Self::FocusEditor => "focus_editor",
+            Self::Interrupt => "interrupt", Self::Execute => "execute", Self::ToggleDirect => "toggle_direct",
+            Self::PreviousEvent => "previous_event", Self::NextEvent => "next_event",
+            Self::BackFiveSeconds => "back_5s", Self::ForwardFiveSeconds => "forward_5s",
+            Self::PlayPause => "play_pause", Self::GoLive => "go_live", Self::Quit => "quit",
         }
+    }
+    fn parse(name: &str) -> Option<Self> {
+        let name = name.trim().to_ascii_lowercase().replace('-', "_");
+        let name = match name.as_str() {
+            "submit" => "execute", "direct" => "toggle_direct", "previous" => "previous_event",
+            "next" => "next_event", "back_five_seconds" => "back_5s",
+            "forward_five_seconds" => "forward_5s", "play" => "play_pause", "live" => "go_live",
+            name => name,
+        };
+        Self::ALL.into_iter().find(|action| action.config_name() == name)
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct Shortcut {
-    key: String,
-    shift: bool,
-    alt: bool,
-    control: bool,
-    platform: bool,
-}
-
+struct Shortcut { key: String, shift: bool, alt: bool, control: bool, platform: bool }
 impl Shortcut {
     fn parse(value: &str) -> Result<Self> {
-        let value = value.trim().to_ascii_lowercase();
-        let key = Keystroke::parse(&value)
-            .map_err(|error| anyhow::anyhow!("invalid shortcut `{value}`: {error}"))?;
+        let text = value.trim().to_ascii_lowercase();
+        let key = Keystroke::parse(&text).map_err(|error| anyhow::anyhow!("invalid shortcut `{text}`: {error}"))?;
         Ok(Self::from_keystroke(&key))
     }
-
     fn from_keystroke(key: &Keystroke) -> Self {
-        Self {
-            key: key.key.to_ascii_lowercase(),
-            shift: key.modifiers.shift,
-            alt: key.modifiers.alt,
-            control: key.modifiers.control,
-            platform: key.modifiers.platform,
-        }
+        Self { key: if key.key == "return" { "enter".into() } else { key.key.to_ascii_lowercase() },
+            shift: key.modifiers.shift, alt: key.modifiers.alt,
+            control: key.modifiers.control, platform: key.modifiers.platform }
     }
-
-    fn matches(&self, key: &Keystroke) -> bool {
-        self == &Self::from_keystroke(key)
+    fn specification(&self) -> String {
+        let mut parts = Vec::new();
+        if self.platform { parts.push("cmd"); }
+        if self.control { parts.push("ctrl"); }
+        if self.alt { parts.push("alt"); }
+        if self.shift { parts.push("shift"); }
+        parts.push(&self.key);
+        parts.join("-")
     }
-
     fn display(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        if self.platform {
-            parts.push("Cmd".into());
-        }
-        if self.control {
-            parts.push("Ctrl".into());
-        }
-        if self.alt {
-            parts.push("Alt".into());
-        }
-        if self.shift {
-            parts.push("Shift".into());
-        }
-        parts.push(match self.key.as_str() {
-            "enter" | "return" => "Enter".to_string(),
-            "space" => "Space".to_string(),
-            value if value.starts_with('f') => value.to_ascii_uppercase(),
-            value if value.len() == 1 => value.to_ascii_uppercase(),
-            value => value.to_string(),
-        });
-        parts.join("+")
+        self.specification().split('-').map(|part| match part {
+            "cmd" => "Cmd".into(), "ctrl" => "Ctrl".into(), "alt" => "Alt".into(),
+            "shift" => "Shift".into(), "enter" => "Enter".into(), "space" => "Space".into(),
+            other => other.to_ascii_uppercase(),
+        }).collect::<Vec<String>>().join("+")
     }
 }
 
 #[derive(Clone, Copy)]
-enum Platform {
-    Mac,
-    Other,
-}
-
+enum Platform { Mac, Other }
 impl Platform {
-    fn current() -> Self {
-        if cfg!(target_os = "macos") {
-            Self::Mac
-        } else {
-            Self::Other
-        }
-    }
+    fn current() -> Self { if cfg!(target_os = "macos") { Self::Mac } else { Self::Other } }
 }
 
-pub struct Keymap {
-    bindings: HashMap<Action, Vec<Shortcut>>,
-    config_path: Option<PathBuf>,
-}
-
+pub struct Keymap { bindings: HashMap<Action, Vec<Shortcut>> }
 impl Keymap {
     pub fn load() -> (Self, Option<String>) {
-        let platform = Platform::current();
-        let defaults = Self::defaults_for(platform);
-        let Some(path) = config_path() else {
-            return (defaults, None);
-        };
-        if !path.exists() {
-            let mut defaults = defaults;
-            defaults.config_path = Some(path);
-            return (defaults, None);
-        }
-        match fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))
-            .and_then(|text| Self::parse_overrides(platform, &text, Some(path.clone())))
-        {
-            Ok(keymap) => (keymap, None),
-            Err(error) => {
-                let mut defaults = defaults;
-                defaults.config_path = Some(path);
-                (
-                    defaults,
-                    Some(format!(
-                        "KEYBINDINGS CONFIG IGNORED: {error}. Using OS defaults."
-                    )),
-                )
+        let Some(path) = config_path() else { return (Self::defaults_for(Platform::current()), None) };
+        match fs::read_to_string(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Self::defaults_for(Platform::current()), None),
+            result => match result.map_err(anyhow::Error::from)
+                .and_then(|text| Self::parse_overrides(Platform::current(), &text)) {
+                Ok(keymap) => (keymap, None),
+                Err(error) => (Self::defaults_for(Platform::current()), Some(format!(
+                    "Keybindings {} ignored: {error}. Using OS defaults.", path.display()))),
             }
         }
     }
-
     fn defaults_for(platform: Platform) -> Self {
+        let modifier = if matches!(platform, Platform::Mac) { "cmd" } else { "ctrl" };
         let mut bindings = HashMap::new();
-        let specs: &[(Action, &str)] = match platform {
-            Platform::Mac => &[
-                (Action::Copy, "cmd-c"),
-                (Action::Paste, "cmd-v"),
-                (Action::Interrupt, "ctrl-c"),
-                (Action::Execute, "ctrl-enter"),
-                (Action::ToggleDirect, "ctrl-shift-space"),
-                (Action::PreviousEvent, "f6"),
-                (Action::NextEvent, "f7"),
-                (Action::BackFiveSeconds, "shift-f6"),
-                (Action::ForwardFiveSeconds, "shift-f7"),
-                (Action::PlayPause, "f8"),
-                (Action::GoLive, "f9"),
-                (Action::Quit, "cmd-q"),
-            ],
-            Platform::Other => &[
-                (Action::Copy, "ctrl-c"),
-                (Action::Paste, "ctrl-v"),
-                (Action::Interrupt, "ctrl-shift-c"),
-                (Action::Execute, "ctrl-enter"),
-                (Action::ToggleDirect, "ctrl-shift-space"),
-                (Action::PreviousEvent, "f6"),
-                (Action::NextEvent, "f7"),
-                (Action::BackFiveSeconds, "shift-f6"),
-                (Action::ForwardFiveSeconds, "shift-f7"),
-                (Action::PlayPause, "f8"),
-                (Action::GoLive, "f9"),
-                (Action::Quit, "ctrl-shift-q"),
-            ],
-        };
-        for (action, spec) in specs {
-            bindings.insert(
-                *action,
-                vec![Shortcut::parse(spec).expect("default keybinding")],
-            );
+        for (action, key) in [(Action::Copy,"c"), (Action::Cut,"x"), (Action::Paste,"v"),
+            (Action::Undo,"z"), (Action::Redo,"shift-z"), (Action::SelectAll,"a"),
+            (Action::Find,"f"), (Action::FocusEditor,"l")] {
+            bindings.insert(action, vec![Shortcut::parse(&format!("{modifier}-{key}")).unwrap()]);
         }
-        Self {
-            bindings,
-            config_path: config_path(),
+        if matches!(platform, Platform::Other) {
+            bindings.get_mut(&Action::Redo).unwrap().push(Shortcut::parse("ctrl-y").unwrap());
         }
+        for (action, key) in [
+            (Action::CopyDocument,"f10"), (Action::Execute,"ctrl-enter"),
+            (Action::ToggleDirect,"ctrl-shift-space"), (Action::PreviousEvent,"f6"),
+            (Action::NextEvent,"f7"), (Action::BackFiveSeconds,"shift-f6"),
+            (Action::ForwardFiveSeconds,"shift-f7"), (Action::PlayPause,"f8"), (Action::GoLive,"f9"),
+            (Action::Interrupt, if matches!(platform, Platform::Mac) { "ctrl-c" } else { "ctrl-shift-c" }),
+            (Action::Quit, if matches!(platform, Platform::Mac) { "cmd-q" } else { "ctrl-shift-q" }),
+        ] { bindings.insert(action, vec![Shortcut::parse(key).unwrap()]); }
+        Self { bindings }
     }
-
-    fn parse_overrides(platform: Platform, text: &str, path: Option<PathBuf>) -> Result<Self> {
+    fn parse_overrides(platform: Platform, text: &str) -> Result<Self> {
         let mut keymap = Self::defaults_for(platform);
-        keymap.config_path = path;
-        for (index, raw_line) in text.lines().enumerate() {
-            let line = raw_line.split('#').next().unwrap_or_default().trim();
-            if line.is_empty() {
-                continue;
-            }
-            let (name, value) = line
-                .split_once('=')
-                .with_context(|| format!("line {} needs `action = shortcut`", index + 1))?;
-            let action = Action::parse(name).with_context(|| {
-                format!("line {} has unknown action `{}`", index + 1, name.trim())
-            })?;
-            let value = value.trim();
-            let shortcuts = if value.eq_ignore_ascii_case("none") {
-                Vec::new()
-            } else {
-                value
-                    .split(',')
-                    .map(Shortcut::parse)
-                    .collect::<Result<Vec<_>>>()?
-            };
-            keymap.bindings.insert(action, shortcuts);
+        for (number, line) in text.lines().enumerate() {
+            let line = line.split('#').next().unwrap_or_default().trim();
+            if line.is_empty() { continue }
+            let (name, value) = line.split_once('=').with_context(|| format!("line {} needs action = shortcut", number + 1))?;
+            let action = Action::parse(name).with_context(|| format!("unknown action `{}`", name.trim()))?;
+            let values = if value.trim().eq_ignore_ascii_case("none") { vec![] }
+                else { value.split(',').map(Shortcut::parse).collect::<Result<Vec<_>>>()? };
+            keymap.bindings.insert(action, values);
         }
-        keymap.validate()?;
-        Ok(keymap)
-    }
-
-    fn validate(&self) -> Result<()> {
-        let mut seen: HashMap<&Shortcut, Action> = HashMap::new();
+        let mut seen = HashMap::new();
         for action in Action::ALL {
-            if let Some(shortcuts) = self.bindings.get(&action) {
-                for shortcut in shortcuts {
-                    if let Some(previous) = seen.insert(shortcut, action) {
-                        anyhow::bail!(
-                            "shortcut {} is assigned to both `{}` and `{}`",
-                            shortcut.display(),
-                            previous.config_name(),
-                            action.config_name()
-                        );
-                    }
+            for shortcut in &keymap.bindings[&action] {
+                if let Some(previous) = seen.insert(shortcut, action) {
+                    anyhow::bail!("{} is assigned to both {} and {}", shortcut.display(), previous.config_name(), action.config_name());
                 }
             }
         }
-        Ok(())
+        Ok(keymap)
     }
-
     pub fn action_for(&self, key: &Keystroke) -> Option<Action> {
-        Action::ALL.into_iter().find(|action| {
-            self.bindings
-                .get(action)
-                .is_some_and(|shortcuts| shortcuts.iter().any(|shortcut| shortcut.matches(key)))
-        })
+        let shortcut = Shortcut::from_keystroke(key);
+        Action::ALL.into_iter().find(|action| self.bindings[action].contains(&shortcut))
     }
-
     pub fn label(&self, action: Action) -> String {
-        self.bindings
-            .get(&action)
-            .and_then(|shortcuts| shortcuts.first())
+        self.bindings.get(&action).and_then(|values| values.first())
             .map_or_else(|| "unbound".into(), Shortcut::display)
+    }
+    pub fn install(&self, cx: &mut gpui::App) { cx.bind_keys(self.gpui_bindings()); }
+
+    /// Component bindings are overlaid at their own context depth. A root raw-key
+    /// handler is too late: GPUI dispatches bound actions before raw key events.
+    pub fn gpui_bindings(&self) -> Vec<KeyBinding> {
+        let defaults = Self::defaults_for(Platform::current());
+        let mut result = Vec::new();
+        for action in [Action::Copy,Action::Cut,Action::Paste,Action::Undo,Action::Redo,Action::SelectAll,Action::Find] {
+            for shortcut in &defaults.bindings[&action] {
+                result.push(KeyBinding::new(&shortcut.specification(), NoAction, Some("Kea > Input")));
+            }
+        }
+        for action in Action::ALL {
+            let contexts: &[&str] = match action {
+                Action::Execute => &["KeaCommand > Input"],
+                Action::Copy | Action::Paste => &["Kea > Input", "KeaTerminal"],
+                Action::Cut | Action::Undo | Action::Redo | Action::SelectAll | Action::Find => &["Kea > Input"],
+                Action::FocusEditor => &["KeaDocument", "KeaDocument > Input"],
+                _ => &["Kea", "Kea > Input"],
+            };
+            for shortcut in &self.bindings[&action] {
+                for context in contexts {
+                    result.push(KeyBinding::new(&shortcut.specification(), Invoke { action }, Some(context)));
+                }
+            }
+        }
+        result
     }
 }
 
-fn config_path() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("KEA_KEYBINDINGS") {
-        return Some(PathBuf::from(path));
-    }
+/// Only Kea-specific semantics live in the host. Editing actions are delivered
+/// back to the focused component, never converted to hand-written text edits.
+#[derive(gpui::Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = kea, no_json)]
+pub struct Invoke { pub action: Action }
+
+pub(crate) fn config_path() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("KEA_KEYBINDINGS") { return Some(path.into()) }
     if cfg!(target_os = "windows") {
-        return env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("Kea").join("keybindings.conf"));
+        return env::var_os("APPDATA").map(PathBuf::from).map(|path| path.join("Kea/keybindings.conf"));
     }
     if cfg!(target_os = "macos") {
-        return env::var_os("HOME").map(PathBuf::from).map(|path| {
-            path.join("Library")
-                .join("Application Support")
-                .join("Kea")
-                .join("keybindings.conf")
-        });
+        return env::var_os("HOME").map(PathBuf::from).map(|path| path.join("Library/Application Support/Kea/keybindings.conf"));
     }
-    env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|path| path.join(".config"))
-        })
-        .map(|path| path.join("kea").join("keybindings.conf"))
+    env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(PathBuf::from).map(|path| path.join(".config")))
+        .map(|path| path.join("kea/keybindings.conf"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    fn key(spec: &str) -> Keystroke { Keystroke::parse(spec).unwrap() }
     #[test]
-    fn linux_defaults_make_copy_native_and_interrupt_explicit() {
-        let keymap = Keymap::defaults_for(Platform::Other);
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-c").unwrap()),
-            Some(Action::Copy)
-        );
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-shift-c").unwrap()),
-            Some(Action::Interrupt)
-        );
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-enter").unwrap()),
-            Some(Action::Execute)
-        );
+    fn platform_defaults_separate_copy_from_interrupt() {
+        let linux = Keymap::defaults_for(Platform::Other);
+        let mac = Keymap::defaults_for(Platform::Mac);
+        assert_eq!(linux.action_for(&key("ctrl-c")), Some(Action::Copy));
+        assert_eq!(linux.action_for(&key("ctrl-shift-c")), Some(Action::Interrupt));
+        assert_eq!(mac.action_for(&key("cmd-c")), Some(Action::Copy));
+        assert_eq!(mac.action_for(&key("ctrl-c")), Some(Action::Interrupt));
+        assert_eq!(linux.action_for(&key("ctrl-enter")), Some(Action::Execute));
     }
-
     #[test]
-    fn mac_defaults_keep_ctrl_c_for_interrupt() {
-        let keymap = Keymap::defaults_for(Platform::Mac);
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("cmd-c").unwrap()),
-            Some(Action::Copy)
-        );
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-c").unwrap()),
-            Some(Action::Interrupt)
-        );
+    fn configuration_remaps_unbinds_and_rejects_ambiguity() {
+        let map = Keymap::parse_overrides(Platform::Other, "copy = ctrl-shift-c\ninterrupt = ctrl-c\nexecute = alt-enter\nundo = none").unwrap();
+        assert_eq!(map.action_for(&key("ctrl-c")), Some(Action::Interrupt));
+        assert_eq!(map.action_for(&key("ctrl-shift-c")), Some(Action::Copy));
+        assert_eq!(map.action_for(&key("alt-enter")), Some(Action::Execute));
+        assert_eq!(map.action_for(&key("ctrl-z")), None);
+        assert!(Keymap::parse_overrides(Platform::Other, "copy = ctrl-c\ninterrupt = ctrl-c").is_err());
     }
-
     #[test]
-    fn config_can_restore_traditional_terminal_copy_interrupt() {
-        let keymap = Keymap::parse_overrides(
-            Platform::Other,
-            "copy = ctrl-shift-c\ninterrupt = ctrl-c\nexecute = alt-enter\n",
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-c").unwrap()),
-            Some(Action::Interrupt)
-        );
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-shift-c").unwrap()),
-            Some(Action::Copy)
-        );
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("alt-enter").unwrap()),
-            Some(Action::Execute)
-        );
+    fn editing_bindings_do_not_capture_direct_terminal_controls() {
+        let map = gpui::Keymap::new(Keymap::defaults_for(Platform::current()).gpui_bindings());
+        let context = [gpui::KeyContext::parse("Kea").unwrap(), gpui::KeyContext::parse("KeaTerminal").unwrap()];
+        for spec in ["ctrl-z", "ctrl-enter", "ctrl-l"] {
+            assert!(map.bindings_for_input(&[key(spec)], &context).0.is_empty(), "captured {spec}");
+        }
     }
-
     #[test]
-    fn duplicate_shortcuts_are_rejected_and_actions_can_be_unbound() {
-        assert!(Keymap::parse_overrides(
-            Platform::Other,
-            "copy = ctrl-c\ninterrupt = ctrl-c\n",
-            None,
-        )
-        .is_err());
-        let keymap = Keymap::parse_overrides(Platform::Other, "copy = none\n", None).unwrap();
-        assert_eq!(
-            keymap.action_for(&Keystroke::parse("ctrl-c").unwrap()),
-            None
-        );
+    fn unbinding_copy_really_masks_the_component_default() {
+        let modifier = if cfg!(target_os = "macos") { "cmd-c" } else { "ctrl-c" };
+        let mut map = gpui::Keymap::new(vec![KeyBinding::new(modifier, gpui_component::input::Copy, Some("Input"))]);
+        let override_map = Keymap::parse_overrides(Platform::current(), "copy = none").unwrap();
+        map.add_bindings(override_map.gpui_bindings());
+        let context = [gpui::KeyContext::parse("Kea").unwrap(), gpui::KeyContext::parse("Input").unwrap()];
+        assert!(map.bindings_for_input(&[key(modifier)], &context).0.is_empty());
     }
 }

@@ -1,202 +1,90 @@
-#[derive(Default)]
-pub struct CommandEditor {
-    text: String,
-    cursor: usize,
+//! Thin host adapter over GPUI Component, not another text editor implementation.
+//! Selection, grapheme movement, undo, IME and pointer handling belong upstream.
+use gpui::{App, AppContext, Entity, EntityInputHandler, Window};
+use gpui_component::{highlighter::{LanguageConfig, LanguageRegistry}, input::InputState};
+use crate::{settings::Settings, shell::ShellFlavor};
+
+pub fn register_languages() {
+    LanguageRegistry::singleton().register("bash", &LanguageConfig::new(
+        "Bash", tree_sitter_bash::LANGUAGE.into(), vec![],
+        tree_sitter_bash::HIGHLIGHT_QUERY, "", "",
+    ));
 }
 
-impl CommandEditor {
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-
-    pub fn insert(&mut self, text: &str) {
-        let text = sanitize(text);
-        self.text.insert_str(self.cursor, &text);
-        self.cursor += text.len();
-    }
-
-    pub fn newline(&mut self) {
-        self.insert("\n");
-    }
-
-    pub fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let previous = self.text[..self.cursor]
-            .char_indices()
-            .next_back()
-            .map(|(index, _)| index)
-            .unwrap_or(0);
-        self.text.replace_range(previous..self.cursor, "");
-        self.cursor = previous;
-    }
-
-    pub fn delete(&mut self) {
-        if self.cursor == self.text.len() {
-            return;
-        }
-        let next = self.text[self.cursor..]
-            .char_indices()
-            .nth(1)
-            .map(|(index, _)| self.cursor + index)
-            .unwrap_or(self.text.len());
-        self.text.replace_range(self.cursor..next, "");
-    }
-
-    pub fn left(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        self.cursor = self.text[..self.cursor]
-            .char_indices()
-            .next_back()
-            .map(|(index, _)| index)
-            .unwrap_or(0);
-    }
-
-    pub fn right(&mut self) {
-        if self.cursor == self.text.len() {
-            return;
-        }
-        self.cursor = self.text[self.cursor..]
-            .char_indices()
-            .nth(1)
-            .map(|(index, _)| self.cursor + index)
-            .unwrap_or(self.text.len());
-    }
-
-    pub fn home(&mut self) {
-        self.cursor = self.text[..self.cursor]
-            .rfind('\n')
-            .map_or(0, |index| index + 1);
-    }
-
-    pub fn end(&mut self) {
-        self.cursor = self.text[self.cursor..]
-            .find('\n')
-            .map_or(self.text.len(), |index| self.cursor + index);
-    }
-
-    pub fn up(&mut self) {
-        self.move_vertical(-1);
-    }
-
-    pub fn down(&mut self) {
-        self.move_vertical(1);
-    }
-
-    fn move_vertical(&mut self, direction: isize) {
-        let line_start = self.text[..self.cursor]
-            .rfind('\n')
-            .map_or(0, |index| index + 1);
-        let column = self.text[line_start..self.cursor].chars().count();
-        if direction < 0 {
-            if line_start == 0 {
-                return;
-            }
-            let previous_end = line_start - 1;
-            let previous_start = self.text[..previous_end]
-                .rfind('\n')
-                .map_or(0, |index| index + 1);
-            self.cursor = byte_at_column(&self.text, previous_start, previous_end, column);
-        } else {
-            let line_end = self.text[self.cursor..]
-                .find('\n')
-                .map_or(self.text.len(), |index| self.cursor + index);
-            if line_end == self.text.len() {
-                return;
-            }
-            let next_start = line_end + 1;
-            let next_end = self.text[next_start..]
-                .find('\n')
-                .map_or(self.text.len(), |index| next_start + index);
-            self.cursor = byte_at_column(&self.text, next_start, next_end, column);
-        }
-    }
-
-    pub fn clear_after_submit(&mut self) -> String {
-        self.cursor = 0;
-        std::mem::take(&mut self.text)
-    }
-
-    pub fn rendered(&self) -> String {
-        let mut rendered = self.text.clone();
-        rendered.insert_str(self.cursor, "▏");
-        rendered
-    }
+/// A fresh entity gives each draft its own undo history. Submitting never edits
+/// old command blocks; restoring an old command is an explicit new-draft action.
+pub fn new_draft(shell: Option<ShellFlavor>, settings: &Settings, text: &str,
+                 window: &mut Window, cx: &mut App) -> Entity<InputState> {
+    cx.new(|cx| {
+        let state = InputState::new(window, cx).multi_line(true);
+        let state = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
+            state.code_editor("bash")
+        } else { state };
+        state.line_number(settings.line_numbers).soft_wrap(settings.soft_wrap)
+            .searchable(true).default_value(text.to_string())
+    })
 }
 
-pub fn terminal_bytes(text: &str) -> Vec<u8> {
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut bytes = normalized.replace('\n', "\r").into_bytes();
-    if bytes.last().copied() != Some(b'\r') {
-        bytes.push(b'\r');
-    }
-    bytes
-}
-
-fn sanitize(text: &str) -> String {
-    text.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace(['\x1b', '\0'], "")
-}
-
-fn byte_at_column(text: &str, start: usize, end: usize, column: usize) -> usize {
-    text[start..end]
-        .char_indices()
-        .nth(column)
-        .map_or(end, |(offset, _)| start + offset)
+/// Do not submit intermediate IME text. The OS owns composition/candidate commit.
+/// Exact focus also prevents a find field inside the editor from executing it.
+pub fn submission_text(editor: &Entity<InputState>, window: &mut Window, cx: &mut App) -> Option<String> {
+    use gpui::Focusable;
+    if !editor.focus_handle(cx).is_focused(window) { return None }
+    editor.update(cx, |state, cx| {
+        if state.marked_text_range(window, cx).is_some() { None }
+        else { Some(state.value().to_string()) }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+    use gpui_component::Root;
 
-    #[test]
-    fn editor_handles_multiline_unicode_without_splitting_codepoints() {
-        let mut editor = CommandEditor::default();
-        editor.insert("echo ä\nsecond");
-        editor.home();
-        editor.up();
-        editor.end();
-        editor.insert("!");
-        assert_eq!(editor.text(), "echo ä!\nsecond");
-        editor.backspace();
-        editor.backspace();
-        assert_eq!(editor.text(), "echo \nsecond");
+    struct EmptyView;
+    impl gpui::Render for EmptyView {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement { gpui::div() }
     }
 
-    #[test]
-    fn vertical_movement_preserves_character_column_where_possible() {
-        let mut editor = CommandEditor::default();
-        editor.insert("12345\nab\nABCDE");
-        editor.up();
-        assert_eq!(editor.rendered(), "12345\nab▏\nABCDE");
-        editor.up();
-        assert_eq!(editor.rendered(), "12▏345\nab\nABCDE");
-        editor.down();
-        editor.down();
-        assert_eq!(editor.rendered(), "12345\nab\nAB▏CDE");
+    #[gpui::test]
+    fn component_composition_is_not_a_submittable_command(cx: &mut TestAppContext) {
+        cx.update(|cx| { gpui_component::init(cx); register_languages(); });
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|_| EmptyView);
+            Root::new(view, window, cx)
+        });
+        window.update(cx, |_, window, cx| {
+            let editor = new_draft(Some(ShellFlavor::Posix), &Settings::default(), "", window, cx);
+            editor.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.replace_and_mark_text_in_range(None, "日本", None, window, cx);
+                assert!(state.marked_text_range(window, cx).is_some());
+            });
+            assert!(submission_text(&editor, window, cx).is_none());
+            editor.update(cx, |state, cx| state.replace_text_in_range(None, "日本語", window, cx));
+            assert_eq!(submission_text(&editor, window, cx).as_deref(), Some("日本語"));
+        }).unwrap();
     }
 
-    #[test]
-    fn submitted_multiline_text_is_sent_as_terminal_enters() {
-        assert_eq!(
-            terminal_bytes("printf one\nprintf two"),
-            b"printf one\rprintf two\r"
-        );
-        assert_eq!(terminal_bytes("echo done\n"), b"echo done\r");
-    }
-
-    #[test]
-    fn paste_is_sanitized_before_becoming_editor_text() {
-        let mut editor = CommandEditor::default();
-        editor.insert("a\r\nb\x1b[31m\0");
-        assert_eq!(editor.text(), "a\nb[31m");
+    #[gpui::test]
+    fn component_replaces_utf16_ranges_without_a_keycode_approximation(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|_| EmptyView);
+            Root::new(view, window, cx)
+        });
+        window.update(cx, |_, window, cx| {
+            let editor = new_draft(None, &Settings::default(), "a😀ö", window, cx);
+            editor.update(cx, |state, cx| {
+                state.replace_text_in_range(Some(1..3), "ä", window, cx);
+                assert_eq!(state.value().as_ref(), "aäö");
+                let mut adjusted = None;
+                assert_eq!(state.text_for_range(1..2, &mut adjusted, window, cx).as_deref(), Some("ä"));
+            });
+            let fresh = new_draft(None, &Settings::default(), "", window, cx);
+            assert!(fresh.read(cx).value().is_empty());
+            assert_ne!(fresh.entity_id(), editor.entity_id());
+        }).unwrap();
     }
 }

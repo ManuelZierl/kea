@@ -6,6 +6,7 @@ on:
       - '.github/workflows/editor-workbench.yml'
       - 'Cargo.toml'
       - 'crates/kea-app/**'
+      - 'scripts/smoke-linux.sh'
 permissions:
   contents: write
 concurrency:
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,20 +36,8 @@ jobs:
           fi
       - name: Export source for review
         run: |
-          mkdir -p editor-review/dependencies
+          mkdir -p editor-review
           git archive HEAD | tar -x -C editor-review
-          python3 - <<'PY'
-          import json, pathlib, shutil
-          for package in json.load(open('/tmp/kea-metadata.json'))['packages']:
-              if package['name'] in ('gpui', 'gpui-component'):
-                  root = pathlib.Path(package['manifest_path']).parent
-                  dst = pathlib.Path('editor-review/dependencies') / package['name']
-                  for source in root.rglob('*'):
-                      if source.is_file() and source.suffix in ('.rs', '.toml'):
-                          target = dst / source.relative_to(root)
-                          target.parent.mkdir(parents=True, exist_ok=True)
-                          shutil.copyfile(source, target)
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: editor-source
@@ -56,6 +45,16 @@ jobs:
           include-hidden-files: true
           retention-days: 2
       - name: Install desktop dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config
-      - name: Build editor dependencies
-        run: cargo build --locked -p gpui-component
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
+      - name: Test editor integration
+        run: cargo test --locked -p kea-app
+      - name: Build application
+        run: cargo build --locked -p kea-app
+      - name: Desktop acceptance
+        run: timeout 180s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: editor-smoke
+          path: smoke-artifacts/
+          retention-days: 2
