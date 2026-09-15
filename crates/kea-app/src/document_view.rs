@@ -4,7 +4,7 @@ use super::{button, command_editor, KeaView};
 use gpui::{prelude::*, *};
 use gpui_component::{
     input::{Input, InputState},
-    ActiveTheme,
+    ActiveTheme, RopeExt,
 };
 use kea_document::status_label;
 use std::collections::{HashMap, HashSet};
