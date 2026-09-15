@@ -70,6 +70,7 @@ pub struct Document {
     retained_bytes: usize,
     saturated: bool,
     scanner: MarkerScanner,
+    directory: Option<String>,
 }
 
 impl Document {
@@ -94,6 +95,12 @@ impl Document {
             }
         }
         document
+    }
+
+    /// Last explicitly reported shell directory, never inferred from screen text.
+    /// A direct/remote application may have a different directory.
+    pub fn current_directory(&self) -> Option<&str> {
+        self.directory.as_deref()
     }
 
     pub fn blocks(&self) -> &[CommandBlock] {
@@ -167,6 +174,10 @@ impl Document {
                             changed |= !data.is_empty();
                         }
                     }
+                }
+                Piece::Marker(Marker::Directory(path)) => {
+                    self.directory = Some(path);
+                    changed = true;
                 }
                 Piece::Marker(Marker::Start(id, input)) => {
                     if self.active.is_none() {
@@ -281,6 +292,7 @@ pub fn status_label(block: &CommandBlock) -> String {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Marker {
+    Directory(String),
     Start(u64, String),
     Done(u64, i32),
 }
@@ -336,6 +348,17 @@ fn parse_marker(raw: &[u8]) -> Option<Marker> {
     let body = std::str::from_utf8(&raw[MARKER_PREFIX.len()..raw.len() - 1]).ok()?;
     let mut parts = body.split(';');
     match parts.next()? {
+        "cwd" => {
+            let encoded = parts.next()?;
+            if parts.next().is_some() || encoded.len() > 10924 {
+                return None;
+            }
+            let path = String::from_utf8(base64_decode(encoded)?).ok()?;
+            if path.is_empty() || path.len() > 8192 || path.contains('\0') {
+                return None;
+            }
+            Some(Marker::Directory(path))
+        }
         "start" => {
             let id = parts.next()?.parse().ok()?;
             let encoded = parts.next()?;
@@ -708,5 +731,34 @@ mod tests {
             terminalish_text(b"\x1b[31mDownloading 10%\x1b[0m\rDownloading 100%\nDone\n"),
             "Downloading 100%\nDone"
         );
+    }
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+    #[test]
+    fn directory_metadata_is_chunk_safe_and_not_command_output() {
+        let path = "C:\\Users\\ä user;project";
+        let marker = format!("\x1b]777;kea;cwd;{}\x07", base64_encode(path.as_bytes()));
+        for split in 0..=marker.len() {
+            let mut doc = Document::new();
+            doc.ingest_output(0, &marker.as_bytes()[..split]);
+            doc.ingest_output(1, &marker.as_bytes()[split..]);
+            assert_eq!(doc.current_directory(), Some(path));
+            assert!(doc.blocks().is_empty());
+        }
+    }
+    #[test]
+    fn directory_markers_do_not_close_or_corrupt_active_commands() {
+        let mut doc = Document::new();
+        doc.ingest_output(0, b"\x1b]777;kea;start;1;ZWNobyBoaQ==\x07");
+        doc.ingest_output(1, b"hi\x1b]777;kea;cwd;L3RtcA==\x07");
+        doc.ingest_output(2, b"\x1b]777;kea;done;1;0\x07");
+        assert_eq!(doc.current_directory(), Some("/tmp"));
+        assert_eq!(doc.blocks()[0].plain_output(), "hi");
+        assert_eq!(doc.blocks()[0].status, CommandStatus::Finished(0));
+        doc.ingest_output(3, b"\x1b]777;kea;cwd;AA==\x07");
+        assert_eq!(doc.current_directory(), Some("/tmp"));
     }
 }

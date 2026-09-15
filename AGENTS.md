@@ -1,6 +1,6 @@
 # Working on Kea
 
-Read README.md, docs/architecture.md and docs/editor-integration.md before changing the design.
+Read README.md, docs/architecture.md, docs/editor-integration.md and docs/shared-session.md before changing the design.
 
 ## Product and host invariants
 
@@ -20,7 +20,10 @@ Read README.md, docs/architecture.md and docs/editor-integration.md before chang
 - `kea-document` depends only on `kea-core`; keep GPUI, editor, Zed, PTY, OS and shell-adapter dependencies out of both crates.
 - Replay is observation, never execution. Historical engines cannot issue PTY replies, send input, mutate clipboard, open URLs or change windows.
 - Live and historical emulator state stay separate; live output/protocol replies continue during rewind.
-- Direct PTY and Document mode refer to the same process/session. Do not silently spawn a second shell.
+- The live terminal and composer coexist over the same process. Blocks are optional. Never silently spawn a second shell.
+- Mask all Kea accelerators with live-terminal focus; keep clickable controls for host actions.
+- Unmanaged terminal input invalidates shell readiness. Application text must never receive eval wrappers.
+- Completion handoff uses the running application's Tab handling, without Enter; reject multiline/control-character drafts.
 - Shell wrappers are implementation input. Hidden-echo suppression fails open; do not drop real output to hide cosmetic wrapper echoes.
 - No raw keystroke recording by default. Submitted command markers and output can contain secrets. Persistence is explicit, bounded and non-overwriting.
 - Bound retained data and UI entities. Surface quota exhaustion, disk failures, truncation and gaps; do not call incomplete history complete.

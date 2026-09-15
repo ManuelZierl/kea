@@ -1,5 +1,9 @@
 # Architecture
 
+## Shared-session interaction
+
+The terminal and bottom editor coexist; blocks are optional. Submission target is separate from focus and output presentation. See [shared-session input, completion and directory reporting](shared-session.md) for the current contract. Earlier Document/Direct terminology below describes projections, not mutually exclusive UI modes.
+
 ## Product and responsibilities
 
 Kea is a minimal editor with executable input and persistent read-only output. Standard editing and OS integration belong to reusable host components; Kea supplies the execution/document model. Replay is a consequence of retained history.
