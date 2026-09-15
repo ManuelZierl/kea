@@ -17,6 +17,8 @@ pub enum Action {
     FocusEditor,
     Interrupt,
     Execute,
+    SendText,
+    Complete,
     ToggleDirect,
     PreviousEvent,
     NextEvent,
@@ -27,7 +29,7 @@ pub enum Action {
     Quit,
 }
 impl Action {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 21] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -39,6 +41,8 @@ impl Action {
         Self::FocusEditor,
         Self::Interrupt,
         Self::Execute,
+        Self::SendText,
+        Self::Complete,
         Self::ToggleDirect,
         Self::PreviousEvent,
         Self::NextEvent,
@@ -61,6 +65,8 @@ impl Action {
             Self::FocusEditor => "focus_editor",
             Self::Interrupt => "interrupt",
             Self::Execute => "execute",
+            Self::SendText => "send_text",
+            Self::Complete => "complete",
             Self::ToggleDirect => "toggle_direct",
             Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event",
@@ -225,6 +231,8 @@ impl Keymap {
         for (action, key) in [
             (Action::CopyDocument, "f10"),
             (Action::Execute, "ctrl-enter"),
+            (Action::SendText, "ctrl-shift-enter"),
+            (Action::Complete, "tab"),
             (Action::ToggleDirect, "ctrl-shift-space"),
             (Action::PreviousEvent, "f6"),
             (Action::NextEvent, "f7"),
@@ -333,13 +341,8 @@ impl Keymap {
         }
         for action in Action::ALL {
             let contexts: &[&str] = match action {
-                Action::Execute => &["KeaCommand > Input"],
-                Action::Copy | Action::Paste => &["Kea > Input", "KeaTerminal"],
-                Action::Cut | Action::Undo | Action::Redo | Action::SelectAll | Action::Find => {
-                    &["Kea > Input"]
-                }
-                Action::FocusEditor => &["KeaDocument", "KeaDocument > Input"],
-                _ => &["Kea", "Kea > Input"],
+                Action::Execute | Action::SendText | Action::Complete => &["KeaCommand > Input"],
+                _ => &["Kea > Input", "KeaChrome"],
             };
             for shortcut in &self.bindings[&action] {
                 for context in contexts {
@@ -433,7 +436,23 @@ mod tests {
             gpui::KeyContext::parse("Kea").unwrap(),
             gpui::KeyContext::parse("KeaTerminal").unwrap(),
         ];
-        for spec in ["ctrl-z", "ctrl-enter", "ctrl-l", "tab", "shift-tab"] {
+        for spec in [
+            "ctrl-c",
+            "ctrl-v",
+            "ctrl-z",
+            "ctrl-enter",
+            "ctrl-shift-enter",
+            "ctrl-l",
+            "ctrl-shift-space",
+            "ctrl-shift-q",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "tab",
+            "shift-tab",
+        ] {
             assert!(
                 map.bindings_for_input(&[key(spec)], &context).0.is_empty(),
                 "captured {spec}"

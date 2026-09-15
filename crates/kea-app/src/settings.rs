@@ -19,6 +19,7 @@ pub struct Settings {
     pub soft_wrap: bool,
     pub output_wrap: bool,
     pub syntax_highlighting: bool,
+    pub show_blocks: bool,
 }
 
 impl Default for Settings {
@@ -31,6 +32,7 @@ impl Default for Settings {
             soft_wrap: true,
             output_wrap: true,
             syntax_highlighting: true,
+            show_blocks: false,
         }
     }
 }
@@ -96,6 +98,7 @@ impl Settings {
                 "soft_wrap" => settings.soft_wrap = boolean(value)?,
                 "output_wrap" => settings.output_wrap = boolean(value)?,
                 "syntax_highlighting" => settings.syntax_highlighting = boolean(value)?,
+                "show_blocks" => settings.show_blocks = boolean(value)?,
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }

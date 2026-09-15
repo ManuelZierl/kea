@@ -4,3 +4,5 @@ pub mod input;
 pub mod keybindings;
 pub mod settings;
 pub mod shell;
+
+pub mod completion;

@@ -1,5 +1,7 @@
 # Architecture
 
+> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior](unified-session.md) supersedes the older Document/Direct mode descriptions below.
+
 ## Product and responsibilities
 
 Kea is a minimal editor with executable input and persistent read-only output. Standard editing and OS integration belong to reusable host components; Kea supplies the execution/document model. Replay is a consequence of retained history.

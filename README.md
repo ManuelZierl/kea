@@ -76,6 +76,8 @@ Kea reads `keybindings.conf` and `settings.conf` from:
 
 ```text
 # keybindings.conf: optional overrides
+
+> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior](docs/unified-session.md) supersedes the older Document/Direct mode descriptions below.
 copy = ctrl-shift-c
 interrupt = ctrl-c
 execute = alt-enter

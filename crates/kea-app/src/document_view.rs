@@ -164,6 +164,8 @@ impl KeaView {
                             .soft_wrap(self.settings.output_wrap)
                             .default_value(text)
                     });
+                    command_editor::follow_output_tail(&editor, window, cx);
+                    self.document_scroll.scroll_to_bottom();
                     self.document_ui.visible.insert(
                         id,
                         BlockText {
@@ -189,6 +191,7 @@ impl KeaView {
                         view.line_count = text.lines().count().max(1);
                         view.editor
                             .update(cx, |state, cx| state.set_value(text, window, cx));
+                        command_editor::follow_output_tail(&view.editor, window, cx);
                         view.output_len = block.output().len();
                         view.pending = false;
                     }

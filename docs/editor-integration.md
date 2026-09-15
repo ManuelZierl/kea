@@ -1,5 +1,7 @@
 # Platform-integrated editing
 
+> **Current interaction:** terminal and editor are simultaneous; blocks are optional. [Focus, submission, completion and directory behavior](unified-session.md) supersedes the older Document/Direct mode descriptions below.
+
 ## Product contract
 
 Kea is a minimal editor with executable input and persistent, read-only output. It should not impose terminal conventions on ordinary text editing or duplicate services the platform/editor already supplies.

@@ -33,9 +33,25 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         "pageup" => Some(5),
         "pagedown" => Some(6),
         "f5" => Some(15),
+        "f6" => Some(17),
+        "f7" => Some(18),
+        "f8" => Some(19),
+        "f9" => Some(20),
         "f10" => Some(21),
         "f11" => Some(23),
         "f12" => Some(24),
+        "f13" => Some(25),
+        "f14" => Some(26),
+        "f15" => Some(28),
+        "f16" => Some(29),
+        "f17" => Some(31),
+        "f18" => Some(32),
+        "f19" => Some(33),
+        "f20" => Some(34),
+        "f21" => Some(42),
+        "f22" => Some(43),
+        "f23" => Some(44),
+        "f24" => Some(45),
         _ => None,
     };
     if let Some(number) = numbered {
@@ -70,6 +86,14 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         "enter" | "return" if modifier != 1 => format!("\x1b[13;{modifier}u").into_bytes(),
         "enter" | "return" => vec![b'\r'],
         "escape" => vec![27],
+        // Windows can report a named Space without a completed key_char.
+        "space" if !m.control => {
+            if m.alt {
+                vec![27, b' ']
+            } else {
+                vec![b' ']
+            }
+        }
         "backspace" => vec![if m.control { 8 } else { 127 }],
         "tab" if m.shift => b"\x1b[Z".to_vec(),
         "tab" => vec![b'\t'],
@@ -191,5 +215,34 @@ mod tests {
             paste("a\x1b[201~b", true).unwrap(),
             b"\x1b[200~a[201~b\x1b[201~"
         );
+    }
+}
+
+#[cfg(test)]
+mod passthrough_tests {
+    use super::*;
+    #[test]
+    fn space_control_and_function_keys_are_encoded() {
+        for spec in ["space", "shift-space"] {
+            assert_eq!(
+                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                b" "
+            );
+        }
+        for number in 1..=24 {
+            assert!(encode(&Keystroke::parse(&format!("f{number}")).unwrap(), false).is_some());
+        }
+        for (spec, expected) in [
+            ("ctrl-c", 3),
+            ("ctrl-v", 22),
+            ("ctrl-z", 26),
+            ("ctrl-l", 12),
+            ("ctrl-space", 0),
+        ] {
+            assert_eq!(
+                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                vec![expected]
+            );
+        }
     }
 }

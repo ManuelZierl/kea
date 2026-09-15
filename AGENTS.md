@@ -4,6 +4,11 @@ Read README.md, docs/architecture.md and docs/editor-integration.md before chang
 
 ## Product and host invariants
 
+- Read docs/unified-session.md: one terminal and persistent editor; blocks are optional presentation, never an execution mode.
+- Live terminal focus reserves no Kea shortcuts. Use editor/chrome contexts and visible toolbar controls.
+- Run in shell requires an explicit ready marker. Send to app never adds shell wrappers. Never infer readiness from prompt text.
+- Directory is last reported shell metadata, not a fabricated process/remote path. Completion never evaluates draft code.
+
 - Treat Kea as a minimal editor with executable input and read-only output. Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
 - The standalone host uses GPUI Component; a Zed host should use Zed's editor/actions. Ordinary text arrives through the component's platform text-input handler, not manual keycode-to-character conversion.
 - Copy means focused selection. Copy block/document/screen is explicit. Never silently copy the entire document when selection-copy has nothing selected.

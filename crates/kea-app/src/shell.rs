@@ -9,6 +9,21 @@ pub enum ShellFlavor {
 
 impl ShellFlavor {
     pub fn detect(command: &[OsString]) -> Option<Self> {
+        // Never inject an interactive hook into a -c/-Command/script invocation.
+        if command.iter().skip(1).any(|arg| {
+            !matches!(
+                arg.to_string_lossy().to_ascii_lowercase().as_str(),
+                "-i" | "-l"
+                    | "--login"
+                    | "--noprofile"
+                    | "--norc"
+                    | "-nologo"
+                    | "-noprofile"
+                    | "-noexit"
+            )
+        }) {
+            return None;
+        }
         let program = command
             .first()
             .map(|program| program.to_string_lossy().into_owned())
@@ -26,6 +41,25 @@ impl ShellFlavor {
             "sh" | "bash" | "dash" | "zsh" | "ksh" | "mksh" => Some(Self::Posix),
             "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => Some(Self::PowerShell),
             _ => None,
+        }
+    }
+
+    /// Preserve the existing prompt and prompt callbacks while adding metadata.
+    pub fn integration(self, command: &[OsString]) -> Vec<u8> {
+        match self {
+            Self::PowerShell => br#"$global:__kea_saved_prompt=$function:prompt; function global:prompt { $status=$?; $code=$global:LASTEXITCODE; $p=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path)); [Console]::Write([char]27+']777;kea;prompt;'+$p+[char]7); $global:LASTEXITCODE=$code; if ($global:__kea_saved_prompt) { & $global:__kea_saved_prompt } else { 'PS '+(Get-Location).Path+'> ' } }
+"#.iter().copied().map(|b| if b == b'\n' { b'\r' } else { b }).collect(),
+            Self::Posix => {
+                let program = command.first().map(|p| p.to_string_lossy().into_owned()).or_else(|| std::env::var("SHELL").ok()).unwrap_or_else(|| "sh".into());
+                let name=program.rsplit('/').next().unwrap_or(&program);
+                let report="__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' \"$PWD\" | command base64 2>/dev/null | tr -d '\\r\\n'); printf '\\033]777;kea;prompt;%s\\007' \"$__kea_dir\"; return \"$__kea_rc\"; }; ";
+                let hook=match name {
+                    "bash" => r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#,
+                    "zsh" => "precmd_functions+=(__kea_prompt)",
+                    _ => "PS1='$(__kea_prompt)'\"${PS1:-$ }\"",
+                };
+                format!("{report}{hook}\r").into_bytes()
+            }
         }
     }
 
@@ -151,5 +185,81 @@ mod tests {
         assert!(wrapper.contains("$__kea_previous=$global:LASTEXITCODE"));
         assert!(wrapper.contains("$global:LASTEXITCODE=$__kea_previous")); // preserves the previous native exit code
         assert!(wrapper.contains("''hello''"));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use kea_document::Document;
+    use kea_session::{Observed, Session};
+    use std::time::{Duration, Instant};
+    fn wait_ready(session: &mut Session, document: &mut Document) {
+        let start = Instant::now();
+        loop {
+            for event in session.pump_observed().observed {
+                if let Observed::Output { at, bytes } = event {
+                    document.ingest_output(at, &bytes);
+                }
+            }
+            if document.prompt_ready() {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "no ready marker: {}",
+                session.screen().text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[test]
+    fn directory_follows_editor_and_native_terminal_cd() {
+        #[cfg(unix)]
+        let (command, flavor, text, native) = (
+            vec!["bash".into(), "--noprofile".into(), "--norc".into()],
+            ShellFlavor::Posix,
+            "cd /tmp",
+            b"cd /\r".to_vec(),
+        );
+        #[cfg(windows)]
+        let (command, flavor, text, native) = (
+            vec![
+                "powershell.exe".into(),
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NoExit".into(),
+            ],
+            ShellFlavor::PowerShell,
+            "Set-Location $env:TEMP",
+            b"Set-Location $env:SystemRoot\r".to_vec(),
+        );
+        let mut session =
+            Session::spawn(&command, kea_core::Size::new(100, 24).unwrap(), None).unwrap();
+        let mut d = Document::new();
+        session.send_hidden(flavor.integration(&command)).unwrap();
+        wait_ready(&mut session, &mut d);
+        assert!(d.directory().is_some());
+        d.queue_local(1, text.into(), session.elapsed_micros())
+            .unwrap();
+        session.send_hidden(flavor.wrap(1, text).unwrap()).unwrap();
+        wait_ready(&mut session, &mut d);
+        #[cfg(unix)]
+        assert_eq!(d.directory(), Some("/tmp"));
+        #[cfg(windows)]
+        assert_eq!(
+            d.directory().map(str::to_lowercase),
+            std::env::var("TEMP").ok().map(|p| p.to_lowercase())
+        );
+        session.send(native).unwrap();
+        d.note_terminal_input();
+        wait_ready(&mut session, &mut d);
+        #[cfg(unix)]
+        assert_eq!(d.directory(), Some("/"));
+        #[cfg(windows)]
+        assert_eq!(
+            d.directory().map(str::to_lowercase),
+            std::env::var("SystemRoot").ok().map(|p| p.to_lowercase())
+        );
     }
 }
