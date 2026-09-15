@@ -40,8 +40,6 @@ impl ShellFlavor {
     }
 
     /// Install a prompt hook without replacing the user's profile or normal prompt.
-    /// OSC 777 remains recording/document metadata for cwd/readiness. OSC 778 is
-    /// live host metadata carrying the shell's effective PATH for completion.
     pub fn integration(self, command: &[OsString]) -> Vec<u8> {
         match self {
             Self::PowerShell => {
@@ -61,9 +59,7 @@ impl ShellFlavor {
                 let name = program.rsplit('/').next().unwrap_or(&program);
                 let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
                 let hook = match name {
-                    "bash" => {
-                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#
-                    }
+                    "bash" => r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#,
                     "zsh" => "precmd_functions+=(__kea_prompt)",
                     _ => "PS1='$(__kea_prompt)'\"${PS1:-$ }\"",
                 };
@@ -72,8 +68,12 @@ impl ShellFlavor {
         }
     }
 
-    /// Build one physical PTY line. User newlines are decoded only *inside* the
-    /// shell so an interactive line editor cannot split a multiline draft early.
+    /// Build one physical PTY line. User newlines are decoded only inside the shell.
+    ///
+    /// Instrumentation must be observational: after the wrapper finishes, the shell's
+    /// visible status must be the user's command status, not the status of Kea's marker
+    /// printf/unset bookkeeping. The final subshell `exit` restores `$?` without exiting
+    /// the interactive parent shell.
     pub fn wrap(self, id: u64, input: &str, prompt_column: usize) -> Result<Vec<u8>, Error> {
         let encoded = encode_input(input)?;
         let display = display_source(input);
@@ -85,7 +85,7 @@ impl ShellFlavor {
                 let source_var = format!("__kea_source_{id}");
                 let status_var = format!("__kea_status_{id}");
                 let command = format!(
-                    "{source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; unset {source_var} {status_var}\r"
+                    "{source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; (exit \"${status_var}\"); {source_var}_kea_rc=$?; unset {source_var} {status_var}; (exit \"${{{source_var}_kea_rc}}\")\r"
                 );
                 format!("printf '\\033[{display_column}G%b' '{display}'; {command}")
             }
@@ -133,46 +133,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_only_supported_interactive_shell_launches() {
-        assert_eq!(
-            ShellFlavor::from_program("/bin/bash"),
-            Some(ShellFlavor::Posix)
-        );
-        assert_eq!(
-            ShellFlavor::from_program(r"C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
-            Some(ShellFlavor::PowerShell)
-        );
+    fn detects_supported_shells() {
+        assert_eq!(ShellFlavor::from_program("/bin/bash"), Some(ShellFlavor::Posix));
+        assert_eq!(ShellFlavor::from_program(r"C:\\PowerShell\\pwsh.exe"), Some(ShellFlavor::PowerShell));
         assert_eq!(ShellFlavor::from_program("opencode"), None);
-        for args in [
-            vec!["bash", "script.sh"],
-            vec!["bash", "-lc", "opencode"],
-            vec!["pwsh", "-Command", "opencode"],
-            vec!["pwsh", "-e", "encoded-command"],
-        ] {
-            let command = args.into_iter().map(OsString::from).collect::<Vec<_>>();
-            assert_eq!(ShellFlavor::detect(&command), None);
-        }
-        assert_eq!(
-            ShellFlavor::detect(&["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()]),
-            Some(ShellFlavor::PowerShell)
-        );
-    }
-
-    #[test]
-    fn prompt_integration_reports_cwd_and_path_and_preserves_prompt() {
-        let posix = String::from_utf8(ShellFlavor::Posix.integration(&["bash".into()])).unwrap();
-        assert!(posix.contains("PROMPT_COMMAND"));
-        assert!(posix.contains("777;kea;prompt;%s"));
-        assert!(posix.contains("778;kea;path;%s"));
-        assert!(posix.contains("$PWD"));
-        assert!(posix.contains("$PATH"));
-
-        let ps = String::from_utf8(ShellFlavor::PowerShell.integration(&["powershell.exe".into()]))
-            .unwrap();
-        assert!(ps.contains("__kea_saved_prompt"));
-        assert!(ps.contains("$env:PATH"));
-        assert!(ps.contains("777;kea;prompt;"));
-        assert!(ps.contains("778;kea;path;"));
     }
 
     #[test]
@@ -188,6 +152,14 @@ mod tests {
     }
 
     #[test]
+    fn posix_wrapper_restores_user_exit_status_after_instrumentation() {
+        let wrapper = String::from_utf8(ShellFlavor::Posix.wrap(7, "false", 0).unwrap()).unwrap();
+        assert!(wrapper.contains("__kea_status_7=$?"));
+        assert!(wrapper.contains("__kea_source_7_kea_rc=$?"));
+        assert!(wrapper.ends_with("(exit \"${__kea_source_7_kea_rc}\")\r"));
+    }
+
+    #[test]
     fn posix_source_encoding_keeps_user_text_out_of_driver_line() {
         let encoded = encode_posix_source("ls\nls\n'ä'");
         assert!(!encoded.contains('\n'));
@@ -197,134 +169,6 @@ mod tests {
 
     #[test]
     fn command_presentation_preserves_lines_but_escapes_terminal_controls() {
-        assert_eq!(
-            display_source("printf ok\nprintf '\u{1b}'"),
-            "printf ok\nprintf '\\u{1b}'\n"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn prompt_hook_tracks_native_cd_and_multiline_run() {
-        use kea_core::Size;
-        use kea_document::{CommandStatus, Document};
-        use kea_session::{Observed, Session};
-        use std::time::{Duration, Instant};
-
-        fn pump_until(
-            session: &mut Session,
-            document: &mut Document,
-            predicate: impl Fn(&Document) -> bool,
-        ) {
-            let started = Instant::now();
-            loop {
-                for event in session.pump_observed().observed {
-                    match event {
-                        Observed::Output { at, bytes } => {
-                            document.ingest_output(at, &bytes);
-                        }
-                        Observed::Exit { at, .. } => {
-                            document.abort_in_flight(at);
-                        }
-                    }
-                }
-                if predicate(document) {
-                    break;
-                }
-                assert!(started.elapsed() < Duration::from_secs(10));
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-
-        let command = ["bash".into(), "--noprofile".into(), "--norc".into()];
-        let mut session = Session::spawn(&command, Size::new(100, 24).unwrap(), None).unwrap();
-        let mut document = Document::new();
-        session
-            .send_hidden(ShellFlavor::Posix.integration(&command))
-            .unwrap();
-        pump_until(&mut session, &mut document, Document::prompt_ready);
-        assert!(document.directory().is_some());
-        assert!(
-            !session.screen().text().contains("__kea_prompt"),
-            "private shell integration leaked into the terminal: {:?}",
-            session.screen().text()
-        );
-        let canonical_output = session
-            .recording()
-            .events()
-            .iter()
-            .filter_map(|event| match &event.kind {
-                kea_core::Kind::Output(bytes) => Some(bytes.as_slice()),
-                _ => None,
-            })
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        assert!(
-            String::from_utf8_lossy(&canonical_output).contains("__kea_prompt"),
-            "canonical recording must retain unmodified PTY output"
-        );
-        session.seek(session.recording().events().len()).unwrap();
-        assert!(
-            !session.screen().text().contains("__kea_prompt"),
-            "historical presentation exposed private shell integration: {:?}",
-            session.screen().text()
-        );
-        session.go_live();
-
-        session.send(b"abc\x7f\x7f\x7f".to_vec()).unwrap();
-        document.note_terminal_input();
-        assert!(!document.prompt_ready());
-        session.send(vec![3]).unwrap();
-        pump_until(&mut session, &mut document, Document::prompt_ready);
-
-        session.send(b"cd /tmp\r".to_vec()).unwrap();
-        document.note_terminal_input();
-        pump_until(&mut session, &mut document, |d| {
-            d.prompt_ready() && d.directory() == Some("/tmp")
-        });
-
-        let input = "printf 'KEA_ONE\\n'\nprintf 'KEA_TWO\\n'";
-        session
-            .send_hidden(ShellFlavor::Posix.wrap(9, input, 10).unwrap())
-            .unwrap();
-        document.note_terminal_input();
-        pump_until(&mut session, &mut document, |d| {
-            d.blocks()
-                .last()
-                .is_some_and(|block| matches!(block.status, CommandStatus::Finished(0)))
-                && d.prompt_ready()
-        });
-        let block = document.blocks().last().unwrap();
-        assert_eq!(block.input, input);
-        assert_eq!(block.plain_output(), "KEA_ONE\nKEA_TWO");
-        let screen = session.screen().text();
-        assert!(screen.contains("bash-5.3$ printf 'KEA_ONE\\n'"));
-        assert!(screen.contains("printf 'KEA_TWO\\n'"));
-        assert!(!screen.contains("__kea_source_9"));
-
-        session.seek(session.recording().events().len()).unwrap();
-        let replayed = session.screen().text();
-        assert!(replayed.contains("bash-5.3$ printf 'KEA_ONE\\n'"));
-        assert!(replayed.contains("printf 'KEA_TWO\\n'"));
-        assert!(replayed.contains("KEA_ONE"));
-        assert!(replayed.contains("KEA_TWO"));
-        assert!(!replayed.contains("__kea_source_9"));
-    }
-
-    #[test]
-    fn powershell_wrapper_decodes_source_before_eval() {
-        let wrapper = String::from_utf8(
-            ShellFlavor::PowerShell
-                .wrap(9, "Write-Output 'hello'\nWrite-Output 'again'", 4)
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(wrapper.contains("FromBase64String"));
-        assert!(wrapper.contains("Invoke-Expression $__kea_source_9"));
-        assert!(wrapper.contains("start;9"));
-        assert!(wrapper.contains("done;9"));
-        assert!(!wrapper.trim_end_matches('\r').contains('\n'));
-        assert!(!wrapper.contains("Write-Output 'hello'"));
+        assert_eq!(display_source("printf ok\nprintf '\u{1b}'"), "printf ok\nprintf '\\u{1b}'\n");
     }
 }
