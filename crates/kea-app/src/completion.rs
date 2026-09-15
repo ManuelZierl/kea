@@ -105,20 +105,7 @@ pub fn suggest(
 fn is_complex_shell_character(ch: char) -> bool {
     matches!(
         ch,
-        '\'' | '"'
-            | '`'
-            | '$'
-            | '*'
-            | '?'
-            | '['
-            | ']'
-            | '('
-            | ')'
-            | ';'
-            | '|'
-            | '&'
-            | '<'
-            | '>'
+        '\'' | '"' | '`' | '$' | '*' | '?' | '[' | ']' | '(' | ')' | ';' | '|' | '&' | '<' | '>'
     )
 }
 
@@ -215,9 +202,8 @@ fn complete_paths(
         return;
     }
     let separator = token.rfind(|ch| ch == '/' || (cfg!(windows) && ch == '\\'));
-    let (parent, leaf) = separator.map_or(("", token), |index| {
-        (&token[..=index], &token[index + 1..])
-    });
+    let (parent, leaf) =
+        separator.map_or(("", token), |index| (&token[..=index], &token[index + 1..]));
     let path = if parent.starts_with("~/") {
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map(PathBuf::from)
@@ -257,9 +243,7 @@ fn complete_paths(
         let replacement = if value.starts_with("~/") {
             match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
                 Some(home) => shell_quote(
-                    &PathBuf::from(home)
-                        .join(&value[2..])
-                        .to_string_lossy(),
+                    &PathBuf::from(home).join(&value[2..]).to_string_lossy(),
                     shell,
                 ),
                 None => continue,
@@ -281,9 +265,10 @@ fn complete_paths(
 }
 
 fn shell_quote(value: &str, shell: Option<ShellFlavor>) -> String {
-    if value.chars().all(|ch| {
-        ch.is_alphanumeric() || "._-/:~".contains(ch) || (cfg!(windows) && ch == '\\')
-    }) {
+    if value
+        .chars()
+        .all(|ch| ch.is_alphanumeric() || "._-/:~".contains(ch) || (cfg!(windows) && ch == '\\'))
+    {
         return value.to_owned();
     }
     match shell {

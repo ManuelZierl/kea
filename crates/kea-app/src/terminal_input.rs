@@ -91,13 +91,18 @@ impl EntityInputHandler for KeaView {
         &mut self,
         _: Range<usize>,
         bounds: Bounds<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let (row, col) = self.session.screen().cursor.unwrap_or((0, 0));
+        let metrics = terminal_font_metrics(window, cx);
         Some(Bounds::new(
-            bounds.origin + point(px(col as f32 * CELL_WIDTH), px(row as f32 * LINE_HEIGHT)),
-            size(px(CELL_WIDTH), px(LINE_HEIGHT)),
+            bounds.origin
+                + point(
+                    metrics.cell_width * col as f32,
+                    metrics.line_height * row as f32,
+                ),
+            size(metrics.cell_width, metrics.line_height),
         ))
     }
     fn character_index_for_point(

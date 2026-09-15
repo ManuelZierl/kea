@@ -380,10 +380,9 @@ impl Keymap {
 
         for action in Action::ALL {
             let contexts: &[&str] = match action {
-                Action::RunShell
-                | Action::SendApplication
-                | Action::Newline
-                | Action::Complete => &["KeaCommand > Input"],
+                Action::RunShell | Action::SendApplication | Action::Newline | Action::Complete => {
+                    &["KeaCommand > Input"]
+                }
                 _ => &["Kea > Input", "KeaChrome"],
             };
             for shortcut in &self.bindings[&action] {
@@ -467,11 +466,9 @@ mod tests {
 
     #[test]
     fn terminal_like_enter_policy_is_configurable() {
-        let map = Keymap::parse_overrides(
-            Platform::Other,
-            "run_shell = enter\nnewline = shift-enter",
-        )
-        .unwrap();
+        let map =
+            Keymap::parse_overrides(Platform::Other, "run_shell = enter\nnewline = shift-enter")
+                .unwrap();
         assert_eq!(map.action_for(&key("enter")), Some(Action::RunShell));
         assert_eq!(map.action_for(&key("shift-enter")), Some(Action::Newline));
     }

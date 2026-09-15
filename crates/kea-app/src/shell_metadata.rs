@@ -73,7 +73,9 @@ fn parse(raw: &[u8]) -> Option<String> {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn suffix_prefix_len(bytes: &[u8], prefix: &[u8]) -> usize {

@@ -22,8 +22,16 @@ use kea_session::{Observed, Session};
 use shell_metadata::ShellMetadata;
 use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
 
-const CELL_WIDTH: f32 = 9.0;
-const LINE_HEIGHT: f32 = 20.0;
+const TERMINAL_LINE_HEIGHT: f32 = 1.2;
+const FALLBACK_CELL_WIDTH_EM: f32 = 0.6;
+
+#[derive(Clone)]
+struct TerminalFontMetrics {
+    font: Font,
+    font_size: Pixels,
+    cell_width: Pixels,
+    line_height: Pixels,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InitialFocus {
@@ -397,7 +405,10 @@ impl KeaView {
             return;
         }
         if !self.session.input_allowed() {
-            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
             return;
         }
         let Some(shell) = self.shell else {
@@ -451,7 +462,10 @@ impl KeaView {
             return;
         }
         if !self.session.input_allowed() {
-            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
             return;
         }
         let result = input::paste(&text, self.session.bracketed_paste()).and_then(|mut bytes| {
@@ -685,6 +699,9 @@ impl Render for KeaView {
             position as f32 / duration as f32
         };
         let screen = self.session.screen();
+        let terminal_metrics = terminal_font_metrics(window, cx);
+        let layout_metrics = terminal_metrics.clone();
+        let paint_metrics = terminal_metrics;
         let weak = cx.entity().downgrade();
         let terminal = div()
             .id("terminal-surface")
@@ -707,6 +724,14 @@ impl Render for KeaView {
             .child(
                 canvas(
                     move |bounds, window, cx| {
+                        let size = kea_core::Size::new(
+                            (f32::from(bounds.size.width) / f32::from(layout_metrics.cell_width))
+                                .floor()
+                                .clamp(2., 512.) as u16,
+                            (f32::from(bounds.size.height) / f32::from(layout_metrics.line_height))
+                                .floor()
+                                .clamp(1., 256.) as u16,
+                        );
                         let _ = weak.update(cx, |this, cx| {
                             let resized = this.terminal_bounds != Some(bounds);
                             this.terminal_bounds = Some(bounds);
@@ -714,16 +739,7 @@ impl Render for KeaView {
                                 let weak = cx.entity().downgrade();
                                 window.defer(cx, move |_, cx| {
                                     let _ = weak.update(cx, |this, cx| {
-                                        if let Ok(size) = kea_core::Size::new(
-                                            (f32::from(bounds.size.width) / CELL_WIDTH)
-                                                .floor()
-                                                .clamp(2., 512.)
-                                                as u16,
-                                            (f32::from(bounds.size.height) / LINE_HEIGHT)
-                                                .floor()
-                                                .clamp(1., 256.)
-                                                as u16,
-                                        ) {
+                                        if let Ok(size) = size {
                                             let result = this.session.resize(size);
                                             this.result(result, cx);
                                         }
@@ -741,7 +757,7 @@ impl Render for KeaView {
                                 ElementInputHandler::new(bounds, entity.clone()),
                                 cx,
                             );
-                            paint_screen(&screen, bounds, window, cx);
+                            paint_screen(&screen, bounds, &paint_metrics, window, cx);
                         }
                     },
                 )
@@ -802,7 +818,11 @@ impl Render for KeaView {
                 }
             });
 
-        let directory = match (self.shell, self.document.directory(), self.document.prompt_ready()) {
+        let directory = match (
+            self.shell,
+            self.document.directory(),
+            self.document.prompt_ready(),
+        ) {
             (None, _, _) => "Shell directory: unavailable for this program".into(),
             (_, Some(path), true) => format!("Current shell directory: {path}"),
             (_, Some(path), false) => format!("Shell directory (last reported): {path}"),
@@ -835,14 +855,22 @@ impl Render for KeaView {
                     .child(self.control("next", "Next", Action::NextEvent, cx))
                     .child(self.control(
                         "play",
-                        if self.session.is_playing() { "Pause" } else { "Play" },
+                        if self.session.is_playing() {
+                            "Pause"
+                        } else {
+                            "Play"
+                        },
                         Action::PlayPause,
                         cx,
                     ))
                     .child(self.control("live", "Live", Action::GoLive, cx))
                     .child(self.control(
                         "blocks",
-                        if self.show_blocks { "Hide blocks" } else { "Show blocks" },
+                        if self.show_blocks {
+                            "Hide blocks"
+                        } else {
+                            "Show blocks"
+                        },
                         Action::ToggleBlocks,
                         cx,
                     ))
@@ -883,10 +911,7 @@ impl Render for KeaView {
                             .items_center()
                             .child(self.control(
                                 "run-draft",
-                                format!(
-                                    "Run in shell · {}",
-                                    self.keymap.label(Action::RunShell)
-                                ),
+                                format!("Run in shell · {}", self.keymap.label(Action::RunShell)),
                                 Action::RunShell,
                                 cx,
                             ))
@@ -1004,25 +1029,59 @@ fn apply_appearance(settings: &Settings, window: &mut Window, cx: &mut App) {
     }
 }
 
-fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+fn terminal_font_metrics(window: &mut Window, cx: &mut App) -> TerminalFontMetrics {
+    let (font_family, font_size) = {
+        let theme = cx.theme();
+        (theme.mono_font_family.clone(), theme.mono_font_size)
+    };
+    let mut terminal_font = font(font_family);
+    // Terminal cells must not change width because a programming font turns
+    // character sequences into contextual ligatures.
+    terminal_font.features = FontFeatures::disable_ligatures();
+
+    let text_system = window.text_system();
+    let font_id = text_system.resolve_font(&terminal_font);
+    let cell_width = text_system
+        .advance(font_id, font_size, 'M')
+        .map(|advance| advance.width)
+        .unwrap_or_else(|_| px(f32::from(font_size) * FALLBACK_CELL_WIDTH_EM));
+    let line_height = px(f32::from(font_size) * TERMINAL_LINE_HEIGHT);
+
+    TerminalFontMetrics {
+        font: terminal_font,
+        font_size,
+        cell_width,
+        line_height,
+    }
+}
+
+fn paint_screen(
+    screen: &Screen,
+    bounds: Bounds<Pixels>,
+    metrics: &TerminalFontMetrics,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let cell_width = f32::from(metrics.cell_width);
+    let line_height = f32::from(metrics.line_height);
     for (index, cell) in screen.cells.iter().enumerate() {
         let row = index / usize::from(screen.size.columns);
         let column = index % usize::from(screen.size.columns);
         let origin =
-            bounds.origin + point(px(column as f32 * CELL_WIDTH), px(row as f32 * LINE_HEIGHT));
+            bounds.origin + point(px(column as f32 * cell_width), px(row as f32 * line_height));
         if origin.x >= bounds.right() || origin.y >= bounds.bottom() {
             continue;
         }
         if cell.background != 0x11151a {
             window.paint_quad(fill(
-                Bounds::new(origin, size(px(CELL_WIDTH), px(LINE_HEIGHT))),
+                Bounds::new(origin, size(metrics.cell_width, metrics.line_height)),
                 rgb(cell.background),
             ));
         }
         if cell.spacer || cell.text == " " {
             continue;
         }
-        let mut cell_font = font("monospace");
+        let mut cell_font = metrics.font.clone();
         if cell.bold {
             cell_font.weight = FontWeight::BOLD;
         }
@@ -1034,20 +1093,26 @@ fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx
             underline: None,
             strikethrough: None,
         };
-        let shaped =
-            window
-                .text_system()
-                .shape_line(cell.text.clone().into(), px(14.), &[run], None);
-        let _ = shaped.paint(origin, px(LINE_HEIGHT), window, cx);
+        let shaped = window.text_system().shape_line(
+            cell.text.clone().into(),
+            metrics.font_size,
+            &[run],
+            Some(px(if cell.wide {
+                cell_width * 2.
+            } else {
+                cell_width
+            })),
+        );
+        let _ = shaped.paint(origin, metrics.line_height, window, cx);
         if cell.underline {
             window.paint_quad(fill(
                 Bounds::new(
-                    origin + point(px(0.), px(LINE_HEIGHT - 2.)),
+                    origin + point(px(0.), px(line_height - 2.)),
                     size(
                         px(if cell.wide {
-                            CELL_WIDTH * 2.
+                            cell_width * 2.
                         } else {
-                            CELL_WIDTH
+                            cell_width
                         }),
                         px(1.),
                     ),
@@ -1059,12 +1124,12 @@ fn paint_screen(screen: &Screen, bounds: Bounds<Pixels>, window: &mut Window, cx
     if let Some((row, column)) = screen.cursor {
         let origin = bounds.origin
             + point(
-                px(column as f32 * CELL_WIDTH),
-                px(row as f32 * LINE_HEIGHT + LINE_HEIGHT - 2.),
+                px(column as f32 * cell_width),
+                px(row as f32 * line_height + line_height - 2.),
             );
         if origin.x < bounds.right() && origin.y < bounds.bottom() {
             window.paint_quad(fill(
-                Bounds::new(origin, size(px(CELL_WIDTH), px(2.))),
+                Bounds::new(origin, size(metrics.cell_width, px(2.))),
                 rgb(0x61afef),
             ));
         }
@@ -1091,7 +1156,9 @@ fn show_message(message: String) {
             }
         })
         .detach();
-        let _ = cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Message(message)));
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new(|_| Message(message))
+        });
         cx.activate(true);
     });
 }
