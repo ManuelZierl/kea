@@ -105,6 +105,7 @@ pub struct Keymap {
     bindings: HashMap<Action, Vec<Shortcut>>,
     previous_draft: Vec<Shortcut>,
     next_draft: Vec<Shortcut>,
+    focus_terminal: Vec<Shortcut>,
 }
 
 impl Keymap {
@@ -134,6 +135,7 @@ impl Keymap {
             bindings,
             previous_draft: vec![Shortcut::parse("ctrl-up").unwrap()],
             next_draft: vec![Shortcut::parse("ctrl-down").unwrap()],
+            focus_terminal: vec![Shortcut::parse(&format!("{modifier}-shift-l")).unwrap()],
         }
     }
 
@@ -146,6 +148,7 @@ impl Keymap {
             match name.trim().to_ascii_lowercase().replace('-', "_").as_str() {
                 "previous_draft" => keymap.previous_draft = values,
                 "next_draft" => keymap.next_draft = values,
+                "focus_terminal" => keymap.focus_terminal = values,
                 _ => {
                     let action=Action::parse(name).with_context(||format!("unknown action `{}`",name.trim()))?;
                     keymap.bindings.insert(action,values);
@@ -161,7 +164,11 @@ impl Keymap {
                 }
             }
         }
-        for (name, shortcuts) in [("previous_draft", &keymap.previous_draft), ("next_draft", &keymap.next_draft)] {
+        for (name, shortcuts) in [
+            ("previous_draft", &keymap.previous_draft),
+            ("next_draft", &keymap.next_draft),
+            ("focus_terminal", &keymap.focus_terminal),
+        ] {
             for shortcut in shortcuts {
                 if let Some(previous)=seen.insert(shortcut.clone(),name.into()) {
                     anyhow::bail!("{} is assigned to both {} and {}",shortcut.display(),previous,name);
@@ -179,8 +186,19 @@ impl Keymap {
         cx.bind_keys(self.gpui_bindings());
         let previous = self.previous_draft.clone();
         let next = self.next_draft.clone();
+        let focus_terminal = self.focus_terminal.clone();
         let subscription = cx.intercept_keystrokes(move |event, window, cx| {
+            // When a real terminal/TUI owns input, remember that exact focus handle but
+            // do not reserve any extra child key. The explicit focus_terminal shortcut
+            // acts only when the Kea command editor owns focus.
+            crate::command_editor::remember_external_focus(window, cx);
             let shortcut = Shortcut::from_keystroke(&event.keystroke);
+            if focus_terminal.contains(&shortcut)
+                && crate::command_editor::focus_last_external(window, cx)
+            {
+                cx.stop_propagation();
+                return;
+            }
             let direction = if previous.contains(&shortcut) {
                 Some(crate::command_editor::HistoryDirection::Previous)
             } else if next.contains(&shortcut) {
@@ -222,16 +240,16 @@ pub(crate) fn config_path()->Option<PathBuf>{
 
 #[cfg(test)] mod tests {
     use super::*; fn key(spec:&str)->Keystroke{Keystroke::parse(spec).unwrap()}
-    #[test] fn defaults_are_editor_native_and_submission_actions_are_distinct(){let map=Keymap::defaults_for(Platform::Other);assert_eq!(map.action_for(&key("ctrl-enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("ctrl-shift-enter")),Some(Action::SendApplication));assert_eq!(map.action_for(&key("tab")),Some(Action::Complete));assert_eq!(map.previous_draft,vec![Shortcut::parse("ctrl-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("ctrl-down").unwrap()]);assert_eq!(map.action_for(&key("enter")),None);assert_eq!(map.action_for(&key("shift-enter")),None);}
+    #[test] fn defaults_are_editor_native_and_submission_actions_are_distinct(){let map=Keymap::defaults_for(Platform::Other);assert_eq!(map.action_for(&key("ctrl-enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("ctrl-shift-enter")),Some(Action::SendApplication));assert_eq!(map.action_for(&key("tab")),Some(Action::Complete));assert_eq!(map.previous_draft,vec![Shortcut::parse("ctrl-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("ctrl-down").unwrap()]);assert_eq!(map.focus_terminal,vec![Shortcut::parse("ctrl-shift-l").unwrap()]);assert_eq!(map.action_for(&key("enter")),None);assert_eq!(map.action_for(&key("shift-enter")),None);}
     #[test] fn terminal_like_enter_policy_is_configurable(){let map=Keymap::parse_overrides(Platform::Other,"run_shell = enter\nnewline = shift-enter").unwrap();assert_eq!(map.action_for(&key("enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("shift-enter")),Some(Action::Newline));}
     #[test] fn platform_defaults_separate_copy_from_interrupt(){let linux=Keymap::defaults_for(Platform::Other);let mac=Keymap::defaults_for(Platform::Mac);assert_eq!(linux.action_for(&key("ctrl-c")),Some(Action::Copy));assert_eq!(linux.action_for(&key("ctrl-shift-c")),Some(Action::Interrupt));assert_eq!(mac.action_for(&key("cmd-c")),Some(Action::Copy));assert_eq!(mac.action_for(&key("ctrl-c")),Some(Action::Interrupt));}
-    #[test] fn configuration_remaps_unbinds_and_rejects_ambiguity(){let map=Keymap::parse_overrides(Platform::Other,"copy = ctrl-shift-c\ninterrupt = ctrl-c\nrun_shell = alt-enter\nprevious_draft = alt-up\nnext_draft = alt-down\nundo = none").unwrap();assert_eq!(map.action_for(&key("ctrl-c")),Some(Action::Interrupt));assert_eq!(map.action_for(&key("ctrl-shift-c")),Some(Action::Copy));assert_eq!(map.action_for(&key("alt-enter")),Some(Action::RunShell));assert_eq!(map.previous_draft,vec![Shortcut::parse("alt-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("alt-down").unwrap()]);assert_eq!(map.action_for(&key("ctrl-z")),None);assert!(Keymap::parse_overrides(Platform::Other,"copy = ctrl-up\nprevious_draft = ctrl-up").is_err());}
+    #[test] fn configuration_remaps_unbinds_and_rejects_ambiguity(){let map=Keymap::parse_overrides(Platform::Other,"copy = ctrl-shift-c\ninterrupt = ctrl-c\nrun_shell = alt-enter\nprevious_draft = alt-up\nnext_draft = alt-down\nfocus_terminal = alt-l\nundo = none").unwrap();assert_eq!(map.action_for(&key("ctrl-c")),Some(Action::Interrupt));assert_eq!(map.action_for(&key("ctrl-shift-c")),Some(Action::Copy));assert_eq!(map.action_for(&key("alt-enter")),Some(Action::RunShell));assert_eq!(map.previous_draft,vec![Shortcut::parse("alt-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("alt-down").unwrap()]);assert_eq!(map.focus_terminal,vec![Shortcut::parse("alt-l").unwrap()]);assert_eq!(map.action_for(&key("ctrl-z")),None);assert!(Keymap::parse_overrides(Platform::Other,"copy = ctrl-up\nprevious_draft = ctrl-up").is_err());assert!(Keymap::parse_overrides(Platform::Other,"focus_terminal = ctrl-l").is_err());}
     #[test] fn live_terminal_has_only_the_explicit_composer_escape(){
         let map=Keymap::defaults_for(Platform::current()); let mut gpui_map=gpui::Keymap::new(vec![KeyBinding::new("tab",gpui_component::input::MoveDown,Some("Root"))]); gpui_map.add_bindings(map.gpui_bindings());
         let context=[gpui::KeyContext::parse("Root").unwrap(),gpui::KeyContext::parse("Kea").unwrap(),gpui::KeyContext::parse("KeaTerminal").unwrap()];
         let focus=if cfg!(target_os="macos"){"cmd-l"}else{"ctrl-l"};
         assert!(!gpui_map.bindings_for_input(&[key(focus)],&context).0.is_empty());
-        for spec in ["ctrl-c","ctrl-v","ctrl-z","ctrl-enter","ctrl-shift-enter","ctrl-shift-space","f6","f7","f8","f9","f10","tab","shift-tab"] { assert!(gpui_map.bindings_for_input(&[key(spec)],&context).0.is_empty(),"captured {spec}"); }
+        for spec in ["ctrl-c","ctrl-v","ctrl-z","ctrl-enter","ctrl-shift-enter","ctrl-shift-l","ctrl-shift-space","f6","f7","f8","f9","f10","tab","shift-tab"] { assert!(gpui_map.bindings_for_input(&[key(spec)],&context).0.is_empty(),"captured {spec}"); }
     }
-    #[test] fn focus_editor_escape_can_be_remapped_or_disabled(){let remap=Keymap::parse_overrides(Platform::Other,"focus_editor = alt-l").unwrap();assert_eq!(remap.action_for(&key("alt-l")),Some(Action::FocusEditor));let disabled=Keymap::parse_overrides(Platform::Other,"focus_editor = none").unwrap();assert_eq!(disabled.action_for(&key("ctrl-l")),None);}
+    #[test] fn focus_editor_escape_can_be_remapped_or_disabled(){let remap=Keymap::parse_overrides(Platform::Other,"focus_editor = alt-l\nfocus_terminal = alt-shift-l").unwrap();assert_eq!(remap.action_for(&key("alt-l")),Some(Action::FocusEditor));assert_eq!(remap.focus_terminal,vec![Shortcut::parse("alt-shift-l").unwrap()]);let disabled=Keymap::parse_overrides(Platform::Other,"focus_editor = none\nfocus_terminal = none").unwrap();assert_eq!(disabled.action_for(&key("ctrl-l")),None);assert!(disabled.focus_terminal.is_empty());}
 }
