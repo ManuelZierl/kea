@@ -73,8 +73,7 @@ key ctrl+a ctrl+c
 assert_clipboard scratch
 
 # Symmetric keyboard focus: composer -> terminal uses Ctrl+Shift+L, while terminal ->
-# composer remains Ctrl+L from the previous daily-driver change. The terminal shortcut
-# itself is not forwarded to the child.
+# composer remains Ctrl+L. The terminal shortcut itself is not forwarded to the child.
 key ctrl+shift+l
 xdotool type --clearmodifiers --delay 10 'x'
 python3 - <<'PY'
@@ -91,6 +90,27 @@ assert_clipboard $'message one\nmessage two'
 key ctrl+Down ctrl+a ctrl+c
 assert_clipboard scratch
 import -window "$window" smoke-artifacts/terminal-and-editor.png
+cleanup_app
+
+# A TUI that negotiates SGR drag mouse reporting gets press/motion/release instead of
+# Kea swallowing the click. Modified Enter becomes CSI-u only after negotiation.
+printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-compat-fixture.py smoke-artifacts/compat.bin >smoke-artifacts/compat.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/compat.log
+xdotool mousemove --window "$window" 220 160
+xdotool mousedown 1
+xdotool mousemove --window "$window" 260 170
+xdotool mouseup 1
+key shift+Return
+sleep .3
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/compat.bin').read_bytes()
+assert b'\x1b[<0;' in actual and b'M' in actual, actual
+assert b'\x1b[<32;' in actual, actual
+assert b'\x1b[<0;' in actual and b'm' in actual, actual
+assert b'\x1b[13;2u' in actual, actual
+PY
 cleanup_app
 
 # Users can explicitly choose the older terminal-after-submit policy.
@@ -124,7 +144,7 @@ put_clipboard $'printf "kea_doc_one ä\\n";\nprintf "kea_doc_two\\n"'
 key ctrl+v F10
 [[ -z "$(clipboard)" ]] || { echo 'Paste executed a command'; exit 1; }
 key ctrl+Return
-# Default post-submit focus is now the fresh composer, so no refocus click is needed.
+# Default post-submit focus is the fresh composer, so no refocus click is needed.
 found=''
 for _ in $(seq 1 60); do
   key F10
@@ -154,4 +174,4 @@ clipboard >smoke-artifacts/after-newline.txt
 [[ "$(grep -c '^exit ' smoke-artifacts/after-newline.txt)" -eq 1 ]]
 import -window "$window" smoke-artifacts/document.png
 cleanup_app
-echo 'Passed: composer-first submission, keyboard focus switching, draft recall, raw terminal keys, editing/undo/Unicode, read-only output and replay.'
+echo 'Passed: composer workflow, negotiated mouse + keyboard input, draft recall, raw terminal keys, editing/undo/Unicode, read-only output and replay.'
