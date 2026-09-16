@@ -6,6 +6,7 @@ pub mod keybindings;
 pub mod logo;
 mod logo_frames;
 pub mod playback;
+pub mod session_files;
 pub mod settings;
 pub mod shell;
 pub mod terminal_mouse;
