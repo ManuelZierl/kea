@@ -65,6 +65,14 @@ from pathlib import Path
 actual = Path('smoke-artifacts/keys.bin').read_bytes()
 assert actual.endswith(b'\x1b[200~message one\nmessage two\x1b[201~\r'), actual
 PY
+# The exact authored application submission is recoverable independently of blocks.
+# Keep an in-progress scratch draft while browsing backwards, then restore it forwards.
+key ctrl+l
+xdotool type --clearmodifiers --delay 10 'scratch'
+key ctrl+Up ctrl+a ctrl+c
+assert_clipboard $'message one\nmessage two'
+key ctrl+Down ctrl+a ctrl+c
+assert_clipboard scratch
 import -window "$window" smoke-artifacts/terminal-and-editor.png
 cleanup_app
 
@@ -114,4 +122,4 @@ clipboard >smoke-artifacts/after-newline.txt
 [[ "$(grep -c '^exit ' smoke-artifacts/after-newline.txt)" -eq 1 ]]
 import -window "$window" smoke-artifacts/document.png
 cleanup_app
-echo 'Passed: simultaneous terminal/editor, optional blocks, raw Space/Ctrl/Tab/F6-F10 routing, composer send, editing/undo/Unicode, read-only output and replay.'
+echo 'Passed: simultaneous terminal/editor, optional blocks, raw terminal keys, composer send + draft recall, editing/undo/Unicode, read-only output and replay.'
