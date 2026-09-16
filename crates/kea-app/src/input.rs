@@ -1,8 +1,13 @@
-//! Basic keyboard bridge, isolated from recording. Full keyboard/IME coverage
-//! is a separate compatibility milestone, not a claim of this bootstrap.
+//! Keyboard bridge isolated from recording. Classic terminal encoding remains the
+//! fallback; distinctions like modified Enter are emitted only after the child has
+//! negotiated an extended keyboard protocol through the terminal emulator.
 use gpui::Keystroke;
 
-pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
+pub fn encode(
+    key: &Keystroke,
+    application_cursor: bool,
+    extended_keyboard: bool,
+) -> Option<Vec<u8>> {
     let m = key.modifiers;
     if m.platform {
         return None;
@@ -81,12 +86,13 @@ pub fn encode(key: &Keystroke, application_cursor: bool) -> Option<Vec<u8>> {
         );
     }
     let bytes = match key.key.as_str() {
-        // Control keys have explicit terminal semantics, even when GPUI supplies
-        // no completed text character. Do not run them through the IME text gate.
-        "enter" | "return" if modifier != 1 => format!("\x1b[13;{modifier}u").into_bytes(),
+        // Classic terminal protocols collapse modified Enter into CR. Only advertise
+        // the CSI-u distinction after the running application negotiated it.
+        "enter" | "return" if modifier != 1 && extended_keyboard => {
+            format!("\x1b[13;{modifier}u").into_bytes()
+        }
         "enter" | "return" => vec![b'\r'],
         "escape" => vec![27],
-        // Windows can report a named Space without a completed key_char.
         "space" if !m.control => {
             if m.alt {
                 vec![27, b' ']
@@ -159,52 +165,50 @@ pub fn paste(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
 mod tests {
     use super::*;
     #[test]
-    fn enter_shift_enter_and_interrupt_are_distinct() {
+    fn modified_enter_respects_keyboard_protocol_negotiation() {
+        let enter = Keystroke::parse("enter").unwrap();
+        let shifted = Keystroke::parse("shift-enter").unwrap();
+        assert_eq!(encode(&enter, false, false).unwrap(), b"\r");
+        assert_eq!(encode(&shifted, false, false).unwrap(), b"\r");
+        assert_eq!(encode(&shifted, false, true).unwrap(), b"\x1b[13;2u");
         assert_eq!(
-            encode(&Keystroke::parse("enter").unwrap(), false).unwrap(),
-            b"\r"
-        );
-        assert_eq!(
-            encode(&Keystroke::parse("shift-enter").unwrap(), false).unwrap(),
-            b"\x1b[13;2u"
-        );
-        assert_eq!(
-            encode(&Keystroke::parse("ctrl-c").unwrap(), false).unwrap(),
+            encode(&Keystroke::parse("ctrl-c").unwrap(), false, false).unwrap(),
             vec![3]
         );
         assert_eq!(
-            encode(&Keystroke::parse("tab").unwrap(), false).unwrap(),
+            encode(&Keystroke::parse("tab").unwrap(), false, false).unwrap(),
             b"\t"
         );
         assert_eq!(
-            encode(&Keystroke::parse("shift-tab").unwrap(), false).unwrap(),
+            encode(&Keystroke::parse("shift-tab").unwrap(), false, false).unwrap(),
             b"\x1b[Z"
         );
     }
     #[test]
     fn text_requires_a_completed_character_but_keeps_unicode() {
-        assert!(encode(&Keystroke::parse("a").unwrap(), false).is_none());
+        assert!(encode(&Keystroke::parse("a").unwrap(), false, false).is_none());
         assert_eq!(
             encode(
                 &Keystroke::parse("space").unwrap().with_simulated_ime(),
-                false
+                false,
+                false,
             )
             .unwrap(),
             b" "
         );
         assert_eq!(
-            encode(&Keystroke::parse("a->ä").unwrap(), false).unwrap(),
+            encode(&Keystroke::parse("a->ä").unwrap(), false, false).unwrap(),
             "ä".as_bytes()
         );
     }
     #[test]
     fn application_cursor_and_modified_arrows() {
         assert_eq!(
-            encode(&Keystroke::parse("up").unwrap(), true).unwrap(),
+            encode(&Keystroke::parse("up").unwrap(), true, false).unwrap(),
             b"\x1bOA"
         );
         assert_eq!(
-            encode(&Keystroke::parse("ctrl-left").unwrap(), true).unwrap(),
+            encode(&Keystroke::parse("ctrl-left").unwrap(), true, false).unwrap(),
             b"\x1b[1;5D"
         );
     }
@@ -225,12 +229,17 @@ mod passthrough_tests {
     fn space_control_and_function_keys_are_encoded() {
         for spec in ["space", "shift-space"] {
             assert_eq!(
-                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                encode(&Keystroke::parse(spec).unwrap(), false, false).unwrap(),
                 b" "
             );
         }
         for number in 1..=24 {
-            assert!(encode(&Keystroke::parse(&format!("f{number}")).unwrap(), false).is_some());
+            assert!(encode(
+                &Keystroke::parse(&format!("f{number}")).unwrap(),
+                false,
+                false,
+            )
+            .is_some());
         }
         for (spec, expected) in [
             ("ctrl-c", 3),
@@ -240,7 +249,7 @@ mod passthrough_tests {
             ("ctrl-space", 0),
         ] {
             assert_eq!(
-                encode(&Keystroke::parse(spec).unwrap(), false).unwrap(),
+                encode(&Keystroke::parse(spec).unwrap(), false, false).unwrap(),
                 vec![expected]
             );
         }
