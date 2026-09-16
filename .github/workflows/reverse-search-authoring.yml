@@ -1,0 +1,36 @@
+name: Reverse search authoring diagnostics
+on:
+  push:
+    branches: [feat/native-reverse-search]
+permissions:
+  contents: read
+jobs:
+  authoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Package source and formatter for branch validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kea-authoring/toolchain/bin /tmp/kea-authoring/toolchain/lib
+          tar --exclude=.git -czf /tmp/kea-authoring/source.tar.gz .
+          formatter="$(rustup which rustfmt)"
+          cp "$formatter" /tmp/kea-authoring/toolchain/bin/rustfmt
+          ldd "$formatter" > /tmp/kea-authoring/formatter-libraries.txt
+          while read -r library; do
+            case "$library" in
+              *rustup*|*rustlib*) cp -L "$library" /tmp/kea-authoring/toolchain/lib/ ;;
+            esac
+          done < <(ldd "$formatter" | awk '/=> \// {print $3}')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kea-reverse-search-authoring
+          path: /tmp/kea-authoring/
+          retention-days: 1
