@@ -6,6 +6,20 @@ pub enum WheelDirection {
     Down,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PointerButton {
+    Left,
+    Middle,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PointerEvent {
+    Press,
+    Release,
+    Motion,
+}
+
 pub fn accumulate_wheel_delta(delta: f32, remainder: &mut f32, maximum: i32) -> i32 {
     if !delta.is_finite() || !remainder.is_finite() {
         *remainder = 0.0;
@@ -36,11 +50,62 @@ pub fn encode_wheel(
     if control {
         button += 16;
     }
+    encode(encoding, button, point, false)
+}
+
+pub fn encode_pointer(
+    encoding: MouseEncoding,
+    event: PointerEvent,
+    button: Option<PointerButton>,
+    point: TerminalPoint,
+    shift: bool,
+    alt: bool,
+    control: bool,
+) -> Result<Vec<u8>, &'static str> {
+    let base = match button {
+        Some(PointerButton::Left) => 0,
+        Some(PointerButton::Middle) => 1,
+        Some(PointerButton::Right) => 2,
+        None => 3,
+    };
+    let mut code = match event {
+        PointerEvent::Press => base,
+        PointerEvent::Release if encoding == MouseEncoding::Sgr => base,
+        PointerEvent::Release => 3,
+        PointerEvent::Motion => base + 32,
+    };
+    if shift {
+        code += 4;
+    }
+    if alt {
+        code += 8;
+    }
+    if control {
+        code += 16;
+    }
+    encode(
+        encoding,
+        code,
+        point,
+        event == PointerEvent::Release && encoding == MouseEncoding::Sgr,
+    )
+}
+
+fn encode(
+    encoding: MouseEncoding,
+    button: usize,
+    point: TerminalPoint,
+    sgr_release: bool,
+) -> Result<Vec<u8>, &'static str> {
     let column = point.column.checked_add(1).ok_or("mouse column overflow")?;
     let row = point.row.checked_add(1).ok_or("mouse row overflow")?;
 
     match encoding {
-        MouseEncoding::Sgr => Ok(format!("\x1b[<{button};{column};{row}M").into_bytes()),
+        MouseEncoding::Sgr => Ok(format!(
+            "\x1b[<{button};{column};{row}{}",
+            if sgr_release { 'm' } else { 'M' }
+        )
+        .into_bytes()),
         MouseEncoding::Legacy => {
             let button = legacy_byte(button)?;
             let column = legacy_byte(column)?;
@@ -89,6 +154,68 @@ mod tests {
         assert_eq!(
             encode_wheel(MouseEncoding::Sgr, WheelDirection::Down, point, true, true).unwrap(),
             b"\x1b[<89;10;5M"
+        );
+    }
+
+    #[test]
+    fn sgr_pointer_preserves_button_release_and_motion() {
+        let point = TerminalPoint { row: 2, column: 4 };
+        assert_eq!(
+            encode_pointer(
+                MouseEncoding::Sgr,
+                PointerEvent::Press,
+                Some(PointerButton::Left),
+                point,
+                false,
+                false,
+                false,
+            )
+            .unwrap(),
+            b"\x1b[<0;5;3M"
+        );
+        assert_eq!(
+            encode_pointer(
+                MouseEncoding::Sgr,
+                PointerEvent::Motion,
+                Some(PointerButton::Left),
+                point,
+                false,
+                false,
+                false,
+            )
+            .unwrap(),
+            b"\x1b[<32;5;3M"
+        );
+        assert_eq!(
+            encode_pointer(
+                MouseEncoding::Sgr,
+                PointerEvent::Release,
+                Some(PointerButton::Left),
+                point,
+                false,
+                false,
+                false,
+            )
+            .unwrap(),
+            b"\x1b[<0;5;3m"
+        );
+    }
+
+    #[test]
+    fn classic_release_uses_button_three_and_modifiers() {
+        let point = TerminalPoint { row: 0, column: 0 };
+        assert_eq!(
+            encode_pointer(
+                MouseEncoding::Legacy,
+                PointerEvent::Release,
+                Some(PointerButton::Right),
+                point,
+                false,
+                true,
+                true,
+            )
+            .unwrap(),
+            vec![0x1b, b'[', b'M', 59, 33, 33]
         );
     }
 
