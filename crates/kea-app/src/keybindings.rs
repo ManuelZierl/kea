@@ -20,6 +20,7 @@ pub enum Action {
     SendApplication,
     Newline,
     Complete,
+    ReverseSearch,
     ToggleBlocks,
     PreviousEvent,
     NextEvent,
@@ -31,7 +32,7 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -46,6 +47,7 @@ impl Action {
         Self::SendApplication,
         Self::Newline,
         Self::Complete,
+        Self::ReverseSearch,
         Self::ToggleBlocks,
         Self::PreviousEvent,
         Self::NextEvent,
@@ -72,6 +74,7 @@ impl Action {
             Self::SendApplication => "send_application",
             Self::Newline => "newline",
             Self::Complete => "complete",
+            Self::ReverseSearch => "reverse_search",
             Self::ToggleBlocks => "toggle_blocks",
             Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event",
@@ -249,6 +252,7 @@ impl Keymap {
             (Action::RunShell, "ctrl-enter"),
             (Action::SendApplication, "ctrl-shift-enter"),
             (Action::Complete, "tab"),
+            (Action::ReverseSearch, "ctrl-r"),
             (Action::ToggleBlocks, "ctrl-shift-space"),
             (Action::PreviousEvent, "f6"),
             (Action::NextEvent, "f7"),
@@ -383,6 +387,11 @@ impl Keymap {
                 Action::RunShell | Action::SendApplication | Action::Newline | Action::Complete => {
                     &["KeaCommand > Input"]
                 }
+                Action::ReverseSearch => &[
+                    "KeaCommand > Input",
+                    "KeaReverseSearch",
+                    "KeaReverseSearch > Input",
+                ],
                 _ => &["Kea > Input", "KeaChrome"],
             };
             for shortcut in &self.bindings[&action] {
@@ -536,6 +545,7 @@ mod tests {
             "ctrl-enter",
             "ctrl-shift-enter",
             "ctrl-l",
+            "ctrl-r",
             "ctrl-shift-space",
             "ctrl-shift-q",
             "f6",
@@ -550,6 +560,35 @@ mod tests {
                 map.bindings_for_input(&[key(spec)], &context).0.is_empty(),
                 "captured {spec}"
             );
+        }
+    }
+
+    #[test]
+    fn reverse_search_is_configurable_and_never_captures_the_live_terminal() {
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(
+                Keymap::defaults_for(platform).action_for(&key("ctrl-r")),
+                Some(Action::ReverseSearch)
+            );
+            let remapped = Keymap::parse_overrides(platform, "reverse_search = alt-r").unwrap();
+            assert_eq!(remapped.action_for(&key("ctrl-r")), None);
+            assert_eq!(remapped.action_for(&key("alt-r")), Some(Action::ReverseSearch));
+            let map = gpui::Keymap::new(remapped.gpui_bindings());
+            let terminal = [
+                gpui::KeyContext::parse("Kea").unwrap(),
+                gpui::KeyContext::parse("KeaTerminal").unwrap(),
+            ];
+            for shortcut in ["ctrl-r", "alt-r"] {
+                assert!(map.bindings_for_input(&[key(shortcut)], &terminal).0.is_empty());
+            }
+            let compose = [
+                gpui::KeyContext::parse("Kea").unwrap(),
+                gpui::KeyContext::parse("KeaCommand").unwrap(),
+                gpui::KeyContext::parse("Input").unwrap(),
+            ];
+            assert!(!map.bindings_for_input(&[key("alt-r")], &compose).0.is_empty());
+            let unbound = Keymap::parse_overrides(platform, "reverse_search = none").unwrap();
+            assert_eq!(unbound.action_for(&key("ctrl-r")), None);
         }
     }
 

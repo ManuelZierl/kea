@@ -17,6 +17,8 @@ use kea_app::{
     command_editor, completion, input,
     keybindings::{Action, Invoke, Keymap},
     playback,
+    reverse_search::InputKind,
+    reverse_search_view::{self, ReverseSearchView},
     settings::{Appearance, Settings},
     shell::ShellFlavor,
     terminal_mouse::{self, WheelDirection},
@@ -90,6 +92,7 @@ kea --demo
 
 Terminal and editor are visible together; focus decides who receives keyboard input.
 Editor defaults: Enter = new line, Ctrl+Enter = Run in shell, Ctrl+Shift+Enter = send literal text to the current terminal app, Tab = complete.
+Ctrl+R in the compose editor opens history and saved memories; Enter inserts, never runs.
 All semantic shortcuts are configurable. Terminal-like editor behavior is possible with:
   run_shell = enter
   newline = shift-enter
@@ -100,6 +103,8 @@ Terminal Tab and other representable keys go to the child application.
 The primary terminal screen has bounded mouse-wheel scrollback and drag selection; whole-view copy remains explicit.
 
 KEA_KEYBINDINGS and KEA_SETTINGS select explicit configuration files.
+Input history stays session-only unless history_persistence = true. Explicit named saves persist.
+KEA_MEMORY_DIR selects an absolute input-memory directory. See docs/reverse-search.md.
 Recording is opt-in, bounded and unencrypted; commands/output can contain secrets.";
             #[cfg(not(windows))]
             println!("{help}");
@@ -177,6 +182,7 @@ Recording is opt-in, bounded and unencrypted; commands/output can contain secret
             gpui_component::init(cx);
             command_editor::register_languages();
             keymap.install(cx);
+            reverse_search_view::install(cx);
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -254,6 +260,7 @@ struct KeaView {
     completion_text: String,
     completion_cursor: usize,
     editor: Entity<InputState>,
+    reverse_search: Entity<ReverseSearchView>,
     document_ui: document_view::DocumentUi,
     document_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -261,6 +268,7 @@ struct KeaView {
     _pump: Task<()>,
     _appearance: Subscription,
     _filter_change: Subscription,
+    _memory_changed: Subscription,
 }
 
 impl KeaView {
@@ -283,6 +291,13 @@ impl KeaView {
         } else {
             editor.update(cx, |state, cx| state.focus(window, cx));
         }
+        let reverse_search = cx.new(|cx| {
+            ReverseSearchView::new(settings.history_persistence, window, cx)
+        });
+        reverse_search.update(cx, |search, cx| {
+            search.set_target(editor.clone(), session.input_allowed(), cx);
+        });
+        let memory_changed = cx.observe(&reverse_search, |_, _, cx| cx.notify());
         let terminal_composition = cx.new(|cx| InputState::new(window, cx));
         let document_ui = document_view::DocumentUi::new(window, cx);
         let filter_change = cx.subscribe(
@@ -368,6 +383,7 @@ impl KeaView {
             completion_text: String::new(),
             completion_cursor: 0,
             editor,
+            reverse_search,
             document_ui,
             document_scroll: ScrollHandle::new(),
             focus,
@@ -375,6 +391,7 @@ impl KeaView {
             _pump: pump,
             _appearance: appearance,
             _filter_change: filter_change,
+            _memory_changed: memory_changed,
         }
     }
 
@@ -724,6 +741,15 @@ impl KeaView {
         };
         let result = self.session.send_hidden(wrapper);
         if result.is_ok() {
+            // Retention observes a successful submission, never gates execution.
+            let directory = self.document.directory().map(ToOwned::to_owned);
+            let kind = match shell {
+                ShellFlavor::Posix => InputKind::Posix,
+                ShellFlavor::PowerShell => InputKind::PowerShell,
+            };
+            self.reverse_search.update(cx, |search, cx| {
+                search.record(text.clone(), kind, directory, cx);
+            });
             self.session.scroll_bottom();
             self.session.clear_terminal_selection();
             self.prompt_line.invalidate();
@@ -789,6 +815,10 @@ impl KeaView {
             self.session.send(bytes)
         });
         if result.is_ok() {
+            // No assertion about the foreground application's local/remote cwd.
+            self.reverse_search.update(cx, |search, cx| {
+                search.record(text.clone(), InputKind::Application, None, cx);
+            });
             self.session.scroll_bottom();
             self.session.clear_terminal_selection();
             self.prompt_line.invalidate();
@@ -895,6 +925,27 @@ impl KeaView {
         cx.notify();
     }
 
+    fn open_reverse_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_run = None;
+        self.completion_rx = None;
+        self.candidates.clear();
+        let editor = self.editor.clone();
+        let enabled = self.session.input_allowed();
+        let directory = self.document.prompt_ready()
+            .then(|| self.document.directory().map(ToOwned::to_owned))
+            .flatten();
+        let kind = match (self.document.prompt_ready(), self.shell) {
+            (true, Some(ShellFlavor::Posix)) => InputKind::Posix,
+            (true, Some(ShellFlavor::PowerShell)) => InputKind::PowerShell,
+            _ => InputKind::Application,
+        };
+        self.reverse_search.update(cx, |search, cx| {
+            search.set_target(editor, enabled, cx);
+            search.open(directory, kind, window, cx);
+        });
+        cx.notify();
+    }
+
     fn toggle_blocks(&mut self, cx: &mut Context<Self>) {
         self.show_blocks = !self.show_blocks;
         self.document_ui.page_start = None;
@@ -948,6 +999,12 @@ impl KeaView {
             Action::SendApplication => self.send_editor(window, cx),
             Action::Newline => self.insert_newline(window, cx),
             Action::Complete => self.complete_editor(window, cx),
+            Action::ReverseSearch => {
+                // Exclude the compose editor's embedded find field and other inputs.
+                if self.editor.focus_handle(cx).is_focused(window) {
+                    self.open_reverse_search(window, cx);
+                }
+            }
             Action::ToggleBlocks => self.toggle_blocks(cx),
             Action::PreviousEvent | Action::NextEvent => {
                 let result = self.session.step(if event.action == Action::PreviousEvent {
@@ -1064,6 +1121,11 @@ impl KeaView {
 
 impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = self.editor.clone();
+        let enabled = self.session.input_allowed();
+        self.reverse_search.update(cx, |search, cx| {
+            search.set_target(editor, enabled, cx);
+        });
         let duration = self.session.recording().duration();
         let position = self.session.position();
         let fraction = if duration == 0 {
@@ -1251,6 +1313,7 @@ impl Render for KeaView {
         let status = self
             .notice
             .clone()
+            .or_else(|| self.reverse_search.read(cx).warning().map(ToOwned::to_owned))
             .or_else(|| self.session.warning.clone())
             .unwrap_or_else(|| {
                 if self.session.is_history() {
@@ -1349,8 +1412,19 @@ impl Render for KeaView {
                         ),
                         Action::SendApplication,
                         cx,
-                    )),
+                    ))
+                    .child(
+                        button(
+                            "reverse-search",
+                            format!("History · {}", self.keymap.label(Action::ReverseSearch)),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_reverse_search(window, cx);
+                        })),
+                    ),
             )
+            // Deferred anchored overlay has no height and never resizes the PTY.
+            .child(self.reverse_search.clone())
             .child(
                 Input::new(&self.editor)
                     .flex_1()

@@ -20,6 +20,8 @@ pub struct Settings {
     pub output_wrap: bool,
     pub syntax_highlighting: bool,
     pub show_blocks: bool,
+    /// Persist successful compose submissions; explicit saved memories always persist.
+    pub history_persistence: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +35,7 @@ impl Default for Settings {
             output_wrap: true,
             syntax_highlighting: true,
             show_blocks: false,
+            history_persistence: false,
         }
     }
 }
@@ -99,6 +102,7 @@ impl Settings {
                 "output_wrap" => settings.output_wrap = boolean(value)?,
                 "syntax_highlighting" => settings.syntax_highlighting = boolean(value)?,
                 "show_blocks" => settings.show_blocks = boolean(value)?,
+                "history_persistence" => settings.history_persistence = boolean(value)?,
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }
@@ -126,6 +130,12 @@ mod tests {
         assert!(!settings.soft_wrap);
         assert_eq!(Settings::default().appearance, Appearance::System);
         assert!(Settings::default().font_family.is_none());
+    }
+    #[test]
+    fn input_history_persistence_requires_explicit_opt_in() {
+        assert!(!Settings::default().history_persistence);
+        assert!(Settings::parse("history_persistence = true").unwrap().history_persistence);
+        assert!(Settings::parse("history_persistence = yes").is_err());
     }
     #[test]
     fn rejects_unknown_and_unsafe_sizes() {
