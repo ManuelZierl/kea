@@ -10,6 +10,17 @@ pub enum Appearance {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PostSubmitFocus {
+    /// Preserve the current safe behavior: after a successful submit, hand keyboard
+    /// ownership to the terminal application so prompts/questions are immediately usable.
+    #[default]
+    Terminal,
+    /// Keep the normal editor as the active surface so drafting the next command/prompt
+    /// can continue while output streams above it.
+    Editor,
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub appearance: Appearance,
@@ -20,6 +31,7 @@ pub struct Settings {
     pub output_wrap: bool,
     pub syntax_highlighting: bool,
     pub show_blocks: bool,
+    pub post_submit_focus: PostSubmitFocus,
 }
 
 impl Default for Settings {
@@ -33,6 +45,7 @@ impl Default for Settings {
             output_wrap: true,
             syntax_highlighting: true,
             show_blocks: false,
+            post_submit_focus: PostSubmitFocus::Terminal,
         }
     }
 }
@@ -99,6 +112,13 @@ impl Settings {
                 "output_wrap" => settings.output_wrap = boolean(value)?,
                 "syntax_highlighting" => settings.syntax_highlighting = boolean(value)?,
                 "show_blocks" => settings.show_blocks = boolean(value)?,
+                "post_submit_focus" => {
+                    settings.post_submit_focus = match value {
+                        "terminal" => PostSubmitFocus::Terminal,
+                        "editor" => PostSubmitFocus::Editor,
+                        _ => anyhow::bail!("post_submit_focus must be terminal or editor"),
+                    }
+                }
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }
@@ -119,12 +139,16 @@ mod tests {
     use super::*;
     #[test]
     fn defaults_follow_system_and_overrides_are_explicit() {
-        let settings =
-            Settings::parse("theme = dark\nfont_size = 16\nsoft_wrap = false\n").unwrap();
+        let settings = Settings::parse(
+            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = editor\n",
+        )
+        .unwrap();
         assert_eq!(settings.appearance, Appearance::Dark);
         assert_eq!(settings.font_size, Some(16.));
         assert!(!settings.soft_wrap);
+        assert_eq!(settings.post_submit_focus, PostSubmitFocus::Editor);
         assert_eq!(Settings::default().appearance, Appearance::System);
+        assert_eq!(Settings::default().post_submit_focus, PostSubmitFocus::Terminal);
         assert!(Settings::default().font_family.is_none());
     }
     #[test]
@@ -133,6 +157,7 @@ mod tests {
             "theme = purple",
             "font_size = NaN",
             "font_size = 100",
+            "post_submit_focus = smart",
             "typo = true",
         ] {
             assert!(Settings::parse(text).is_err());
