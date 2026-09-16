@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use kea_alacritty::MouseTracking;
 use kea_core::{write_event, write_header, Event, Recording, Size};
 use std::{
     fs::OpenOptions,
@@ -93,9 +94,9 @@ impl Journal {
     }
 }
 
-/// Persistence is an explicit state transition on the live session. Keeping the
-/// methods here avoids coupling the portable session controller to UI/platform
-/// path policy while still allowing the app to start saving after launch.
+/// Small product-facing session extensions that do not mutate canonical history.
+/// Terminal protocol state remains owned by the Alacritty projection; the host only
+/// reads the negotiated modes when deciding how to encode user input.
 impl crate::Session {
     pub fn persistence_path(&self) -> Option<&Path> {
         self.journal.as_ref().map(Journal::path)
@@ -126,6 +127,20 @@ impl crate::Session {
         }
         self.persistence_stopped = true;
     }
+
+    pub fn terminal_mouse_tracking(&self) -> Option<MouseTracking> {
+        self.input_allowed()
+            .then(|| self.live.mouse_tracking())
+            .flatten()
+    }
+
+    pub fn terminal_extended_keyboard(&self) -> bool {
+        self.input_allowed() && self.live.extended_keyboard()
+    }
+
+    pub fn terminal_focus_reporting(&self) -> bool {
+        self.input_allowed() && self.live.focus_reporting()
+    }
 }
 
 impl Drop for Journal {
@@ -141,7 +156,10 @@ impl Drop for Journal {
 mod tests {
     use super::*;
     use kea_core::Kind;
-    use std::{fs::File, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs::File,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_path(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -155,11 +173,16 @@ mod tests {
     fn seeded_journal_contains_history_that_predates_saving() {
         let path = temp_path("seeded");
         let mut recording = Recording::new(Size::new(80, 24).unwrap()).unwrap();
-        recording.append(5, Kind::Output(b"before save\r\n".to_vec())).unwrap();
+        recording
+            .append(5, Kind::Output(b"before save\r\n".to_vec()))
+            .unwrap();
         {
             let mut journal = Journal::create_from_recording(&path, &recording).unwrap();
             journal
-                .append(&Event { at: 10, kind: Kind::Output(b"after save\r\n".to_vec()) })
+                .append(&Event {
+                    at: 10,
+                    kind: Kind::Output(b"after save\r\n".to_vec()),
+                })
                 .unwrap();
         }
         let loaded = kea_core::read_from(File::open(&path).unwrap()).unwrap();
