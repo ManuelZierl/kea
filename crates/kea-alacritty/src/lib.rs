@@ -101,6 +101,13 @@ pub enum MouseEncoding {
     Sgr,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseTracking {
+    Click,
+    Drag,
+    Motion,
+}
+
 impl Engine {
     pub fn new(size: Size, live: bool) -> Self {
         let replies = live.then(|| Arc::new(Mutex::new(Vec::new())));
@@ -109,6 +116,9 @@ impl Engine {
         };
         let config = Config {
             scrolling_history: TERMINAL_SCROLLBACK_LINES,
+            // Let applications explicitly negotiate the Kitty/CSI-u keyboard protocol.
+            // Classic encoding remains authoritative until a mode is actually enabled.
+            kitty_keyboard: true,
             ..Config::default()
         };
         Self {
@@ -132,12 +142,32 @@ impl Engine {
     pub fn bracketed_paste(&self) -> bool {
         self.terminal.mode().contains(TermMode::BRACKETED_PASTE)
     }
+    pub fn extended_keyboard(&self) -> bool {
+        self.terminal
+            .mode()
+            .intersects(TermMode::KITTY_KEYBOARD_PROTOCOL)
+    }
+    pub fn focus_reporting(&self) -> bool {
+        self.terminal.mode().contains(TermMode::FOCUS_IN_OUT)
+    }
+    pub fn mouse_tracking(&self) -> Option<MouseTracking> {
+        let mode = self.terminal.mode();
+        if mode.contains(TermMode::MOUSE_MOTION) {
+            Some(MouseTracking::Motion)
+        } else if mode.contains(TermMode::MOUSE_DRAG) {
+            Some(MouseTracking::Drag)
+        } else if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            Some(MouseTracking::Click)
+        } else {
+            None
+        }
+    }
     pub fn mouse_reporting(&self) -> bool {
-        self.mouse_encoding().is_some()
+        self.mouse_tracking().is_some()
     }
     pub fn mouse_encoding(&self) -> Option<MouseEncoding> {
         let mode = self.terminal.mode();
-        if !mode.intersects(TermMode::MOUSE_MODE) {
+        if self.mouse_tracking().is_none() {
             None
         } else if mode.contains(TermMode::SGR_MOUSE) {
             Some(MouseEncoding::Sgr)
@@ -461,13 +491,27 @@ mod tests {
 
         assert_eq!(engine.mouse_encoding(), None);
         engine.output(b"\x1b[?1000h");
-        assert!(engine.mouse_reporting());
+        assert_eq!(engine.mouse_tracking(), Some(MouseTracking::Click));
         assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Legacy));
+        engine.output(b"\x1b[?1002h");
+        assert_eq!(engine.mouse_tracking(), Some(MouseTracking::Drag));
+        engine.output(b"\x1b[?1003h");
+        assert_eq!(engine.mouse_tracking(), Some(MouseTracking::Motion));
         engine.output(b"\x1b[?1005h");
         assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Utf8));
         engine.output(b"\x1b[?1006h");
         assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Sgr));
-        engine.output(b"\x1b[?1000l");
+        engine.output(b"\x1b[?1003l\x1b[?1002l\x1b[?1000l");
         assert_eq!(engine.mouse_encoding(), None);
+    }
+
+    #[test]
+    fn focus_reporting_mode_is_tracked_by_the_terminal_engine() {
+        let mut engine = Engine::new(Size::new(4, 2).unwrap(), false);
+        assert!(!engine.focus_reporting());
+        engine.output(b"\x1b[?1004h");
+        assert!(engine.focus_reporting());
+        engine.output(b"\x1b[?1004l");
+        assert!(!engine.focus_reporting());
     }
 }
