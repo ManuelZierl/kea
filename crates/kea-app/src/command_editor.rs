@@ -1,8 +1,12 @@
 //! Thin host adapter over GPUI Component, not another text editor implementation.
 //! Selection, grapheme movement, undo, IME and pointer handling belong upstream.
-use crate::{draft_history::DraftHistory, settings::Settings, shell::ShellFlavor};
+use crate::{
+    draft_history::DraftHistory,
+    settings::{PostSubmitFocus, Settings},
+    shell::ShellFlavor,
+};
 use gpui::{
-    App, AppContext, Entity, EntityInputHandler, Global, Subscription, Window,
+    App, AppContext, Entity, EntityInputHandler, FocusHandle, Global, Subscription, Window,
 };
 use gpui_component::{
     highlighter::{LanguageConfig, LanguageRegistry},
@@ -20,6 +24,7 @@ struct DraftRecallGlobal {
     history: DraftHistory,
     current_editor: Option<Entity<InputState>>,
     submission_candidate: Option<(Entity<InputState>, String)>,
+    last_external_focus: Option<FocusHandle>,
     interceptor: Option<Subscription>,
 }
 
@@ -79,6 +84,7 @@ pub fn new_draft(
     } else {
         None
     };
+    let submission_completed = submitted.is_some();
     if let Some(submitted) = submitted {
         cx.default_global::<DraftRecallGlobal>()
             .history
@@ -102,6 +108,22 @@ pub fn new_draft(
     recall.current_editor = Some(editor.clone());
     recall.submission_candidate = None;
     recall.history.reset_navigation();
+
+    // main deliberately focuses the terminal after a successful send. When the user
+    // selected an editor-first workflow, defer one turn so that hand-off still happens
+    // (and can be remembered), then make the fresh composer active. No child state is
+    // guessed: this is only an explicit focus policy.
+    if submission_completed && settings.post_submit_focus == PostSubmitFocus::Editor {
+        let editor = editor.downgrade();
+        window.defer(cx, move |window, cx| {
+            let external = window.focused(cx);
+            if let Some(external) = external {
+                cx.default_global::<DraftRecallGlobal>().last_external_focus = Some(external);
+            }
+            let _ = editor.update(cx, |state, cx| state.focus(window, cx));
+        });
+    }
+
     editor
 }
 
@@ -132,6 +154,47 @@ pub fn submission_text(
 /// Retain the keystroke interceptor for as long as the app lives.
 pub fn retain_history_interceptor(subscription: Subscription, cx: &mut App) {
     cx.default_global::<DraftRecallGlobal>().interceptor = Some(subscription);
+}
+
+/// Remember the non-composer surface the user was actually typing into. In the normal
+/// loop this is the live terminal. Recording happens on a real key event rather than by
+/// naming/sniffing a child application.
+pub fn remember_external_focus(window: &mut Window, cx: &mut App) {
+    use gpui::Focusable;
+    let editor = cx
+        .try_global::<DraftRecallGlobal>()
+        .and_then(|recall| recall.current_editor.clone());
+    if editor
+        .as_ref()
+        .is_some_and(|editor| editor.focus_handle(cx).is_focused(window))
+    {
+        return;
+    }
+    if let Some(focus) = window.focused(cx) {
+        cx.default_global::<DraftRecallGlobal>().last_external_focus = Some(focus);
+    }
+}
+
+/// Focus the last external surface, but only when the current command editor owns focus.
+/// This gives composer-first users a symmetric keyboard path back to the terminal without
+/// reserving the shortcut while a TUI owns input.
+pub fn focus_last_external(window: &mut Window, cx: &mut App) -> bool {
+    use gpui::Focusable;
+    let (editor, external) = cx
+        .try_global::<DraftRecallGlobal>()
+        .map(|recall| (recall.current_editor.clone(), recall.last_external_focus.clone()))
+        .unwrap_or_default();
+    let Some(editor) = editor else {
+        return false;
+    };
+    if !editor.focus_handle(cx).is_focused(window) {
+        return false;
+    }
+    let Some(external) = external else {
+        return false;
+    };
+    window.focus(&external);
+    true
 }
 
 /// Navigate exact text that was successfully submitted through either Run in shell or
