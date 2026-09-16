@@ -87,7 +87,11 @@ impl DraftHistory {
         let Some(index) = self.cursor else {
             return None;
         };
-        if self.entries.get(index).is_some_and(|entry| entry != current) {
+        if self
+            .entries
+            .get(index)
+            .is_some_and(|entry| entry != current)
+        {
             self.reset_navigation();
             return None;
         }
@@ -108,7 +112,11 @@ impl DraftHistory {
 
     fn rebase_if_edited(&mut self, current: &str) {
         if let Some(index) = self.cursor {
-            if self.entries.get(index).is_some_and(|entry| entry != current) {
+            if self
+                .entries
+                .get(index)
+                .is_some_and(|entry| entry != current)
+            {
                 self.cursor = None;
                 self.scratch = current.to_owned();
             }
@@ -163,6 +171,9 @@ mod tests {
         history.record("one".into());
         history.record("two".into());
         history.record("three".into());
-        assert_eq!(history.recent(10), vec!["two".to_string(), "three".to_string()]);
+        assert_eq!(
+            history.recent(10),
+            vec!["two".to_string(), "three".to_string()]
+        );
     }
 }

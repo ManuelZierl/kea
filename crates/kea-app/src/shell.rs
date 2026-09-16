@@ -59,7 +59,9 @@ impl ShellFlavor {
                 let name = program.rsplit('/').next().unwrap_or(&program);
                 let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
                 let hook = match name {
-                    "bash" => r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#,
+                    "bash" => {
+                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#
+                    }
                     "zsh" => "precmd_functions+=(__kea_prompt)",
                     _ => "PS1='$(__kea_prompt)'\"${PS1:-$ }\"",
                 };
@@ -134,8 +136,14 @@ mod tests {
 
     #[test]
     fn detects_supported_shells() {
-        assert_eq!(ShellFlavor::from_program("/bin/bash"), Some(ShellFlavor::Posix));
-        assert_eq!(ShellFlavor::from_program(r"C:\\PowerShell\\pwsh.exe"), Some(ShellFlavor::PowerShell));
+        assert_eq!(
+            ShellFlavor::from_program("/bin/bash"),
+            Some(ShellFlavor::Posix)
+        );
+        assert_eq!(
+            ShellFlavor::from_program(r"C:\\PowerShell\\pwsh.exe"),
+            Some(ShellFlavor::PowerShell)
+        );
         assert_eq!(ShellFlavor::from_program("opencode"), None);
     }
 
@@ -169,6 +177,9 @@ mod tests {
 
     #[test]
     fn command_presentation_preserves_lines_but_escapes_terminal_controls() {
-        assert_eq!(display_source("printf ok\nprintf '\u{1b}'"), "printf ok\nprintf '\\u{1b}'\n");
+        assert_eq!(
+            display_source("printf ok\nprintf '\u{1b}'"),
+            "printf ok\nprintf '\\u{1b}'\n"
+        );
     }
 }

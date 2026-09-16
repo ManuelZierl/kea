@@ -124,7 +124,7 @@ Default saved-session locations:
 
 - Linux: `$XDG_STATE_HOME/kea/sessions/`, otherwise `~/.local/state/kea/sessions/`
 - macOS: `~/Library/Application Support/Kea/Sessions/`
-- Windows: `%LOCALAPPDATA%\Kea\Sessions\`
+- Windows: `%APPDATA%\Kea\Sessions\`
 
 `--record NEW.kea` remains available when an explicit create-new path is desired.
 

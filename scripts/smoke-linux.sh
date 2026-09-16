@@ -124,7 +124,7 @@ xdotool type --clearmodifiers --delay 10 'z'
 python3 - <<'PY'
 from pathlib import Path
 actual = Path('smoke-artifacts/terminal-focus-policy.bin').read_bytes()
-assert actual.endswith(b'policy\rz'), actual
+assert actual.endswith(b'\x1b[200~policy\x1b[201~\rz'), actual
 PY
 cleanup_app
 

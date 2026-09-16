@@ -16,18 +16,15 @@ pub fn new_recording_path() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before Unix epoch")?
         .as_micros();
-    Ok(directory.join(format!(
-        "session-{micros}-{}.kea",
-        std::process::id()
-    )))
+    Ok(directory.join(format!("session-{micros}-{}.kea", std::process::id())))
 }
 
 pub fn session_directory() -> Result<PathBuf> {
     if cfg!(target_os = "windows") {
-        return env::var_os("LOCALAPPDATA")
+        return env::var_os("APPDATA")
             .map(PathBuf::from)
             .map(|path| path.join("Kea").join("Sessions"))
-            .context("LOCALAPPDATA is unavailable");
+            .context("APPDATA is unavailable");
     }
     if cfg!(target_os = "macos") {
         return env::var_os("HOME")

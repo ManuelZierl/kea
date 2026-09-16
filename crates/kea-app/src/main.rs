@@ -569,7 +569,8 @@ impl KeaView {
         let Some(encoding) = self.session.terminal_mouse_encoding() else {
             return;
         };
-        let button = (event.pressed_button == Some(MouseButton::Left)).then_some(PointerButton::Left);
+        let button =
+            (event.pressed_button == Some(MouseButton::Left)).then_some(PointerButton::Left);
         let result = terminal_mouse::encode_pointer(
             encoding,
             PointerEvent::Motion,
@@ -735,13 +736,17 @@ impl KeaView {
             return;
         }
         if self.pending_run.is_some() {
-            self.notice = Some("Waiting for a fresh shell prompt; the draft has not run yet.".into());
+            self.notice =
+                Some("Waiting for a fresh shell prompt; the draft has not run yet.".into());
             cx.notify();
             return;
         }
         let _ = self.pump_session(cx);
         if !self.session.input_allowed() {
-            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
             return;
         }
         let Some(shell) = self.shell else {
@@ -763,7 +768,8 @@ impl KeaView {
                     });
                     self.prompt_line.invalidate();
                     self.document.note_terminal_input();
-                    self.notice = Some("Recovering the shell prompt before running the draft.".into());
+                    self.notice =
+                        Some("Recovering the shell prompt before running the draft.".into());
                     cx.notify();
                 } else {
                     self.result(result, cx);
@@ -837,7 +843,8 @@ impl KeaView {
             return;
         }
         let Some(shell) = self.shell else {
-            self.notice = Some("Shell integration became unavailable; the draft was not run.".into());
+            self.notice =
+                Some("Shell integration became unavailable; the draft was not run.".into());
             cx.notify();
             return;
         };
@@ -846,7 +853,8 @@ impl KeaView {
 
     fn send_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
-            self.notice = Some("Focus the composer before sending text to the terminal app.".into());
+            self.notice =
+                Some("Focus the composer before sending text to the terminal app.".into());
             cx.notify();
             return;
         };
@@ -854,7 +862,10 @@ impl KeaView {
             return;
         }
         if !self.session.input_allowed() {
-            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
             return;
         }
         let result = input::paste(&text, self.session.bracketed_paste()).and_then(|mut bytes| {
@@ -1216,7 +1227,11 @@ impl Render for KeaView {
                 .size_full(),
             );
 
-        let terminal_mode = if self.session.is_history() { "History" } else { "Live" };
+        let terminal_mode = if self.session.is_history() {
+            "History"
+        } else {
+            "Live"
+        };
         let terminal_context = if terminal_mouse_reporting {
             "Mouse to app · Shift selects"
         } else if self.focus.is_focused(window) {
@@ -1235,7 +1250,11 @@ impl Render for KeaView {
             .border_color(cx.theme().border)
             .child(div().font_weight(FontWeight::BOLD).child("Terminal"))
             .child(terminal_mode)
-            .child(div().text_color(cx.theme().muted_foreground).child(terminal_context))
+            .child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(terminal_context),
+            )
             .child(div().flex_1())
             .child(if terminal_display_offset == 0 {
                 format!("{terminal_history_size} lines")
@@ -1329,10 +1348,10 @@ impl Render for KeaView {
             self.document.directory(),
             self.document.prompt_ready(),
         ) {
-            (None, _, _) => "cwd unavailable".into(),
-            (_, Some(path), true) => path.to_string(),
-            (_, Some(path), false) => format!("{path} (last shell cwd)"),
-            _ => "waiting for shell cwd".into(),
+            (None, _, _) => "Shell directory: unavailable for this program".into(),
+            (_, Some(path), true) => format!("Current shell directory: {path}"),
+            (_, Some(path), false) => format!("Shell directory (last reported): {path}"),
+            _ => "Shell directory: waiting for shell integration".into(),
         };
         let persistence_status = if self.session.persistence_active() {
             let name = self
@@ -1374,7 +1393,11 @@ impl Render for KeaView {
                     .items_center()
                     .gap_2()
                     .child(div().font_weight(FontWeight::BOLD).child("Composer"))
-                    .child(div().text_color(cx.theme().muted_foreground).child(shell_state))
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(shell_state),
+                    )
                     .child(div().flex_1())
                     .child(self.control(
                         "run-draft",
@@ -1429,12 +1452,14 @@ impl Render for KeaView {
             .px_2()
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(button("focus-terminal", "Terminal").on_click(
-                cx.listener(|this, _, window, _| window.focus(&this.focus)),
-            ))
-            .child(button("focus-input", "Composer").on_click(
-                cx.listener(|this, _, window, cx| this.focus_editor(window, cx)),
-            ))
+            .child(
+                button("focus-terminal", "Terminal")
+                    .on_click(cx.listener(|this, _, window, _| window.focus(&this.focus))),
+            )
+            .child(
+                button("focus-input", "Composer")
+                    .on_click(cx.listener(|this, _, window, cx| this.focus_editor(window, cx))),
+            )
             .child(self.icon_control(
                 "blocks",
                 if self.show_blocks {
@@ -1487,19 +1512,23 @@ impl Render for KeaView {
                 ))
                 .child(self.control(
                     "play",
-                    if self.session.is_playing() { "Pause" } else { "Play" },
+                    if self.session.is_playing() {
+                        "Pause"
+                    } else {
+                        "Play"
+                    },
                     Action::PlayPause,
                     cx,
                 ))
                 .child(self.control("live", "Return live", Action::GoLive, cx));
         } else if self.session.recording().events().len() > 1 {
-            toolbar = toolbar.child(
-                button("history", "History").on_click(cx.listener(|this, _, window, cx| {
+            toolbar = toolbar.child(button("history", "History").on_click(cx.listener(
+                |this, _, window, cx| {
                     let result = this.session.step(-1);
                     window.focus(&this.focus);
                     this.result(result, cx);
-                })),
-            );
+                },
+            )));
         }
 
         let timeline_weak = cx.entity().downgrade();
@@ -1575,10 +1604,7 @@ impl Render for KeaView {
                                 let diameter = if timeline_hovered { 16.0 } else { 14.0 };
                                 let radius = diameter / 2.0;
                                 let center = track.origin
-                                    + point(
-                                        track.size.width * fraction,
-                                        track.size.height / 2.0,
-                                    );
+                                    + point(track.size.width * fraction, track.size.height / 2.0);
                                 window.paint_quad(
                                     fill(
                                         Bounds::new(
@@ -1610,7 +1636,11 @@ impl Render for KeaView {
             .child(div().min_w_0().overflow_hidden().child(directory))
             .child(div().flex_1())
             .child(status)
-            .child(div().text_color(cx.theme().muted_foreground).child(persistence_status));
+            .child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(persistence_status),
+            );
 
         let mut workspace = div()
             .id("workspace")

@@ -76,7 +76,9 @@ pub fn new_draft(
     let submitted = if text.is_empty() {
         let recall = cx.default_global::<DraftRecallGlobal>();
         match (&recall.current_editor, &recall.submission_candidate) {
-            (Some(current), Some((candidate, text))) if current == candidate && !text.is_empty() => {
+            (Some(current), Some((candidate, text)))
+                if current == candidate && !text.is_empty() =>
+            {
                 Some(text.clone())
             }
             _ => None,
@@ -145,8 +147,8 @@ pub fn submission_text(
         }
     });
     if let Some(text) = &text {
-        cx.default_global::<DraftRecallGlobal>().submission_candidate =
-            Some((editor.clone(), text.clone()));
+        cx.default_global::<DraftRecallGlobal>()
+            .submission_candidate = Some((editor.clone(), text.clone()));
     }
     text
 }
@@ -182,7 +184,12 @@ pub fn focus_last_external(window: &mut Window, cx: &mut App) -> bool {
     use gpui::Focusable;
     let (editor, external) = cx
         .try_global::<DraftRecallGlobal>()
-        .map(|recall| (recall.current_editor.clone(), recall.last_external_focus.clone()))
+        .map(|recall| {
+            (
+                recall.current_editor.clone(),
+                recall.last_external_focus.clone(),
+            )
+        })
         .unwrap_or_default();
     let Some(editor) = editor else {
         return false;
@@ -237,11 +244,11 @@ pub fn navigate_submitted_drafts(
 
     if replacement != current {
         let old_utf16 = current.encode_utf16().count();
-        let cursor = replacement.len();
         editor.update(cx, |state, cx| {
+            use gpui_component::input::RopeExt as _;
             state.replace_text_in_range(Some(0..old_utf16), &replacement, window, cx);
-            state.set_selected_range(cursor..cursor, cx);
-            state.focus(window, cx);
+            let end = state.text().offset_to_position(state.text().len());
+            state.set_cursor_position(end, window, cx);
         });
     }
     true
@@ -382,13 +389,26 @@ mod tests {
         });
         window
             .update(cx, |_, window, cx| {
-                let editor = new_draft(None, &Settings::default(), "prompt\nwith details", window, cx);
+                let editor = new_draft(
+                    None,
+                    &Settings::default(),
+                    "prompt\nwith details",
+                    window,
+                    cx,
+                );
                 editor.update(cx, |state, cx| state.focus(window, cx));
-                assert_eq!(submission_text(&editor, window, cx).as_deref(), Some("prompt\nwith details"));
+                assert_eq!(
+                    submission_text(&editor, window, cx).as_deref(),
+                    Some("prompt\nwith details")
+                );
                 let fresh = new_draft(None, &Settings::default(), "", window, cx);
                 fresh.update(cx, |state, cx| state.focus(window, cx));
                 assert_eq!(submitted_history_len(cx), 1);
-                assert!(navigate_submitted_drafts(HistoryDirection::Previous, window, cx));
+                assert!(navigate_submitted_drafts(
+                    HistoryDirection::Previous,
+                    window,
+                    cx
+                ));
                 assert_eq!(fresh.read(cx).value().as_ref(), "prompt\nwith details");
             })
             .unwrap();
@@ -408,13 +428,20 @@ mod tests {
             .update(cx, |_, window, cx| {
                 let editor = new_draft(None, &Settings::default(), "not sent", window, cx);
                 editor.update(cx, |state, cx| state.focus(window, cx));
-                assert_eq!(submission_text(&editor, window, cx).as_deref(), Some("not sent"));
+                assert_eq!(
+                    submission_text(&editor, window, cx).as_deref(),
+                    Some("not sent")
+                );
                 assert_eq!(submitted_history_len(cx), 0);
 
                 let edited = new_draft(None, &Settings::default(), "historical block", window, cx);
                 edited.update(cx, |state, cx| state.focus(window, cx));
                 assert_eq!(submitted_history_len(cx), 0);
-                assert!(!navigate_submitted_drafts(HistoryDirection::Previous, window, cx));
+                assert!(!navigate_submitted_drafts(
+                    HistoryDirection::Previous,
+                    window,
+                    cx
+                ));
             })
             .unwrap();
     }

@@ -20,6 +20,7 @@ The user should not need to understand event indices, block counts, PTY ownershi
 - Detailed replay controls appear when History is entered, rather than occupying permanent chrome.
 - Optional command blocks remain a side inspector, not the primary output model.
 - Save Session is visible as a normal workspace action. The status bar says `Temporary`, `Saving · <file>`, or `Saving stopped`.
+- The status-bar cwd keeps the explicit contract: `Current shell directory: <path>` only while the integrated shell has reported an idle prompt, otherwise `Shell directory (last reported): <path>`.
 - Errors and explanatory text use the status bar instead of adding persistent instruction paragraphs around the work surfaces.
 
 ## Alpha acceptance

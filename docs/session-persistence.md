@@ -8,7 +8,7 @@ Saved session locations are product-owned rather than tied to the working direct
 
 - Linux: `$XDG_STATE_HOME/kea/sessions/`, otherwise `~/.local/state/kea/sessions/`
 - macOS: `~/Library/Application Support/Kea/Sessions/`
-- Windows: `%LOCALAPPDATA%\Kea\Sessions\`
+- Windows: `%APPDATA%\Kea\Sessions\`
 
 Explicit `--record NEW.kea` remains supported for callers that want a specific create-new path.
 

@@ -139,7 +139,10 @@ mod tests {
     #[test]
     fn defaults_are_composer_first_and_overrides_are_explicit() {
         assert_eq!(Settings::default().appearance, Appearance::System);
-        assert_eq!(Settings::default().post_submit_focus, PostSubmitFocus::Editor);
+        assert_eq!(
+            Settings::default().post_submit_focus,
+            PostSubmitFocus::Editor
+        );
         assert!(Settings::default().font_family.is_none());
 
         let settings = Settings::parse(
