@@ -12,14 +12,14 @@ use gpui_component::{
     resizable::{resizable_panel, v_resizable},
     ActiveTheme, Disableable as _, IconName, Root, Sizable as _, Theme, ThemeMode, TitleBar,
 };
-use kea_alacritty::{Screen, TerminalPoint, TERMINAL_SCROLLBACK_LINES};
+use kea_alacritty::{MouseTracking, Screen, TerminalPoint, TERMINAL_SCROLLBACK_LINES};
 use kea_app::{
     command_editor, completion, input,
     keybindings::{Action, Invoke, Keymap},
     playback, session_files,
     settings::{Appearance, Settings},
     shell::ShellFlavor,
-    terminal_mouse::{self, WheelDirection},
+    terminal_mouse::{self, PointerButton, PointerEvent, WheelDirection},
     terminal_recovery::PromptLineTracker,
 };
 use kea_document::Document;
@@ -96,7 +96,8 @@ All semantic shortcuts are configurable. Terminal-like editor behavior is possib
 Blocks are an optional observational view. They never gate command execution.
 The current integrated local-shell directory is reported by shell hooks; while a TUI/remote app owns the terminal, Kea labels it last reported rather than guessing.
 Terminal Tab and other representable keys go to the child application.
-The primary terminal screen has bounded mouse-wheel scrollback and drag selection; whole-view copy remains explicit.
+Mouse buttons/wheel are forwarded when the child negotiates mouse reporting; hold Shift for local selection/scrollback.
+Modified Enter is distinguished only after the child negotiates an extended keyboard protocol.
 
 KEA_KEYBINDINGS and KEA_SETTINGS select explicit configuration files.
 Sessions are temporary unless Save session or --record is used. Saved recordings are bounded and unencrypted; commands/output can contain secrets.";
@@ -466,6 +467,15 @@ impl KeaView {
         cx.notify();
     }
 
+    fn note_forwarded_terminal_input(&mut self) {
+        self.session.scroll_bottom();
+        self.session.clear_terminal_selection();
+        self.prompt_line.invalidate();
+        self.pending_run = None;
+        self.document.note_terminal_input();
+        self.notice = None;
+    }
+
     fn terminal_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -473,15 +483,6 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus);
-        if self.session.terminal_mouse_reporting() && !event.modifiers.shift {
-            self.terminal_selection_start = None;
-            self.notice = Some(
-                "The terminal app requested mouse input. Hold Shift while dragging to select locally."
-                    .into(),
-            );
-            cx.notify();
-            return;
-        }
         let metrics = terminal_font_metrics(window, cx);
         let Some(point) = terminal_point(
             event.position,
@@ -491,6 +492,28 @@ impl KeaView {
         ) else {
             return;
         };
+        if let Some(encoding) = self.session.terminal_mouse_encoding() {
+            if !event.modifiers.shift {
+                self.terminal_selection_start = None;
+                let result = terminal_mouse::encode_pointer(
+                    encoding,
+                    PointerEvent::Press,
+                    Some(PointerButton::Left),
+                    point,
+                    event.modifiers.shift,
+                    event.modifiers.alt,
+                    event.modifiers.control,
+                )
+                .map_err(anyhow::Error::msg)
+                .and_then(|bytes| self.session.send(bytes));
+                if result.is_ok() {
+                    self.note_forwarded_terminal_input();
+                }
+                self.result(result, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
         self.session.clear_terminal_selection();
         self.session.begin_terminal_selection(point);
         self.terminal_selection_start = Some(point);
@@ -504,19 +527,65 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !event.dragging() || self.terminal_selection_start.is_none() {
+        if let Some(start) = self.terminal_selection_start {
+            if !event.dragging() {
+                return;
+            }
+            let metrics = terminal_font_metrics(window, cx);
+            if let Some(point) = terminal_point(
+                event.position,
+                self.terminal_bounds,
+                &metrics,
+                self.session.terminal_size(),
+            ) {
+                if point != start {
+                    self.session.update_terminal_selection(point);
+                    cx.notify();
+                }
+            }
+            return;
+        }
+
+        let Some(tracking) = self.session.terminal_mouse_tracking() else {
+            return;
+        };
+        let should_report = match tracking {
+            MouseTracking::Click => false,
+            MouseTracking::Drag => event.pressed_button == Some(MouseButton::Left),
+            MouseTracking::Motion => true,
+        };
+        if !should_report {
             return;
         }
         let metrics = terminal_font_metrics(window, cx);
-        if let Some(point) = terminal_point(
+        let Some(point) = terminal_point(
             event.position,
             self.terminal_bounds,
             &metrics,
             self.session.terminal_size(),
-        ) {
-            self.session.update_terminal_selection(point);
-            cx.notify();
+        ) else {
+            return;
+        };
+        let Some(encoding) = self.session.terminal_mouse_encoding() else {
+            return;
+        };
+        let button = (event.pressed_button == Some(MouseButton::Left)).then_some(PointerButton::Left);
+        let result = terminal_mouse::encode_pointer(
+            encoding,
+            PointerEvent::Motion,
+            button,
+            point,
+            false,
+            event.modifiers.alt,
+            event.modifiers.control,
+        )
+        .map_err(anyhow::Error::msg)
+        .and_then(|bytes| self.session.send(bytes));
+        if result.is_ok() {
+            self.note_forwarded_terminal_input();
         }
+        self.result(result, cx);
+        cx.stop_propagation();
     }
 
     fn terminal_mouse_up(
@@ -525,22 +594,53 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(start) = self.terminal_selection_start.take() else {
+        if let Some(start) = self.terminal_selection_start.take() {
+            let metrics = terminal_font_metrics(window, cx);
+            let point = terminal_point(
+                event.position,
+                self.terminal_bounds,
+                &metrics,
+                self.session.terminal_size(),
+            );
+            if point == Some(start) {
+                self.session.clear_terminal_selection();
+            } else if let Some(point) = point {
+                self.session.update_terminal_selection(point);
+            }
+            cx.notify();
+            return;
+        }
+        if event.modifiers.shift {
+            return;
+        }
+        let Some(encoding) = self.session.terminal_mouse_encoding() else {
             return;
         };
         let metrics = terminal_font_metrics(window, cx);
-        let point = terminal_point(
+        let Some(point) = terminal_point(
             event.position,
             self.terminal_bounds,
             &metrics,
             self.session.terminal_size(),
-        );
-        if point == Some(start) {
-            self.session.clear_terminal_selection();
-        } else if let Some(point) = point {
-            self.session.update_terminal_selection(point);
+        ) else {
+            return;
+        };
+        let result = terminal_mouse::encode_pointer(
+            encoding,
+            PointerEvent::Release,
+            Some(PointerButton::Left),
+            point,
+            false,
+            event.modifiers.alt,
+            event.modifiers.control,
+        )
+        .map_err(anyhow::Error::msg)
+        .and_then(|bytes| self.session.send(bytes));
+        if result.is_ok() {
+            self.note_forwarded_terminal_input();
         }
-        cx.notify();
+        self.result(result, cx);
+        cx.stop_propagation();
     }
 
     fn terminal_scroll(
@@ -591,12 +691,7 @@ impl KeaView {
                         self.session.send(bytes)
                     });
                     if result.is_ok() {
-                        self.session.scroll_bottom();
-                        self.session.clear_terminal_selection();
-                        self.prompt_line.invalidate();
-                        self.pending_run = None;
-                        self.document.note_terminal_input();
-                        self.notice = None;
+                        self.note_forwarded_terminal_input();
                     }
                     self.result(result, cx);
                 }
@@ -625,11 +720,7 @@ impl KeaView {
         let result = input::paste(&text, self.session.bracketed_paste())
             .and_then(|bytes| self.session.send(bytes));
         if result.is_ok() {
-            self.session.scroll_bottom();
-            self.session.clear_terminal_selection();
-            self.prompt_line.invalidate();
-            self.pending_run = None;
-            self.document.note_terminal_input();
+            self.note_forwarded_terminal_input();
         }
         self.result(result, cx);
     }
@@ -971,7 +1062,11 @@ impl KeaView {
         }) {
             return;
         }
-        if let Some(bytes) = input::encode(&event.keystroke, self.session.application_cursor()) {
+        if let Some(bytes) = input::encode(
+            &event.keystroke,
+            self.session.application_cursor(),
+            self.session.terminal_extended_keyboard(),
+        ) {
             if self.session.input_allowed() {
                 let tracked_bytes = bytes.clone();
                 let result = self.session.send(bytes);
@@ -1123,7 +1218,7 @@ impl Render for KeaView {
 
         let terminal_mode = if self.session.is_history() { "History" } else { "Live" };
         let terminal_context = if terminal_mouse_reporting {
-            "Shift+drag selects"
+            "Mouse to app · Shift selects"
         } else if self.focus.is_focused(window) {
             "Input active"
         } else {
