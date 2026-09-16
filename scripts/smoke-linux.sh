@@ -65,15 +65,47 @@ from pathlib import Path
 actual = Path('smoke-artifacts/keys.bin').read_bytes()
 assert actual.endswith(b'\x1b[200~message one\nmessage two\x1b[201~\r'), actual
 PY
-# The exact authored application submission is recoverable independently of blocks.
-# Keep an in-progress scratch draft while browsing backwards, then restore it forwards.
-key ctrl+l
+
+# Composer-first default: successful submission leaves the fresh editor ready without
+# requiring a mouse or a second focus shortcut.
 xdotool type --clearmodifiers --delay 10 'scratch'
+key ctrl+a ctrl+c
+assert_clipboard scratch
+
+# Symmetric keyboard focus: composer -> terminal uses Ctrl+Shift+L, while terminal ->
+# composer remains Ctrl+L from the previous daily-driver change. The terminal shortcut
+# itself is not forwarded to the child.
+key ctrl+shift+l
+xdotool type --clearmodifiers --delay 10 'x'
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/keys.bin').read_bytes()
+assert actual.endswith(b'\r' + b'x'), actual
+PY
+key ctrl+l
+
+# Exact application submission remains recoverable while an in-progress scratch draft
+# survives backwards/forwards history navigation.
 key ctrl+Up ctrl+a ctrl+c
 assert_clipboard $'message one\nmessage two'
 key ctrl+Down ctrl+a ctrl+c
 assert_clipboard scratch
 import -window "$window" smoke-artifacts/terminal-and-editor.png
+cleanup_app
+
+# Users can explicitly choose the older terminal-after-submit policy.
+printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/terminal-focus-policy.bin >smoke-artifacts/terminal-policy.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/terminal-policy.log
+focus_editor
+xdotool type --clearmodifiers --delay 10 'policy'
+key ctrl+shift+Return
+xdotool type --clearmodifiers --delay 10 'z'
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/terminal-focus-policy.bin').read_bytes()
+assert actual.endswith(b'policy\rz'), actual
+PY
 cleanup_app
 
 printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
@@ -92,7 +124,7 @@ put_clipboard $'printf "kea_doc_one ä\\n";\nprintf "kea_doc_two\\n"'
 key ctrl+v F10
 [[ -z "$(clipboard)" ]] || { echo 'Paste executed a command'; exit 1; }
 key ctrl+Return
-focus_editor
+# Default post-submit focus is now the fresh composer, so no refocus click is needed.
 found=''
 for _ in $(seq 1 60); do
   key F10
@@ -122,4 +154,4 @@ clipboard >smoke-artifacts/after-newline.txt
 [[ "$(grep -c '^exit ' smoke-artifacts/after-newline.txt)" -eq 1 ]]
 import -window "$window" smoke-artifacts/document.png
 cleanup_app
-echo 'Passed: simultaneous terminal/editor, optional blocks, raw terminal keys, composer send + draft recall, editing/undo/Unicode, read-only output and replay.'
+echo 'Passed: composer-first submission, keyboard focus switching, draft recall, raw terminal keys, editing/undo/Unicode, read-only output and replay.'
