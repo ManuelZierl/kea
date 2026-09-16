@@ -20,8 +20,6 @@ pub enum Action {
     SendApplication,
     Newline,
     Complete,
-    PreviousDraft,
-    NextDraft,
     ToggleBlocks,
     PreviousEvent,
     NextEvent,
@@ -33,12 +31,12 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 22] = [
         Self::Copy, Self::Cut, Self::Paste, Self::Undo, Self::Redo, Self::SelectAll,
         Self::Find, Self::CopyDocument, Self::FocusEditor, Self::Interrupt, Self::RunShell,
-        Self::SendApplication, Self::Newline, Self::Complete, Self::PreviousDraft,
-        Self::NextDraft, Self::ToggleBlocks, Self::PreviousEvent, Self::NextEvent,
-        Self::BackFiveSeconds, Self::ForwardFiveSeconds, Self::PlayPause, Self::GoLive, Self::Quit,
+        Self::SendApplication, Self::Newline, Self::Complete, Self::ToggleBlocks,
+        Self::PreviousEvent, Self::NextEvent, Self::BackFiveSeconds, Self::ForwardFiveSeconds,
+        Self::PlayPause, Self::GoLive, Self::Quit,
     ];
 
     fn config_name(self) -> &'static str {
@@ -49,7 +47,6 @@ impl Action {
             Self::FocusEditor => "focus_editor", Self::Interrupt => "interrupt",
             Self::RunShell => "run_shell", Self::SendApplication => "send_application",
             Self::Newline => "newline", Self::Complete => "complete",
-            Self::PreviousDraft => "previous_draft", Self::NextDraft => "next_draft",
             Self::ToggleBlocks => "toggle_blocks", Self::PreviousEvent => "previous_event",
             Self::NextEvent => "next_event", Self::BackFiveSeconds => "back_5s",
             Self::ForwardFiveSeconds => "forward_5s", Self::PlayPause => "play_pause",
@@ -104,7 +101,12 @@ impl Shortcut {
 #[derive(Clone, Copy)] enum Platform { Mac, Other }
 impl Platform { fn current() -> Self { if cfg!(target_os = "macos") { Self::Mac } else { Self::Other } } }
 
-pub struct Keymap { bindings: HashMap<Action, Vec<Shortcut>> }
+pub struct Keymap {
+    bindings: HashMap<Action, Vec<Shortcut>>,
+    previous_draft: Vec<Shortcut>,
+    next_draft: Vec<Shortcut>,
+}
+
 impl Keymap {
     pub fn load() -> (Self, Option<String>) {
         let Some(path) = config_path() else { return (Self::defaults_for(Platform::current()), None); };
@@ -116,6 +118,7 @@ impl Keymap {
             },
         }
     }
+
     fn defaults_for(platform: Platform) -> Self {
         let modifier = if matches!(platform, Platform::Mac) { "cmd" } else { "ctrl" };
         let mut bindings = HashMap::new();
@@ -123,27 +126,74 @@ impl Keymap {
             bindings.insert(action, vec![Shortcut::parse(&format!("{modifier}-{key}")).unwrap()]);
         }
         if matches!(platform, Platform::Other) { bindings.get_mut(&Action::Redo).unwrap().push(Shortcut::parse("ctrl-y").unwrap()); }
-        for (action,key) in [(Action::CopyDocument,"f10"),(Action::RunShell,"ctrl-enter"),(Action::SendApplication,"ctrl-shift-enter"),(Action::Complete,"tab"),(Action::PreviousDraft,"ctrl-up"),(Action::NextDraft,"ctrl-down"),(Action::ToggleBlocks,"ctrl-shift-space"),(Action::PreviousEvent,"f6"),(Action::NextEvent,"f7"),(Action::BackFiveSeconds,"shift-f6"),(Action::ForwardFiveSeconds,"shift-f7"),(Action::PlayPause,"f8"),(Action::GoLive,"f9"),(Action::Interrupt,if matches!(platform,Platform::Mac){"ctrl-c"}else{"ctrl-shift-c"}),(Action::Quit,if matches!(platform,Platform::Mac){"cmd-q"}else{"ctrl-shift-q"})] {
+        for (action,key) in [(Action::CopyDocument,"f10"),(Action::RunShell,"ctrl-enter"),(Action::SendApplication,"ctrl-shift-enter"),(Action::Complete,"tab"),(Action::ToggleBlocks,"ctrl-shift-space"),(Action::PreviousEvent,"f6"),(Action::NextEvent,"f7"),(Action::BackFiveSeconds,"shift-f6"),(Action::ForwardFiveSeconds,"shift-f7"),(Action::PlayPause,"f8"),(Action::GoLive,"f9"),(Action::Interrupt,if matches!(platform,Platform::Mac){"ctrl-c"}else{"ctrl-shift-c"}),(Action::Quit,if matches!(platform,Platform::Mac){"cmd-q"}else{"ctrl-shift-q"})] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
-        bindings.insert(Action::Newline, Vec::new()); Self { bindings }
+        bindings.insert(Action::Newline, Vec::new());
+        Self {
+            bindings,
+            previous_draft: vec![Shortcut::parse("ctrl-up").unwrap()],
+            next_draft: vec![Shortcut::parse("ctrl-down").unwrap()],
+        }
     }
+
     fn parse_overrides(platform: Platform, text: &str) -> Result<Self> {
         let mut keymap = Self::defaults_for(platform);
         for (number,line) in text.lines().enumerate() {
             let line=line.split('#').next().unwrap_or_default().trim(); if line.is_empty(){continue;}
             let (name,value)=line.split_once('=').with_context(||format!("line {} needs action = shortcut",number+1))?;
-            let action=Action::parse(name).with_context(||format!("unknown action `{}`",name.trim()))?;
             let values=if value.trim().eq_ignore_ascii_case("none"){vec![]}else{value.split(',').map(Shortcut::parse).collect::<Result<Vec<_>>>()?};
-            keymap.bindings.insert(action,values);
+            match name.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+                "previous_draft" => keymap.previous_draft = values,
+                "next_draft" => keymap.next_draft = values,
+                _ => {
+                    let action=Action::parse(name).with_context(||format!("unknown action `{}`",name.trim()))?;
+                    keymap.bindings.insert(action,values);
+                }
+            }
         }
-        let mut seen=HashMap::new(); for action in Action::ALL { for shortcut in &keymap.bindings[&action] { if let Some(previous)=seen.insert(shortcut,action){ anyhow::bail!("{} is assigned to both {} and {}",shortcut.display(),previous.config_name(),action.config_name()); } } }
+
+        let mut seen: HashMap<Shortcut, String> = HashMap::new();
+        for action in Action::ALL {
+            for shortcut in &keymap.bindings[&action] {
+                if let Some(previous)=seen.insert(shortcut.clone(),action.config_name().into()) {
+                    anyhow::bail!("{} is assigned to both {} and {}",shortcut.display(),previous,action.config_name());
+                }
+            }
+        }
+        for (name, shortcuts) in [("previous_draft", &keymap.previous_draft), ("next_draft", &keymap.next_draft)] {
+            for shortcut in shortcuts {
+                if let Some(previous)=seen.insert(shortcut.clone(),name.into()) {
+                    anyhow::bail!("{} is assigned to both {} and {}",shortcut.display(),previous,name);
+                }
+            }
+        }
         Ok(keymap)
     }
+
     pub fn action_for(&self,key:&Keystroke)->Option<Action>{let shortcut=Shortcut::from_keystroke(key);Action::ALL.into_iter().find(|action|self.bindings[action].contains(&shortcut))}
     pub fn label(&self,action:Action)->String{self.bindings.get(&action).and_then(|v|v.first()).map_or_else(||"unbound".into(),Shortcut::display)}
     pub fn label_or(&self,action:Action,fallback:&str)->String{self.bindings.get(&action).and_then(|v|v.first()).map_or_else(||fallback.into(),Shortcut::display)}
-    pub fn install(&self,cx:&mut gpui::App){cx.bind_keys(self.gpui_bindings());}
+
+    pub fn install(&self,cx:&mut gpui::App){
+        cx.bind_keys(self.gpui_bindings());
+        let previous = self.previous_draft.clone();
+        let next = self.next_draft.clone();
+        let subscription = cx.intercept_keystrokes(move |event, window, cx| {
+            let shortcut = Shortcut::from_keystroke(&event.keystroke);
+            let direction = if previous.contains(&shortcut) {
+                Some(crate::command_editor::HistoryDirection::Previous)
+            } else if next.contains(&shortcut) {
+                Some(crate::command_editor::HistoryDirection::Next)
+            } else {
+                None
+            };
+            if direction.is_some_and(|direction| crate::command_editor::navigate_submitted_drafts(direction, window, cx)) {
+                cx.stop_propagation();
+            }
+        });
+        crate::command_editor::retain_history_interceptor(subscription, cx);
+    }
 
     /// The child owns ordinary terminal input, but `focus_editor` is Kea's explicit
     /// configurable host escape. Without it, submitting a draft strands a keyboard-only
@@ -153,7 +203,7 @@ impl Keymap {
         let mut result=vec![KeyBinding::new("tab",NoAction,Some("KeaTerminal")),KeyBinding::new("shift-tab",NoAction,Some("KeaTerminal"))];
         for action in [Action::Copy,Action::Cut,Action::Paste,Action::Undo,Action::Redo,Action::SelectAll,Action::Find] { for shortcut in &defaults.bindings[&action] { result.push(KeyBinding::new(&shortcut.specification(),NoAction,Some("Kea > Input"))); } }
         for action in Action::ALL {
-            let contexts:&[&str]=match action { Action::RunShell|Action::SendApplication|Action::Newline|Action::Complete|Action::PreviousDraft|Action::NextDraft=>&["KeaCommand > Input"], Action::FocusEditor=>&["Kea > Input","KeaChrome","KeaTerminal"], _=>&["Kea > Input","KeaChrome"] };
+            let contexts:&[&str]=match action { Action::RunShell|Action::SendApplication|Action::Newline|Action::Complete=>&["KeaCommand > Input"], Action::FocusEditor=>&["Kea > Input","KeaChrome","KeaTerminal"], _=>&["Kea > Input","KeaChrome"] };
             for shortcut in &self.bindings[&action] { for context in contexts { result.push(KeyBinding::new(&shortcut.specification(),Invoke{action},Some(context))); } }
         }
         for keymap in [&defaults,self] { for (action,shortcuts) in &keymap.bindings { if *action==Action::FocusEditor {continue;} for shortcut in shortcuts { result.push(KeyBinding::new(&shortcut.specification(),NoAction,Some("KeaTerminal"))); } } }
@@ -172,16 +222,16 @@ pub(crate) fn config_path()->Option<PathBuf>{
 
 #[cfg(test)] mod tests {
     use super::*; fn key(spec:&str)->Keystroke{Keystroke::parse(spec).unwrap()}
-    #[test] fn defaults_are_editor_native_and_submission_actions_are_distinct(){let map=Keymap::defaults_for(Platform::Other);assert_eq!(map.action_for(&key("ctrl-enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("ctrl-shift-enter")),Some(Action::SendApplication));assert_eq!(map.action_for(&key("tab")),Some(Action::Complete));assert_eq!(map.action_for(&key("ctrl-up")),Some(Action::PreviousDraft));assert_eq!(map.action_for(&key("ctrl-down")),Some(Action::NextDraft));assert_eq!(map.action_for(&key("enter")),None);assert_eq!(map.action_for(&key("shift-enter")),None);}
+    #[test] fn defaults_are_editor_native_and_submission_actions_are_distinct(){let map=Keymap::defaults_for(Platform::Other);assert_eq!(map.action_for(&key("ctrl-enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("ctrl-shift-enter")),Some(Action::SendApplication));assert_eq!(map.action_for(&key("tab")),Some(Action::Complete));assert_eq!(map.previous_draft,vec![Shortcut::parse("ctrl-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("ctrl-down").unwrap()]);assert_eq!(map.action_for(&key("enter")),None);assert_eq!(map.action_for(&key("shift-enter")),None);}
     #[test] fn terminal_like_enter_policy_is_configurable(){let map=Keymap::parse_overrides(Platform::Other,"run_shell = enter\nnewline = shift-enter").unwrap();assert_eq!(map.action_for(&key("enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("shift-enter")),Some(Action::Newline));}
     #[test] fn platform_defaults_separate_copy_from_interrupt(){let linux=Keymap::defaults_for(Platform::Other);let mac=Keymap::defaults_for(Platform::Mac);assert_eq!(linux.action_for(&key("ctrl-c")),Some(Action::Copy));assert_eq!(linux.action_for(&key("ctrl-shift-c")),Some(Action::Interrupt));assert_eq!(mac.action_for(&key("cmd-c")),Some(Action::Copy));assert_eq!(mac.action_for(&key("ctrl-c")),Some(Action::Interrupt));}
-    #[test] fn configuration_remaps_unbinds_and_rejects_ambiguity(){let map=Keymap::parse_overrides(Platform::Other,"copy = ctrl-shift-c\ninterrupt = ctrl-c\nrun_shell = alt-enter\nprevious_draft = alt-up\nundo = none").unwrap();assert_eq!(map.action_for(&key("ctrl-c")),Some(Action::Interrupt));assert_eq!(map.action_for(&key("ctrl-shift-c")),Some(Action::Copy));assert_eq!(map.action_for(&key("alt-enter")),Some(Action::RunShell));assert_eq!(map.action_for(&key("alt-up")),Some(Action::PreviousDraft));assert_eq!(map.action_for(&key("ctrl-z")),None);assert!(Keymap::parse_overrides(Platform::Other,"copy = ctrl-c\ninterrupt = ctrl-c").is_err());}
+    #[test] fn configuration_remaps_unbinds_and_rejects_ambiguity(){let map=Keymap::parse_overrides(Platform::Other,"copy = ctrl-shift-c\ninterrupt = ctrl-c\nrun_shell = alt-enter\nprevious_draft = alt-up\nnext_draft = alt-down\nundo = none").unwrap();assert_eq!(map.action_for(&key("ctrl-c")),Some(Action::Interrupt));assert_eq!(map.action_for(&key("ctrl-shift-c")),Some(Action::Copy));assert_eq!(map.action_for(&key("alt-enter")),Some(Action::RunShell));assert_eq!(map.previous_draft,vec![Shortcut::parse("alt-up").unwrap()]);assert_eq!(map.next_draft,vec![Shortcut::parse("alt-down").unwrap()]);assert_eq!(map.action_for(&key("ctrl-z")),None);assert!(Keymap::parse_overrides(Platform::Other,"copy = ctrl-up\nprevious_draft = ctrl-up").is_err());}
     #[test] fn live_terminal_has_only_the_explicit_composer_escape(){
         let map=Keymap::defaults_for(Platform::current()); let mut gpui_map=gpui::Keymap::new(vec![KeyBinding::new("tab",gpui_component::input::MoveDown,Some("Root"))]); gpui_map.add_bindings(map.gpui_bindings());
         let context=[gpui::KeyContext::parse("Root").unwrap(),gpui::KeyContext::parse("Kea").unwrap(),gpui::KeyContext::parse("KeaTerminal").unwrap()];
         let focus=if cfg!(target_os="macos"){"cmd-l"}else{"ctrl-l"};
         assert!(!gpui_map.bindings_for_input(&[key(focus)],&context).0.is_empty());
-        for spec in ["ctrl-c","ctrl-v","ctrl-z","ctrl-enter","ctrl-shift-enter","ctrl-up","ctrl-down","ctrl-shift-space","f6","f7","f8","f9","f10","tab","shift-tab"] { assert!(gpui_map.bindings_for_input(&[key(spec)],&context).0.is_empty(),"captured {spec}"); }
+        for spec in ["ctrl-c","ctrl-v","ctrl-z","ctrl-enter","ctrl-shift-enter","ctrl-shift-space","f6","f7","f8","f9","f10","tab","shift-tab"] { assert!(gpui_map.bindings_for_input(&[key(spec)],&context).0.is_empty(),"captured {spec}"); }
     }
     #[test] fn focus_editor_escape_can_be_remapped_or_disabled(){let remap=Keymap::parse_overrides(Platform::Other,"focus_editor = alt-l").unwrap();assert_eq!(remap.action_for(&key("alt-l")),Some(Action::FocusEditor));let disabled=Keymap::parse_overrides(Platform::Other,"focus_editor = none").unwrap();assert_eq!(disabled.action_for(&key("ctrl-l")),None);}
 }
