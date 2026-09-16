@@ -12,12 +12,11 @@ pub enum Appearance {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PostSubmitFocus {
-    /// Preserve the current safe behavior: after a successful submit, hand keyboard
-    /// ownership to the terminal application so prompts/questions are immediately usable.
-    #[default]
+    /// Hand keyboard ownership to the terminal application after a successful submit.
     Terminal,
     /// Keep the normal editor as the active surface so drafting the next command/prompt
-    /// can continue while output streams above it.
+    /// can continue while output streams above it. This is Kea's composer-first default.
+    #[default]
     Editor,
 }
 
@@ -45,7 +44,7 @@ impl Default for Settings {
             output_wrap: true,
             syntax_highlighting: true,
             show_blocks: false,
-            post_submit_focus: PostSubmitFocus::Terminal,
+            post_submit_focus: PostSubmitFocus::Editor,
         }
     }
 }
@@ -138,18 +137,19 @@ fn boolean(value: &str) -> Result<bool> {
 mod tests {
     use super::*;
     #[test]
-    fn defaults_follow_system_and_overrides_are_explicit() {
+    fn defaults_are_composer_first_and_overrides_are_explicit() {
+        assert_eq!(Settings::default().appearance, Appearance::System);
+        assert_eq!(Settings::default().post_submit_focus, PostSubmitFocus::Editor);
+        assert!(Settings::default().font_family.is_none());
+
         let settings = Settings::parse(
-            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = editor\n",
+            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\n",
         )
         .unwrap();
         assert_eq!(settings.appearance, Appearance::Dark);
         assert_eq!(settings.font_size, Some(16.));
         assert!(!settings.soft_wrap);
-        assert_eq!(settings.post_submit_focus, PostSubmitFocus::Editor);
-        assert_eq!(Settings::default().appearance, Appearance::System);
-        assert_eq!(Settings::default().post_submit_focus, PostSubmitFocus::Terminal);
-        assert!(Settings::default().font_family.is_none());
+        assert_eq!(settings.post_submit_focus, PostSubmitFocus::Terminal);
     }
     #[test]
     fn rejects_unknown_and_unsafe_sizes() {
