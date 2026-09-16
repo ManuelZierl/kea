@@ -16,7 +16,7 @@ use kea_alacritty::{Screen, TerminalPoint, TERMINAL_SCROLLBACK_LINES};
 use kea_app::{
     command_editor, completion, input,
     keybindings::{Action, Invoke, Keymap},
-    playback,
+    playback, session_files,
     settings::{Appearance, Settings},
     shell::ShellFlavor,
     terminal_mouse::{self, WheelDirection},
@@ -73,7 +73,6 @@ fn run() -> Result<()> {
         if arg == "--demo" {
             demo = true;
         } else if arg == "--direct" || arg == "--terminal-focus" {
-            // --direct is retained as a compatibility alias; there is no Direct mode.
             terminal_focus = true;
         } else if arg == "--replay" {
             replay = Some(PathBuf::from(args.next().context("--replay needs a path")?));
@@ -100,7 +99,7 @@ Terminal Tab and other representable keys go to the child application.
 The primary terminal screen has bounded mouse-wheel scrollback and drag selection; whole-view copy remains explicit.
 
 KEA_KEYBINDINGS and KEA_SETTINGS select explicit configuration files.
-Recording is opt-in, bounded and unencrypted; commands/output can contain secrets.";
+Sessions are temporary unless Save session or --record is used. Saved recordings are bounded and unencrypted; commands/output can contain secrets.";
             #[cfg(not(windows))]
             println!("{help}");
             #[cfg(windows)]
@@ -126,8 +125,6 @@ Recording is opt-in, bounded and unencrypted; commands/output can contain secret
 
     #[cfg(windows)]
     if !demo && !replay_requested && command.is_empty() {
-        // Keep the user's profile: shell configuration/completers are part of the
-        // environment Kea should preserve, not replace.
         command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
     }
 
@@ -304,35 +301,34 @@ impl KeaView {
             let disconnected = cx
                 .update(|window, cx| {
                     this.update(cx, |this, cx| {
-                    let completion = this.completion_rx.as_ref().map(|rx| rx.try_recv());
-                    match completion {
-                        Some(Ok((text, cursor, candidates))) => {
-                            this.completion_rx = None;
-                            if this.editor.read(cx).value().as_ref() == text
-                                && this.editor.read(cx).cursor() == cursor
-                            {
-                                this.completion_text = text;
-                                this.completion_cursor = cursor;
-                                this.candidates = candidates;
-                                this.notice = Some(if this.candidates.is_empty() {
-                                    "No local completion matches. Terminal Tab still uses the running application's native completion."
-                                        .into()
-                                } else {
-                                    "Choose a completion, or press Tab again to accept the first. Nothing is executed."
-                                        .into()
-                                });
+                        let completion = this.completion_rx.as_ref().map(|rx| rx.try_recv());
+                        match completion {
+                            Some(Ok((text, cursor, candidates))) => {
+                                this.completion_rx = None;
+                                if this.editor.read(cx).value().as_ref() == text
+                                    && this.editor.read(cx).cursor() == cursor
+                                {
+                                    this.completion_text = text;
+                                    this.completion_cursor = cursor;
+                                    this.candidates = candidates;
+                                    this.notice = Some(if this.candidates.is_empty() {
+                                        "No local completion matches. Terminal Tab still uses the running application's native completion."
+                                            .into()
+                                    } else {
+                                        "Choose a completion, or press Tab again to accept the first. Nothing is executed."
+                                            .into()
+                                    });
+                                    cx.notify();
+                                }
+                            }
+                            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                                this.completion_rx = None;
+                                this.notice =
+                                    Some("Completion worker stopped; the draft was not changed.".into());
                                 cx.notify();
                             }
+                            _ => {}
                         }
-                        Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                            this.completion_rx = None;
-                            this.notice =
-                                Some("Completion worker stopped; the draft was not changed.".into());
-                            cx.notify();
-                        }
-                        _ => {}
-                    }
-
                         let prompt_arrived = this.pump_session(cx);
                         if prompt_arrived {
                             this.complete_pending_run(window, cx);
@@ -383,6 +379,20 @@ impl KeaView {
         cx.notify();
     }
 
+    fn save_session(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = self.session.persistence_path() {
+            self.notice = Some(format!("Session is saving to {}", path.display()));
+            cx.notify();
+            return;
+        }
+        let result = session_files::new_recording_path().and_then(|path| {
+            self.session.start_persistence(&path)?;
+            self.notice = Some(format!("Saving session locally: {}", path.display()));
+            Ok(())
+        });
+        self.result(result, cx);
+    }
+
     fn pump_session(&mut self, cx: &mut Context<Self>) -> bool {
         let was_prompt_ready = self.document.prompt_ready();
         let pump = self.session.pump_observed();
@@ -420,7 +430,6 @@ impl KeaView {
         self.editor.update(cx, |state, cx| state.focus(window, cx));
     }
 
-    // Kept for document_view's existing helper calls.
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_editor(window, cx);
     }
@@ -447,7 +456,7 @@ impl KeaView {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.notice = Some("Requested copy of the selected terminal text.".into());
+        self.notice = Some("Copied terminal selection.".into());
         cx.notify();
     }
 
@@ -625,15 +634,9 @@ impl KeaView {
         self.result(result, cx);
     }
 
-    /// Run the draft in the integrated shell. Execution is authoritative; block
-    /// tracking is observational. We never queue a local block or make document
-    /// retention a prerequisite for sending the command.
     fn run_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
-            self.notice = Some(
-                "Focus the command draft before using Run in shell. This prevents a toolbar click from submitting hidden or selected text elsewhere."
-                    .into(),
-            );
+            self.notice = Some("Focus the composer before using Run in shell.".into());
             cx.notify();
             return;
         };
@@ -641,19 +644,13 @@ impl KeaView {
             return;
         }
         if self.pending_run.is_some() {
-            self.notice = Some(
-                "Waiting for the shell to confirm a fresh prompt; the draft has not run yet."
-                    .into(),
-            );
+            self.notice = Some("Waiting for a fresh shell prompt; the draft has not run yet.".into());
             cx.notify();
             return;
         }
         let _ = self.pump_session(cx);
         if !self.session.input_allowed() {
-            self.result(
-                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
-                cx,
-            );
+            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
             return;
         }
         let Some(shell) = self.shell else {
@@ -675,10 +672,7 @@ impl KeaView {
                     });
                     self.prompt_line.invalidate();
                     self.document.note_terminal_input();
-                    self.notice = Some(
-                        "Clearing the erased shell line and waiting for the shell's prompt before running the draft."
-                            .into(),
-                    );
+                    self.notice = Some("Recovering the shell prompt before running the draft.".into());
                     cx.notify();
                 } else {
                     self.result(result, cx);
@@ -687,13 +681,12 @@ impl KeaView {
             }
             self.result(
                 Err(anyhow::anyhow!(
-                    "Run in shell is waiting for a freshly reported prompt. Press Ctrl+C in the terminal to recover an uncertain shell line, or use Send text to terminal app when another application owns input."
+                    "Run in shell needs a freshly reported prompt. Use the terminal to recover the shell, or Send to app when another program owns input."
                 )),
                 cx,
             );
             return;
         }
-
         self.submit_shell(text, shell, window, cx);
     }
 
@@ -731,8 +724,6 @@ impl KeaView {
             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
             self.candidates.clear();
             window.focus(&self.focus);
-            // A start marker may create an optional block shortly afterward. If it
-            // cannot be retained, execution still proceeds normally.
             self.document_ui.page_start = None;
             self.document_ui.dirty = true;
         }
@@ -748,29 +739,23 @@ impl KeaView {
                 == Some(pending.text.as_str());
         if !unchanged {
             self.notice = Some(
-                "The command draft or focus changed while the shell prompt was recovering; nothing was run."
+                "The draft or focus changed while the shell prompt was recovering; nothing was run."
                     .into(),
             );
             cx.notify();
             return;
         }
         let Some(shell) = self.shell else {
-            self.notice =
-                Some("Shell integration became unavailable; the draft was not run.".into());
+            self.notice = Some("Shell integration became unavailable; the draft was not run.".into());
             cx.notify();
             return;
         };
         self.submit_shell(pending.text, shell, window, cx);
     }
 
-    /// Send editor text literally to whichever application currently owns stdin.
-    /// No shell wrapper, block boundary, cwd assumption or application-name sniffing.
     fn send_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
-            self.notice = Some(
-                "Focus the command draft before sending it to the terminal app. No text was sent."
-                    .into(),
-            );
+            self.notice = Some("Focus the composer before sending text to the terminal app.".into());
             cx.notify();
             return;
         };
@@ -778,10 +763,7 @@ impl KeaView {
             return;
         }
         if !self.session.input_allowed() {
-            self.result(
-                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
-                cx,
-            );
+            self.result(Err(anyhow::anyhow!("Return to LIVE before sending input.")), cx);
             return;
         }
         let result = input::paste(&text, self.session.bracketed_paste()).and_then(|mut bytes| {
@@ -834,7 +816,6 @@ impl KeaView {
         if self.completion_rx.is_some() {
             return;
         }
-
         let metadata_current = self.document.prompt_ready();
         let directory = metadata_current
             .then(|| self.document.directory().map(PathBuf::from))
@@ -984,9 +965,6 @@ impl KeaView {
         }
     }
 
-    /// Raw terminal keyboard bridge. Kea semantic shortcuts are masked in the
-    /// KeaTerminal context, so representable keys reach this encoder. Unencoded
-    /// composed text falls through to the platform text-input handler.
     fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_composition.update(cx, |state, cx| {
             state.marked_text_range(window, cx).is_some()
@@ -1143,51 +1121,36 @@ impl Render for KeaView {
                 .size_full(),
             );
 
+        let terminal_mode = if self.session.is_history() { "History" } else { "Live" };
+        let terminal_context = if terminal_mouse_reporting {
+            "Shift+drag selects"
+        } else if self.focus.is_focused(window) {
+            "Input active"
+        } else {
+            "Click to interact"
+        };
         let mut terminal_header = div()
-            .min_h(px(32.))
+            .min_h(px(30.))
             .flex_shrink_0()
             .flex()
-            .flex_wrap()
             .items_center()
             .gap_2()
-            .py_1()
             .px_2()
-            .border_1()
+            .border_b_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .font_weight(FontWeight::BOLD)
-                    .child(if self.session.is_history() {
-                        "HISTORY VIEW"
-                    } else {
-                        "LIVE TERMINAL"
-                    }),
-            )
-            .child(if self.session.is_history() {
-                "Read-only; the live process continues".to_string()
-            } else if terminal_mouse_reporting {
-                "Mouse reporting active; hold Shift and drag to select locally".to_string()
-            } else if self.focus.is_focused(window) {
-                "Focused: keyboard input goes to the terminal app".to_string()
-            } else {
-                "Click the terminal to focus it".to_string()
-            })
+            .child(div().font_weight(FontWeight::BOLD).child("Terminal"))
+            .child(terminal_mode)
+            .child(div().text_color(cx.theme().muted_foreground).child(terminal_context))
             .child(div().flex_1())
             .child(if terminal_display_offset == 0 {
-                format!("Following output · {terminal_history_size} retained lines")
+                format!("{terminal_history_size} lines")
             } else {
-                format!("Reading {terminal_display_offset} lines above bottom")
+                format!("{terminal_display_offset} above bottom")
             })
             .child(
                 Button::new("copy-terminal-selection")
                     .icon(IconName::Copy)
-                    .tooltip(if terminal_selection_available {
-                        "Copy selected terminal text"
-                    } else if terminal_mouse_reporting {
-                        "Hold Shift and drag over terminal text to enable copy"
-                    } else {
-                        "Drag over terminal text to enable copy"
-                    })
+                    .tooltip("Copy terminal selection")
                     .ghost()
                     .small()
                     .disabled(!terminal_selection_available)
@@ -1197,7 +1160,7 @@ impl Render for KeaView {
             terminal_header = terminal_header.child(
                 Button::new("terminal-bottom")
                     .icon(IconName::ArrowDown)
-                    .tooltip("Return terminal to latest output")
+                    .tooltip("Return to latest output")
                     .ghost()
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.return_terminal_to_bottom(cx))),
@@ -1222,9 +1185,11 @@ impl Render for KeaView {
             output = output.child(
                 div()
                     .id("block-inspector")
-                    .w(px(450.))
+                    .w(px(420.))
                     .h_full()
                     .flex_shrink_0()
+                    .border_l_1()
+                    .border_color(cx.theme().border)
                     .child(self.render_document(window, cx)),
             );
         }
@@ -1239,6 +1204,7 @@ impl Render for KeaView {
                         .px_2()
                         .border_1()
                         .border_color(cx.theme().border)
+                        .rounded_sm()
                         .cursor_pointer()
                         .child(label)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -1254,56 +1220,48 @@ impl Render for KeaView {
             .or_else(|| self.session.warning.clone())
             .unwrap_or_else(|| {
                 if self.session.is_history() {
-                    "History is read-only; the live process continues.".into()
-                } else if self.focus.is_focused(window) {
-                    "Terminal focused: keyboard input goes to the terminal app; Kea shortcuts are not reserved here."
-                        .into()
+                    "Read-only history; the live process continues.".into()
                 } else if self.document.prompt_ready() {
-                    "Command draft focused: the integrated local shell is ready for Run in shell."
-                        .into()
+                    "Shell ready".into()
+                } else if self.shell.is_some() {
+                    "Shell busy · Send to app remains available".into()
                 } else {
-                    "Command draft focused: Run is waiting for a fresh shell prompt signal; Send text to terminal app remains available."
-                        .into()
+                    "Terminal application owns input".into()
                 }
             });
-
         let directory = match (
             self.shell,
             self.document.directory(),
             self.document.prompt_ready(),
         ) {
-            (None, _, _) => "Shell directory: unavailable for this program".into(),
-            (_, Some(path), true) => format!("Current shell directory: {path}"),
-            (_, Some(path), false) => format!("Shell directory (last reported): {path}"),
-            _ => "Shell directory: waiting for shell integration".into(),
+            (None, _, _) => "cwd unavailable".into(),
+            (_, Some(path), true) => path.to_string(),
+            (_, Some(path), false) => format!("{path} (last shell cwd)"),
+            _ => "waiting for shell cwd".into(),
+        };
+        let persistence_status = if self.session.persistence_active() {
+            let name = self
+                .session
+                .persistence_path()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "session.kea".into());
+            format!("Saving · {name}")
+        } else if self.session.persistence_path().is_some() {
+            "Saving stopped".into()
+        } else {
+            "Temporary".into()
         };
 
-        let editor_focused = self.editor.focus_handle(cx).is_focused(window);
         let shell_state = if self.session.is_history() {
-            "Read-only history"
+            "History"
         } else if self.shell.is_none() {
-            "Integrated shell unavailable"
+            "App input"
         } else if self.document.prompt_ready() {
-            "Local shell: Ready"
+            "Ready"
         } else {
-            "Local shell: Waiting for a fresh prompt signal"
+            "Busy"
         };
-        let copy_view_label = if self.show_blocks && !self.session.is_history() {
-            "Copy command history"
-        } else {
-            "Copy visible terminal"
-        };
-        let timeline_weak = cx.entity().downgrade();
-        let timeline_hovered = self.timeline_hovered;
-        let timeline_bar_color = cx.theme().slider_bar;
-        let timeline_progress_color = cx.theme().primary;
-        let timeline_thumb_color = cx.theme().slider_thumb;
-        let timeline_ring_color = cx.theme().ring;
-        let timeline_position = format!(
-            "{} / {}",
-            playback::format_micros(position),
-            playback::format_micros(duration)
-        );
         let command_panel = div()
             .id("command-editor")
             .key_context("KeaCommand")
@@ -1313,40 +1271,25 @@ impl Render for KeaView {
             .flex_col()
             .gap_1()
             .p_2()
-            .border_1()
+            .border_t_1()
             .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().font_weight(FontWeight::BOLD).child("COMMAND DRAFT"))
-                    .child(if editor_focused {
-                        "Focused"
-                    } else {
-                        "Not focused"
-                    })
+                    .child(div().font_weight(FontWeight::BOLD).child("Composer"))
+                    .child(div().text_color(cx.theme().muted_foreground).child(shell_state))
                     .child(div().flex_1())
-                    .child(shell_state),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .items_center()
                     .child(self.control(
                         "run-draft",
-                        format!("Run in shell · {}", self.keymap.label(Action::RunShell)),
+                        format!("Run · {}", self.keymap.label(Action::RunShell)),
                         Action::RunShell,
                         cx,
                     ))
                     .child(self.control(
                         "send-draft",
-                        format!(
-                            "Send text to terminal app · {}",
-                            self.keymap.label(Action::SendApplication)
-                        ),
+                        format!("Send · {}", self.keymap.label(Action::SendApplication)),
                         Action::SendApplication,
                         cx,
                     )),
@@ -1354,7 +1297,7 @@ impl Render for KeaView {
             .child(
                 Input::new(&self.editor)
                     .flex_1()
-                    .min_h(px(70.))
+                    .min_h(px(72.))
                     .appearance(false)
                     .disabled(!self.session.input_allowed())
                     .bordered(false),
@@ -1371,202 +1314,221 @@ impl Render for KeaView {
                 .child(resizable_panel().child(output))
                 .child(
                     resizable_panel()
-                        .size(px(195.))
-                        .size_range(px(140.)..px(500.))
+                        .size(px(205.))
+                        .size_range(px(120.)..px(520.))
                         .child(command_panel),
                 ),
         );
-        let workspace = div()
+
+        let copy_view_label = if self.show_blocks && !self.session.is_history() {
+            "Copy command history"
+        } else {
+            "Copy visible terminal"
+        };
+        let mut toolbar = div()
+            .h(px(36.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(button("focus-terminal", "Terminal").on_click(
+                cx.listener(|this, _, window, _| window.focus(&this.focus)),
+            ))
+            .child(button("focus-input", "Composer").on_click(
+                cx.listener(|this, _, window, cx| this.focus_editor(window, cx)),
+            ))
+            .child(self.icon_control(
+                "blocks",
+                if self.show_blocks {
+                    IconName::PanelRightClose
+                } else {
+                    IconName::PanelRightOpen
+                },
+                if self.show_blocks {
+                    "Hide command history"
+                } else {
+                    "Show command history"
+                },
+                Action::ToggleBlocks,
+                cx,
+            ))
+            .child(self.icon_control(
+                "copy-document",
+                IconName::Copy,
+                copy_view_label,
+                Action::CopyDocument,
+                cx,
+            ))
+            .child(div().flex_1())
+            .child(
+                button(
+                    "save-session",
+                    if self.session.persistence_active() {
+                        "Saved"
+                    } else {
+                        "Save session"
+                    },
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.save_session(cx))),
+            );
+        if self.session.is_history() {
+            toolbar = toolbar
+                .child(self.icon_control(
+                    "previous",
+                    IconName::ArrowLeft,
+                    "Previous history event",
+                    Action::PreviousEvent,
+                    cx,
+                ))
+                .child(self.icon_control(
+                    "next",
+                    IconName::ArrowRight,
+                    "Next history event",
+                    Action::NextEvent,
+                    cx,
+                ))
+                .child(self.control(
+                    "play",
+                    if self.session.is_playing() { "Pause" } else { "Play" },
+                    Action::PlayPause,
+                    cx,
+                ))
+                .child(self.control("live", "Return live", Action::GoLive, cx));
+        } else if self.session.recording().events().len() > 1 {
+            toolbar = toolbar.child(
+                button("history", "History").on_click(cx.listener(|this, _, window, cx| {
+                    let result = this.session.step(-1);
+                    window.focus(&this.focus);
+                    this.result(result, cx);
+                })),
+            );
+        }
+
+        let timeline_weak = cx.entity().downgrade();
+        let timeline_hovered = self.timeline_hovered;
+        let timeline_bar_color = cx.theme().slider_bar;
+        let timeline_progress_color = cx.theme().primary;
+        let timeline_thumb_color = cx.theme().slider_thumb;
+        let timeline_ring_color = cx.theme().ring;
+        let timeline_position = format!(
+            "{} / {}",
+            playback::format_micros(position),
+            playback::format_micros(duration)
+        );
+        let history_timeline = div()
+            .h(px(34.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(div().font_weight(FontWeight::BOLD).child("History"))
+            .child(
+                div()
+                    .id("timeline")
+                    .flex_1()
+                    .h(px(26.))
+                    .cursor_pointer()
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        this.timeline_hovered = *hovered;
+                        cx.notify();
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            this.seek_x(event.position.x, window, cx);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.seek_x(event.position.x, window, cx);
+                        }
+                    }))
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                let bounds = playback_track_bounds(bounds);
+                                let _ = timeline_weak.update(cx, |this, _| {
+                                    this.timeline_track_bounds = Some(bounds);
+                                });
+                            },
+                            move |bounds, _, window, _| {
+                                let track = playback_track_bounds(bounds);
+                                window.paint_quad(
+                                    fill(track, timeline_bar_color).corner_radii(px(3.)),
+                                );
+                                if fraction > 0.0 {
+                                    window.paint_quad(
+                                        fill(
+                                            Bounds::new(
+                                                track.origin,
+                                                size(
+                                                    track.size.width * fraction,
+                                                    track.size.height,
+                                                ),
+                                            ),
+                                            timeline_progress_color,
+                                        )
+                                        .corner_radii(px(3.)),
+                                    );
+                                }
+                                let diameter = if timeline_hovered { 16.0 } else { 14.0 };
+                                let radius = diameter / 2.0;
+                                let center = track.origin
+                                    + point(
+                                        track.size.width * fraction,
+                                        track.size.height / 2.0,
+                                    );
+                                window.paint_quad(
+                                    fill(
+                                        Bounds::new(
+                                            center - point(px(radius), px(radius)),
+                                            size(px(diameter), px(diameter)),
+                                        ),
+                                        timeline_thumb_color,
+                                    )
+                                    .corner_radii(px(radius))
+                                    .border_widths(px(2.))
+                                    .border_color(timeline_ring_color),
+                                );
+                            },
+                        )
+                        .size_full(),
+                    ),
+            )
+            .child(div().w(px(145.)).flex_shrink_0().child(timeline_position));
+
+        let status_bar = div()
+            .h(px(24.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_2()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(div().min_w_0().overflow_hidden().child(directory))
+            .child(div().flex_1())
+            .child(status)
+            .child(div().text_color(cx.theme().muted_foreground).child(persistence_status));
+
+        let mut workspace = div()
             .id("workspace")
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .p_3()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .flex_shrink_0()
-                    .child(div().font_weight(FontWeight::BOLD).child("SESSION"))
-                    .child(self.icon_control(
-                        "previous",
-                        IconName::ArrowLeft,
-                        format!(
-                            "Previous event · {}",
-                            self.keymap.label(Action::PreviousEvent)
-                        ),
-                        Action::PreviousEvent,
-                        cx,
-                    ))
-                    .child(self.icon_control(
-                        "next",
-                        IconName::ArrowRight,
-                        format!("Next event · {}", self.keymap.label(Action::NextEvent)),
-                        Action::NextEvent,
-                        cx,
-                    ))
-                    .child(self.control(
-                        "play",
-                        if self.session.is_playing() {
-                            "Pause"
-                        } else {
-                            "Play"
-                        },
-                        Action::PlayPause,
-                        cx,
-                    ))
-                    .child(self.control("live", "Live session", Action::GoLive, cx))
-                    .child(div().ml_2().font_weight(FontWeight::BOLD).child("VIEW"))
-                    .child(self.icon_control(
-                        "blocks",
-                        if self.show_blocks {
-                            IconName::PanelRightClose
-                        } else {
-                            IconName::PanelRightOpen
-                        },
-                        if self.show_blocks {
-                            "Hide command history"
-                        } else {
-                            "Show command history"
-                        },
-                        Action::ToggleBlocks,
-                        cx,
-                    ))
-                    .child(self.icon_control(
-                        "copy-document",
-                        IconName::Copy,
-                        copy_view_label,
-                        Action::CopyDocument,
-                        cx,
-                    ))
-                    .child(div().ml_2().font_weight(FontWeight::BOLD).child("INPUT"))
-                    .child(
-                        button("paste-terminal", "Paste to terminal app")
-                            .on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx))),
-                    )
-                    .child(button("focus-input", "Focus command draft").on_click(
-                        cx.listener(|this, _, window, cx| this.focus_editor(window, cx)),
-                    )),
-            )
-            .child(
-                div()
-                    .h(px(20.))
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(directory),
-            )
-            .child(session_split)
-            .child(
-                div()
-                    .h(px(20.))
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(status),
-            )
-            .child(
-                div()
-                    .h(px(36.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .w(px(76.))
-                            .flex_shrink_0()
-                            .font_weight(FontWeight::BOLD)
-                            .child("PLAYBACK"),
-                    )
-                    .child(
-                        div()
-                            .id("timeline")
-                            .flex_1()
-                            .h(px(28.))
-                            .cursor_pointer()
-                            .on_hover(cx.listener(|this, hovered, _, cx| {
-                                this.timeline_hovered = *hovered;
-                                cx.notify();
-                            }))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                                    this.seek_x(event.position.x, window, cx);
-                                }),
-                            )
-                            .on_mouse_move(cx.listener(
-                                |this, event: &MouseMoveEvent, window, cx| {
-                                    if event.pressed_button == Some(MouseButton::Left) {
-                                        this.seek_x(event.position.x, window, cx);
-                                    }
-                                },
-                            ))
-                            .child(
-                                canvas(
-                                    move |bounds, _, cx| {
-                                        let bounds = playback_track_bounds(bounds);
-                                        let _ = timeline_weak.update(cx, |this, _| {
-                                            this.timeline_track_bounds = Some(bounds);
-                                        });
-                                    },
-                                    move |bounds, _, window, _| {
-                                        let track = playback_track_bounds(bounds);
-                                        window.paint_quad(
-                                            fill(track, timeline_bar_color).corner_radii(px(3.)),
-                                        );
-                                        if fraction > 0.0 {
-                                            window.paint_quad(
-                                                fill(
-                                                    Bounds::new(
-                                                        track.origin,
-                                                        size(
-                                                            track.size.width * fraction,
-                                                            track.size.height,
-                                                        ),
-                                                    ),
-                                                    timeline_progress_color,
-                                                )
-                                                .corner_radii(px(3.)),
-                                            );
-                                        }
-                                        let diameter = if timeline_hovered { 16.0 } else { 14.0 };
-                                        let radius = diameter / 2.0;
-                                        let center = track.origin
-                                            + point(
-                                                track.size.width * fraction,
-                                                track.size.height / 2.0,
-                                            );
-                                        window.paint_quad(
-                                            fill(
-                                                Bounds::new(
-                                                    center - point(px(radius), px(radius)),
-                                                    size(px(diameter), px(diameter)),
-                                                ),
-                                                timeline_thumb_color,
-                                            )
-                                            .corner_radii(px(radius))
-                                            .border_widths(px(2.))
-                                            .border_color(timeline_ring_color),
-                                        );
-                                    },
-                                )
-                                .size_full(),
-                            ),
-                    )
-                    .child(div().w(px(150.)).flex_shrink_0().child(timeline_position)),
-            )
-            .child(div().h(px(20.)).flex_shrink_0().child(format!(
-                "{} observed command blocks · {}",
-                self.document.blocks().len(),
-                if self.session.is_running() {
-                    "process running"
-                } else {
-                    "ended / recording"
-                }
-            )));
+            .child(toolbar)
+            .child(session_split);
+        if self.session.is_history() {
+            workspace = workspace.child(history_timeline);
+        }
+        workspace = workspace.child(status_bar);
 
         div()
             .id("kea")
@@ -1618,8 +1580,6 @@ fn terminal_font_metrics(window: &mut Window, cx: &mut App) -> TerminalFontMetri
         (theme.mono_font_family.clone(), theme.mono_font_size)
     };
     let mut terminal_font = font(font_family);
-    // Terminal cells must not change width because a programming font turns
-    // character sequences into contextual ligatures.
     terminal_font.features = FontFeatures::disable_ligatures();
 
     let text_system = window.text_system();
