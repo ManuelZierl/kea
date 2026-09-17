@@ -13,8 +13,32 @@ use std::{sync::Arc, time::Duration};
 ///
 /// The supplied animation is 124 frames at 24 fps. The component stores 62
 /// vector poses sampled from every second video frame, without embedding a
-/// video or raster animation.
-pub const KEA_LOGO_PECK_DURATION: Duration = Duration::from_millis(5_167);
+/// video or raster animation. Counters are opened up relative to the source
+/// (larger eye hole, wider beak gap) so the bird stays legible at small sizes
+/// such as the composer prefix. Playback runs 20% faster than the source plus
+/// another 10% (effective ~33 fps) so the small bird feels responsive.
+pub const KEA_LOGO_PECK_DURATION: Duration = Duration::from_millis(3_721);
+
+/// Number of vector poses in one peck cycle.
+pub const FRAME_COUNT: usize = logo_frames::FRAME_COUNT;
+
+/// Decode one animation frame for `color` without displaying it.
+///
+/// GPUI paints nothing for an SVG frame until its asset is decoded, which made
+/// the first typed peck flicker until every frame had been seen once. Warming
+/// all frames after launch (a few pump ticks at a time) keeps that decode work
+/// out of the typing path.
+pub fn frame_image(frame: usize, color: Hsla) -> Arc<Image> {
+    Arc::new(Image::from_bytes(
+        ImageFormat::Svg,
+        frame_svg(logo_frames::path(frame), color),
+    ))
+}
+
+/// Decode one frame into the asset cache; the next paint of that frame is free.
+pub fn warm_frame(frame: usize, color: Hsla, window: &mut Window, cx: &mut App) {
+    let _ = frame_image(frame, color).get_render_image(window, cx);
+}
 
 /// Reusable animated Kea logo.
 ///
@@ -75,20 +99,65 @@ impl KeaLogoAnimation {
     }
 }
 
+/// Static Kea logo: the resting bird (animation frame 0) without any animation.
+///
+/// Use this wherever the logo is idle; switch to [`KeaLogoAnimation`] for a
+/// complete peck cycle. Both render the identical resting bird, so swapping
+/// between them at a cycle boundary is seamless.
+#[derive(IntoElement)]
+pub struct KeaLogo {
+    size: Pixels,
+    color: Option<Hsla>,
+}
+
+impl KeaLogo {
+    /// Create a static logo with a default size of 96 px.
+    pub fn new() -> Self {
+        Self {
+            size: px(96.),
+            color: None,
+        }
+    }
+
+    /// Set both width and height of the square logo surface.
+    pub fn size(mut self, size: Pixels) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Override the theme foreground color while keeping the logo monochrome.
+    pub fn color(mut self, color: Hsla) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+impl Default for KeaLogo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RenderOnce for KeaLogo {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        KeaLogoFrame {
+            size: self.size,
+            frame: 0,
+            color: self.color.unwrap_or(cx.theme().foreground),
+        }
+    }
+}
+
 #[derive(IntoElement)]
 struct KeaLogoFrame {
     size: Pixels,
     frame: usize,
     color: Hsla,
 }
-
 impl RenderOnce for KeaLogoFrame {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let image = Image::from_bytes(
-            ImageFormat::Svg,
-            frame_svg(logo_frames::path(self.frame), self.color),
-        );
-        img(Arc::new(image)).size(self.size)
+        let image = frame_image(self.frame, self.color);
+        img(image).size(self.size)
     }
 }
 
@@ -166,5 +235,18 @@ mod tests {
         assert!((1..logo_frames::FRAME_COUNT - 1)
             .map(logo_frames::path)
             .any(|frame| frame != logo_frames::path(0)));
+    }
+
+    #[test]
+    fn frame_images_are_stable_cache_keys() {
+        // Warming works only because the painted element builds the identical
+        // bytes (and therefore asset id) for the same frame and color.
+        let color = Hsla::black();
+        assert_eq!(frame_image(0, color).id(), frame_image(0, color).id());
+        assert_ne!(frame_image(0, color).id(), frame_image(1, color).id());
+        assert_ne!(
+            frame_image(0, color).id(),
+            frame_image(0, Hsla::white()).id()
+        );
     }
 }

@@ -118,6 +118,7 @@ The default policy reserves Shift as Kea's explicit terminal-emulator escape:
 | Left press/drag/release | child, using its negotiated reporting mode |
 | Ctrl+Left press/drag/release | child, with Ctrl encoded where supported |
 | Alt+Left press/drag/release | child, with Alt encoded where supported |
+| Shift+pointer motion with no button | Kea suppresses it so positioning for a reserved gesture cannot update the child |
 | Shift+Left press/drag/release | Kea owns the complete gesture; dragging creates a simple selection |
 | Shift+Alt+Left press/drag/release | Kea owns the complete gesture; dragging creates a block selection |
 
@@ -171,9 +172,11 @@ motion and release:
 
 Only ownership is latched: forwarded motion/release uses each event's current
 modifiers and the currently negotiated reporting mode. Click-only tracking
-does not receive motion. Hover reports do not clear local interaction or change
-the reading viewport. A release without a press owned by this surface is not
-forwarded.
+does not receive motion. Unreserved hover reports do not clear local
+interaction or change the reading viewport. Shift-modified hover is suppressed
+while the local override is enabled, as is hover during explicit local
+selection; opting out forwards Shift hover with its modifier. A release without
+a press owned by this surface is not forwarded.
 
 This prevents stuck button state and mixed host/child side effects.
 
@@ -405,6 +408,7 @@ drag → collapse → click → focus away/back → toggle transitions.
 
 - the default setting keeps Shift+drag local during reporting;
 - the default setting also consumes Shift+click as one complete local gesture;
+- the default setting suppresses Shift-modified hover before a local press;
 - `shift_mouse_selects_locally = false` forwards Shift bits in Legacy, UTF-8,
   and SGR press/motion/release reports;
 - no partial child sequence escapes from a locally owned gesture;

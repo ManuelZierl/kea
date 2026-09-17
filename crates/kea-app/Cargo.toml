@@ -20,6 +20,7 @@ gpui-component = { version = "=0.5.1", default-features = false }
 gpui-component-assets = "=0.5.1"
 anyhow.workspace = true
 serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 tree-sitter-bash = "=0.23.3"
 
 [dev-dependencies]

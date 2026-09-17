@@ -56,6 +56,24 @@ expected = b' \x03\x16\r\t\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~\0'
 assert actual == expected, (actual, expected)
 PY
 echo 'Actual Space/Ctrl/Enter/Tab/function-key delivery passed.'
+# Supported minimum width: a long status message must remain inside the fixed
+# status row instead of wrapping character-by-character over the composer.
+xdotool windowsize --sync "$window" 760 500
+eval "$(xdotool getwindowgeometry --shell "$window")"
+focus_editor
+xdotool type --clearmodifiers --delay 10 'layout probe'
+key ctrl+Return
+import -window "$window" smoke-artifacts/narrow-layout.png
+export STATUS_OVERFLOW_MEAN="$(convert smoke-artifacts/narrow-layout.png -crop "${WIDTH}x40+0+$((HEIGHT-68))" -colorspace gray -threshold 30% -format '%[fx:mean]' info:)"
+python3 - <<'PY'
+import os
+mean = float(os.environ['STATUS_OVERFLOW_MEAN'])
+assert mean == 0.0, f'status text escaped its row: crop mean={mean}'
+PY
+key ctrl+a BackSpace
+xdotool windowsize --sync "$window" 1050 780
+eval "$(xdotool getwindowgeometry --shell "$window")"
+sleep .3
 focus_editor
 import -window "$window" smoke-artifacts/terminal-editor-focus.png
 put_clipboard $'message one\nmessage two'
@@ -211,7 +229,7 @@ cleanup_app
 # emits no partial press/release to the child. Disabling the policy forwards the
 # same gesture with the current Shift modifier encoded in both SGR events.
 printf 'theme = dark\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
-./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-default.bin --mouse >smoke-artifacts/selection-default.log 2>&1 & kea_pid=$!
+./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-default.bin --motion >smoke-artifacts/selection-default.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection-default.log
 selection_before=$(wc -c < smoke-artifacts/selection-default.bin)
 xdotool keydown Shift
@@ -247,8 +265,10 @@ PY
 # before exercising a new child-owned gesture.
 key Escape
 # Adding Shift after a child-owned press cannot turn its remaining events local.
+xdotool mousemove --window "$window" 25 160
+sleep .1
 export SELECTION_BEFORE="$(wc -c < smoke-artifacts/selection-default.bin)"
-xdotool mousemove --window "$window" 25 160 mousedown 1
+xdotool mousedown 1
 xdotool keydown Shift
 xdotool mousemove --window "$window" 190 160 mouseup 1
 xdotool keyup Shift
@@ -265,7 +285,7 @@ PY
 cleanup_app
 
 printf 'theme = dark\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
-./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-forwarded.bin --mouse >smoke-artifacts/selection-forwarded.log 2>&1 & kea_pid=$!
+./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-forwarded.bin --motion >smoke-artifacts/selection-forwarded.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection-forwarded.log
 xdotool keydown Shift
 xdotool mousemove --window "$window" 25 160
@@ -279,7 +299,8 @@ from pathlib import Path
 import re
 actual = Path('smoke-artifacts/selection-forwarded.bin').read_bytes()
 reports = re.findall(rb'\x1b\[<(\d+);\d+;\d+([Mm])', actual)
-assert reports[0] == (b'4', b'M') and reports[-1] == (b'4', b'm'), actual
+assert reports[0] == (b'39', b'M'), actual
+assert (b'4', b'M') in reports and reports[-1] == (b'4', b'm'), actual
 assert (b'36', b'M') in reports, actual
 PY
 cleanup_app
@@ -321,6 +342,18 @@ clipboard >smoke-artifacts/selected-block-after.txt
 cmp smoke-artifacts/selected-block.txt smoke-artifacts/selected-block-after.txt
 focus_editor
 import -window "$window" smoke-artifacts/editor-focus-after-block.png
+# The composer editor must consume the panel's available height. Enter enough
+# lines to expose the old 72 px collapse, then click the first visible row: it
+# must still be LINE-1 rather than a prematurely scrolled later line.
+xdotool type --clearmodifiers --delay 10 'LINE-1'
+for line in 2 3 4 5 6; do
+  key Return
+  xdotool type --clearmodifiers --delay 10 "LINE-$line"
+done
+xdotool mousemove --window "$window" 85 "$((HEIGHT-170))" click 1
+key Home shift+End ctrl+c
+assert_clipboard LINE-1
+key ctrl+a BackSpace
 xdotool type --clearmodifiers --delay 10 'printf first'
 key Return
 xdotool type --clearmodifiers --delay 10 'printf second'

@@ -3,8 +3,9 @@
 use super::{button, command_editor, KeaView};
 use gpui::{prelude::*, *};
 use gpui_component::{
+    button::{Button, ButtonVariants as _},
     input::{Input, InputState},
-    ActiveTheme,
+    ActiveTheme, Disableable as _, IconName, Sizable as _,
 };
 use kea_document::status_label;
 use std::collections::{HashMap, HashSet};
@@ -46,6 +47,10 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let line_height = f32::from(super::terminal_font_metrics(window, cx).line_height)
+            .max(f32::from(cx.theme().mono_font_size) * super::COMPONENT_LINE_HEIGHT_EM);
+        let compact_chrome = super::uses_compact_chrome(window, cx)
+            || f32::from(window.viewport_size().width) < 900.;
         let query = self.document_ui.filter.read(cx).value().to_lowercase();
         // Pin the existing page before new output/blocks change the latest-page offset.
         if self.document_ui.page_start.is_none()
@@ -116,42 +121,79 @@ impl KeaView {
                 .flex_col()
                 .border_1()
                 .border_color(cx.theme().border);
-            panel = panel.child(
+            let block_actions =
                 div()
                     .flex()
-                    .items_center()
-                    .gap_2()
-                    .p_1()
+                    .flex_wrap()
+                    .gap_1()
                     .child(
-                        div()
-                            .flex_1()
-                            .child(format!("#{id}   {}", status_label(block))),
-                    )
-                    .child(
-                        button("collapse", if collapsed { "Expand" } else { "Collapse" }).on_click(
-                            cx.listener(move |this, _, _, cx| {
+                        Button::new(("collapse", id))
+                            .when(compact_chrome, |button| {
+                                button.icon(if collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                            })
+                            .when(!compact_chrome, |button| {
+                                button.label(if collapsed { "Expand" } else { "Collapse" })
+                            })
+                            .tooltip(if collapsed {
+                                "Expand command block"
+                            } else {
+                                "Collapse command block"
+                            })
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 if !this.document_ui.collapsed.remove(&id) {
                                     this.document_ui.collapsed.insert(id);
                                 }
                                 cx.notify();
-                            }),
-                        ),
+                            })),
                     )
-                    .child(button("reuse", "Edit as new").on_click(
-                        cx.listener(move |this, _, window, cx| this.reuse_block(id, window, cx)),
-                    ))
-                    .child(button("copy-block", "Copy block").on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            if let Some(block) = this.document.blocks().iter().find(|b| b.id == id)
-                            {
-                                cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                                    "$ {}\n{}",
-                                    block.input,
-                                    block.plain_output()
-                                )));
-                            }
-                        },
-                    ))),
+                    .child(
+                        Button::new(("reuse", id))
+                            .when(compact_chrome, |button| button.icon(IconName::Redo2))
+                            .when(!compact_chrome, |button| button.label("Edit as new"))
+                            .tooltip("Copy this command into a new draft without running it")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reuse_block(id, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("copy-block", id))
+                            .when(compact_chrome, |button| button.icon(IconName::Copy))
+                            .when(!compact_chrome, |button| button.label("Copy block"))
+                            .tooltip("Copy this command and its retained output")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| this.copy_block(id, cx))),
+                    );
+            panel = panel.child(
+                div()
+                    .flex()
+                    .w_full()
+                    .when(compact_chrome, |header| header.flex_col())
+                    .when(!compact_chrome, |header| header.items_center())
+                    .gap_2()
+                    .p_1()
+                    .child(
+                        div()
+                            .when(compact_chrome, |identity| identity.w_full().flex_shrink_0())
+                            .when(!compact_chrome, |identity| {
+                                identity
+                                    .min_w_0()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                            })
+                            .whitespace_nowrap()
+                            .child(format!("#{id}   {}", status_label(block))),
+                    )
+                    .child(block_actions),
             );
             if !collapsed {
                 if !self.document_ui.visible.contains_key(&id) {
@@ -204,7 +246,8 @@ impl KeaView {
                         .disabled(true)
                         .appearance(false)
                         .bordered(false)
-                        .h(px((view.line_count as f32 * 22.0 + 22.0).clamp(66.0, 330.0))),
+                        .h(px(((view.line_count + 2) as f32 * line_height)
+                            .clamp(3. * line_height, 15. * line_height))),
                 );
                 if view.pending {
                     panel = panel.child(
@@ -240,43 +283,95 @@ impl KeaView {
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap_2()
+                    .flex_col()
+                    .gap_1()
                     .flex_shrink_0()
-                    .child(div().flex_1().child(Input::new(&self.document_ui.filter)))
                     .child(
-                        button("older", "Older").on_click(cx.listener(move |this, _, _, cx| {
-                            this.document_ui.page_start = Some(start.saturating_sub(PAGE_SIZE));
-                            cx.notify();
-                        })),
+                        div()
+                            .min_w_0()
+                            .w_full()
+                            .child(Input::new(&self.document_ui.filter)),
                     )
                     .child(
-                        button("newer", "Newer").on_click(cx.listener(move |this, _, _, cx| {
-                            this.document_ui.page_start =
-                                Some((start + PAGE_SIZE).min(total.saturating_sub(PAGE_SIZE)));
-                            cx.notify();
-                        })),
-                    )
-                    .child(button("latest-blocks", "Latest").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.focus_active(window, cx);
-                            this.document_ui.page_start = None;
-                            this.document_scroll.scroll_to_bottom();
-                            cx.notify();
-                        },
-                    )))
-                    .child(format!(
-                        "{}–{end} / {total}",
-                        if total == 0 { 0 } else { start + 1 }
-                    )),
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("older")
+                                    .when(compact_chrome, |button| button.icon(IconName::ArrowLeft))
+                                    .when(!compact_chrome, |button| button.label("Older"))
+                                    .tooltip("Show older command blocks")
+                                    .ghost()
+                                    .small()
+                                    .disabled(start == 0)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.document_ui.page_start =
+                                            Some(start.saturating_sub(PAGE_SIZE));
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("newer")
+                                    .when(compact_chrome, |button| {
+                                        button.icon(IconName::ArrowRight)
+                                    })
+                                    .when(!compact_chrome, |button| button.label("Newer"))
+                                    .tooltip("Show newer command blocks")
+                                    .ghost()
+                                    .small()
+                                    .disabled(end >= total)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.document_ui.page_start = Some(
+                                            (start + PAGE_SIZE)
+                                                .min(total.saturating_sub(PAGE_SIZE)),
+                                        );
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("latest-blocks")
+                                    .when(compact_chrome, |button| button.icon(IconName::ArrowDown))
+                                    .when(!compact_chrome, |button| button.label("Latest"))
+                                    .tooltip("Show the latest command blocks")
+                                    .ghost()
+                                    .small()
+                                    .disabled(end >= total && self.document_ui.page_start.is_none())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.focus_active(window, cx);
+                                        this.document_ui.page_start = None;
+                                        this.document_scroll.scroll_to_bottom();
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(!compact_chrome, |navigation| {
+                                navigation.child(format!(
+                                    "{}–{end} / {total}",
+                                    if total == 0 { 0 } else { start + 1 }
+                                ))
+                            }),
+                    ),
             )
             .child(blocks)
             .into_any_element()
     }
-    fn reuse_block(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.session.input_allowed() {
-            return;
+
+    fn copy_block(&mut self, id: u64, cx: &mut Context<Self>) {
+        if let Some(block) = self.document.blocks().iter().find(|block| block.id == id) {
+            cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                "$ {}\n{}",
+                block.input,
+                block.plain_output()
+            )));
+            self.notice = Some(format!("Copy requested for block #{id}."));
+        } else {
+            self.notice = Some("That command block is no longer retained.".into());
         }
+        cx.notify();
+    }
+
+    fn reuse_block(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         if !self.editor.read(cx).value().is_empty() {
             self.notice = Some(
                 "Your draft is not empty. Clear it before editing a previous command as new."
@@ -288,9 +383,13 @@ impl KeaView {
         if let Some(block) = self.document.blocks().iter().find(|block| block.id == id) {
             self.editor =
                 command_editor::new_draft(self.shell, &self.settings, &block.input, window, cx);
+            self.observe_composer(cx);
             self.focus_active(window, cx);
             self.notice =
                 Some("Previous command copied to a new draft; nothing has been executed.".into());
+            cx.notify();
+        } else {
+            self.notice = Some("That command block is no longer retained.".into());
             cx.notify();
         }
     }

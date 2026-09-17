@@ -9,7 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     input::{self as edit, Input, InputState},
-    resizable::{resizable_panel, v_resizable},
+    resizable::{h_resizable, resizable_panel, v_resizable},
     ActiveTheme, Disableable as _, IconName, Root, Selectable as _, Sizable as _, Theme, ThemeMode,
     TitleBar,
 };
@@ -17,6 +17,10 @@ use kea_alacritty::{MouseTracking, Screen, TerminalPoint, TERMINAL_SCROLLBACK_LI
 use kea_app::{
     command_editor, completion, draft_history, input,
     keybindings::{Action, Invoke, Keymap},
+    logo::{
+        warm_frame, KeaLogo, KeaLogoAnimation, FRAME_COUNT as LOGO_FRAME_COUNT,
+        KEA_LOGO_PECK_DURATION,
+    },
     playback, session_files,
     settings::{Appearance, Settings},
     shell::ShellFlavor,
@@ -27,9 +31,15 @@ use kea_app::{
 use kea_document::Document;
 use kea_session::{Observed, Session};
 use shell_metadata::ShellMetadata;
-use std::{ffi::OsString, fs::File, path::PathBuf, time::Duration};
+use std::{
+    ffi::OsString,
+    fs::File,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const FALLBACK_CELL_WIDTH_EM: f32 = 0.6;
+const COMPONENT_LINE_HEIGHT_EM: f32 = 1.25;
 const MAX_SCROLL_LINES_PER_EVENT: i32 = TERMINAL_SCROLLBACK_LINES as i32;
 const MAX_MOUSE_WHEEL_REPORTS_PER_EVENT: i32 = 32;
 const TERMINAL_SELECTION_BACKGROUND: u32 = 0x264f78;
@@ -224,6 +234,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                     ..TitleBar::title_bar_options()
                 }),
                 window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
+                // Wayland/X11 group the window under this id so the taskbar
+                // can match it to the installed kea.desktop file and bird icon.
+                app_id: Some("kea".into()),
                 ..Default::default()
             };
             if let Err(error) = cx.open_window(options, |window, cx| {
@@ -273,6 +286,11 @@ struct KeaView {
     terminal_scroll_remainder: f32,
     terminal_mouse_scroll_remainder: f32,
     terminal_gesture: Option<terminal_selection::Gesture>,
+    // Screen bounds latched at press time. The terminal header above the canvas
+    // has a fixed height, but latching still keeps an active drag stable if any
+    // ancestor layout shifts mid-gesture: the same screen position must map to
+    // the same terminal cell until release.
+    terminal_gesture_bounds: Option<Bounds<Pixels>>,
     timeline_track_bounds: Option<Bounds<Pixels>>,
     timeline_hovered: bool,
     prompt_line: PromptLineTracker,
@@ -287,6 +305,19 @@ struct KeaView {
     document_scroll: ScrollHandle,
     focus: FocusHandle,
     notice: Option<String>,
+    warning: Option<String>,
+    // Composer bird: typing starts one full peck cycle; further typing while a
+    // cycle plays only requests another cycle afterwards, so the animation
+    // always finishes its last loop instead of stopping abruptly. `gen`
+    // restarts the one-shot animation via a fresh element id.
+    composer_logo_gen: usize,
+    composer_logo_active: bool,
+    composer_logo_again: bool,
+    composer_logo_deadline: Option<Instant>,
+    // SVG frames paint nothing until decoded; frames are warmed a few pump
+    // ticks at a time so the first peck never flickers.
+    logo_warmed_frames: usize,
+    _composer_change: Subscription,
     _pump: Task<()>,
     _appearance: Subscription,
     _filter_change: Subscription,
@@ -315,6 +346,11 @@ impl KeaView {
         }
         let terminal_composition = cx.new(|cx| InputState::new(window, cx));
         let document_ui = document_view::DocumentUi::new(window, cx);
+        let composer_change = cx.subscribe(&editor, |this, _, event: &edit::InputEvent, cx| {
+            if matches!(event, edit::InputEvent::Change) {
+                this.note_composer_typed(cx);
+            }
+        });
         let filter_change = cx.subscribe(
             &document_ui.filter,
             |this, _, event: &edit::InputEvent, cx| {
@@ -331,6 +367,8 @@ impl KeaView {
         });
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             apply_appearance(&this.settings, window, cx);
+            // A new theme means new tinted frame bytes; re-warm the cache.
+            this.logo_warmed_frames = 0;
             cx.notify();
         });
         let pump = cx.spawn_in(window, async move |this, cx| loop {
@@ -376,6 +414,23 @@ impl KeaView {
                         if prompt_arrived {
                             this.complete_pending_run(window, cx);
                         }
+                        if this.settings.animate_logo && this.poll_composer_logo() {
+                            cx.notify();
+                        }
+                        // Decode a few bird frames per tick into the asset
+                        // cache; undecoded frames paint nothing, so warming
+                        // here keeps the first typed peck flicker-free.
+                        if this.settings.animate_logo && this.logo_warmed_frames < LOGO_FRAME_COUNT {
+                            let color = cx.theme().foreground;
+                            for _ in 0..6 {
+                                let frame = this.logo_warmed_frames;
+                                if frame >= LOGO_FRAME_COUNT {
+                                    break;
+                                }
+                                warm_frame(frame, color, window, cx);
+                                this.logo_warmed_frames += 1;
+                            }
+                        }
                     })
                     .is_err()
                 })
@@ -397,6 +452,7 @@ impl KeaView {
             terminal_scroll_remainder: 0.,
             terminal_mouse_scroll_remainder: 0.,
             terminal_gesture: None,
+            terminal_gesture_bounds: None,
             timeline_track_bounds: None,
             timeline_hovered: false,
             prompt_line: PromptLineTracker::default(),
@@ -411,6 +467,13 @@ impl KeaView {
             document_scroll: ScrollHandle::new(),
             focus,
             notice,
+            warning: None,
+            composer_logo_gen: 0,
+            composer_logo_active: false,
+            composer_logo_again: false,
+            composer_logo_deadline: None,
+            logo_warmed_frames: 0,
+            _composer_change: composer_change,
             _pump: pump,
             _appearance: appearance,
             _filter_change: filter_change,
@@ -421,6 +484,13 @@ impl KeaView {
     fn result(&mut self, result: Result<()>, cx: &mut Context<Self>) {
         self.notice = result.err().map(|error| error.to_string());
         cx.notify();
+    }
+
+    fn capture_draft_history_warning(&mut self, cx: &mut Context<Self>) {
+        if let Some(warning) = command_editor::take_history_warning(cx) {
+            self.warning = Some(warning);
+            cx.notify();
+        }
     }
 
     fn save_session(&mut self, cx: &mut Context<Self>) {
@@ -474,6 +544,73 @@ impl KeaView {
         self.editor.update(cx, |state, cx| state.focus(window, cx));
     }
 
+    /// (Re)subscribe the composer bird to draft changes. Fresh drafts are new
+    /// entities, so every site that replaces `self.editor` must call this.
+    fn observe_composer(&mut self, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+        self._composer_change = cx.subscribe(&editor, |this, _, event: &edit::InputEvent, cx| {
+            if matches!(event, edit::InputEvent::Change) {
+                this.note_composer_typed(cx);
+            }
+        });
+    }
+
+    /// Typing in the composer starts one full peck cycle. Typing mid-cycle only
+    /// requests another cycle afterwards, so the bird always finishes its last
+    /// loop instead of stopping abruptly.
+    fn note_composer_typed(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.animate_logo {
+            return;
+        }
+        if self.composer_logo_active {
+            self.composer_logo_again = true;
+            return;
+        }
+        self.composer_logo_active = true;
+        self.composer_logo_again = false;
+        self.composer_logo_gen += 1;
+        self.composer_logo_deadline = Some(Instant::now() + KEA_LOGO_PECK_DURATION);
+        cx.notify();
+    }
+
+    /// Advance the composer bird at a cycle boundary. Called from the 16 ms
+    /// pump so a finished loop chains or settles even without further input.
+    /// Returns true when the logo state changed.
+    fn poll_composer_logo(&mut self) -> bool {
+        if !self.composer_logo_active {
+            return false;
+        }
+        let finished = self
+            .composer_logo_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline);
+        if !finished {
+            return false;
+        }
+        if self.composer_logo_again {
+            self.composer_logo_again = false;
+            self.composer_logo_gen += 1;
+            self.composer_logo_deadline = Some(Instant::now() + KEA_LOGO_PECK_DURATION);
+        } else {
+            self.composer_logo_active = false;
+            self.composer_logo_deadline = None;
+        }
+        true
+    }
+
+    /// Bird prefix for the composer input. While typing, a one-shot peck cycle
+    /// plays (restarted per cycle via the generation id); idle shows the
+    /// identical resting bird. Swaps happen exactly at cycle boundaries, so the
+    /// animation always finishes its last loop.
+    fn composer_logo(&self) -> AnyElement {
+        if self.settings.animate_logo && self.composer_logo_active {
+            KeaLogoAnimation::new(("composer-logo", self.composer_logo_gen))
+                .size(px(24.))
+                .into_any_element()
+        } else {
+            KeaLogo::new().size(px(24.)).into_any_element()
+        }
+    }
+
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_editor(window, cx);
     }
@@ -494,7 +631,7 @@ impl KeaView {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         // Manual acceptance A7: the copy buttons gave no visible feedback.
-        self.notice = Some(format!("Copied {scope}."));
+        self.notice = Some(format!("Copy requested for {scope}."));
         cx.notify();
     }
 
@@ -580,6 +717,11 @@ impl KeaView {
             self.session.terminal_has_selection(),
         );
         self.terminal_gesture = Some(gesture);
+        // Latch the canvas bounds for the whole press→move→release gesture so a
+        // layout shift between press and motion cannot turn a simple click into
+        // a drag. Motion/release reconvert through these bounds, not the live
+        // layout bounds.
+        self.terminal_gesture_bounds = self.terminal_bounds;
         match owner {
             MouseOwner::LocalSimple | MouseOwner::LocalBlock => {
                 if gesture.shift_extend {
@@ -611,6 +753,7 @@ impl KeaView {
                     // No successful press means there is no child gesture to
                     // complete with later motion or release events.
                     self.terminal_gesture = None;
+                    self.terminal_gesture_bounds = None;
                 }
                 self.result(result, cx);
                 cx.stop_propagation();
@@ -629,9 +772,10 @@ impl KeaView {
                 return;
             }
             let metrics = terminal_font_metrics(window, cx);
+            let bounds = self.terminal_gesture_bounds.or(self.terminal_bounds);
             if let Some(point) = terminal_point(
                 event.position,
-                self.terminal_bounds,
+                bounds,
                 &metrics,
                 self.session.terminal_size(),
             ) {
@@ -673,6 +817,17 @@ impl KeaView {
         {
             return;
         }
+        if terminal_selection::hover_is_local(
+            self.session.terminal_mouse_reporting(),
+            self.settings.shift_mouse_selects_locally,
+            self.session.terminal_explicit_selection_active(),
+            event.modifiers.shift,
+        ) {
+            // Positioning the pointer for a reserved Shift gesture or explicit
+            // local selection must not update the child TUI's own selection.
+            cx.stop_propagation();
+            return;
+        }
         let metrics = terminal_font_metrics(window, cx);
         let Some(point) = terminal_point(
             event.position,
@@ -709,10 +864,11 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) {
         if let Some(mut gesture) = self.terminal_gesture.take() {
+            let bounds = self.terminal_gesture_bounds.take().or(self.terminal_bounds);
             let metrics = terminal_font_metrics(window, cx);
             let point = terminal_point(
                 event.position,
-                self.terminal_bounds,
+                bounds,
                 &metrics,
                 self.session.terminal_size(),
             );
@@ -881,6 +1037,13 @@ impl KeaView {
     }
 
     fn run_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.session.input_allowed() {
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
+            return;
+        }
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
             self.notice = Some("Focus the composer before using Run in shell.".into());
             cx.notify();
@@ -896,13 +1059,6 @@ impl KeaView {
             return;
         }
         let _ = self.pump_session(cx);
-        if !self.session.input_allowed() {
-            self.result(
-                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
-                cx,
-            );
-            return;
-        }
         let Some(shell) = self.shell else {
             self.result(
                 Err(anyhow::anyhow!(
@@ -973,12 +1129,14 @@ impl KeaView {
             self.prompt_line.invalidate();
             self.document.note_terminal_input();
             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
+            self.observe_composer(cx);
             self.candidates.clear();
             window.focus(&self.focus);
             self.document_ui.page_start = None;
             self.document_ui.dirty = true;
         }
         self.result(result, cx);
+        self.capture_draft_history_warning(cx);
     }
 
     fn complete_pending_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1006,6 +1164,13 @@ impl KeaView {
     }
 
     fn send_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.session.input_allowed() {
+            self.result(
+                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
+                cx,
+            );
+            return;
+        }
         let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
             self.notice =
                 Some("Focus the composer before sending text to the terminal app.".into());
@@ -1013,13 +1178,6 @@ impl KeaView {
             return;
         };
         if text.is_empty() {
-            return;
-        }
-        if !self.session.input_allowed() {
-            self.result(
-                Err(anyhow::anyhow!("Return to LIVE before sending input.")),
-                cx,
-            );
             return;
         }
         let result = input::paste(&text, self.session.bracketed_paste()).and_then(|mut bytes| {
@@ -1033,10 +1191,12 @@ impl KeaView {
             self.pending_run = None;
             self.document.note_terminal_input();
             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
+            self.observe_composer(cx);
             self.candidates.clear();
             window.focus(&self.focus);
         }
         self.result(result, cx);
+        self.capture_draft_history_warning(cx);
     }
 
     fn insert_newline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1169,7 +1329,23 @@ impl KeaView {
             Action::SelectAll => window.dispatch_action(Box::new(edit::SelectAll), cx),
             Action::Find => window.dispatch_action(Box::new(edit::Search), cx),
             Action::CopyDocument => self.copy_document(cx),
-            Action::FocusEditor => self.focus_editor(window, cx),
+            // Single switch key: terminal -> composer, and back when the
+            // composer already owns focus. `focus_editor` remains the sole Kea
+            // accelerator reserved while the live terminal owns the keyboard;
+            // the reverse direction only acts from composer/chrome focus, so it
+            // never steals child input. `focus_terminal` (default
+            // Ctrl/Cmd+Shift+L) stays available as an explicit alternative.
+            Action::FocusEditor => {
+                if terminal_focused {
+                    self.focus_editor(window, cx);
+                } else if self.editor.focus_handle(cx).is_focused(window) {
+                    if !command_editor::focus_last_external(window, cx) {
+                        window.focus(&self.focus);
+                    }
+                } else {
+                    self.focus_editor(window, cx);
+                }
+            }
             Action::SelectTerminalText => self.select_terminal_text(window, cx),
             Action::Interrupt => {
                 let result = self.session.send(vec![3]);
@@ -1227,6 +1403,18 @@ impl KeaView {
             state.marked_text_range(window, cx).is_some()
         });
         if input::defer_to_ime(&event.keystroke, has_marked_text) {
+            return;
+        }
+        // Explicit clipboard paste owns its chord even while the child owns all
+        // other keys. Plain Ctrl+V stays child input (0x16, e.g. for OpenCode);
+        // Ctrl+Shift+V (and Cmd+V on macOS) pastes the OS clipboard through
+        // bracketed paste when supported. This gives keyboard paste without
+        // stealing the child's Ctrl+V.
+        if input::is_terminal_paste(&event.keystroke) {
+            if self.session.input_allowed() {
+                self.paste_terminal(cx);
+            }
+            cx.stop_propagation();
             return;
         }
         match terminal_selection::local_key(
@@ -1352,6 +1540,15 @@ impl Render for KeaView {
         let terminal_selection_invalidated = screen.selection_invalidated;
         let terminal_mouse_reporting = self.session.terminal_mouse_reporting();
         let terminal_metrics = terminal_font_metrics(window, cx);
+        let text_line_height = f32::from(terminal_metrics.line_height)
+            .max(f32::from(cx.theme().mono_font_size) * COMPONENT_LINE_HEIGHT_EM);
+        let compact_chrome = uses_compact_chrome(window, cx);
+        let narrow_chrome = f32::from(window.viewport_size().width) < 900.;
+        let terminal_header_height = px((text_line_height + 8.).max(30.));
+        let composer_header_height = px((text_line_height + 10.).max(32.));
+        let toolbar_height = px((text_line_height + 12.).max(36.));
+        let timeline_height = px((text_line_height + 10.).max(34.));
+        let status_height = px((text_line_height + 6.).max(24.));
         let layout_metrics = terminal_metrics.clone();
         let paint_metrics = terminal_metrics;
         let weak = cx.entity().downgrade();
@@ -1443,30 +1640,71 @@ impl Render for KeaView {
         } else {
             "Click to interact"
         };
+        // The header above the terminal canvas must keep a fixed height. It used
+        // to wrap (`flex_wrap` + `min_h`), so a press that changed the context
+        // line (e.g. "Click to interact" -> "Selecting terminal text locally")
+        // grew the header, moved the canvas origin mid-click, and turned the
+        // click into a spurious drag. Fixed height + nowrap + truncation keeps
+        // the canvas origin stable for the whole gesture.
         let mut terminal_header = div()
-            .min_h(px(30.))
+            .h(terminal_header_height)
             .flex_shrink_0()
             .flex()
-            .flex_wrap()
+            .flex_nowrap()
             .items_center()
             .gap_2()
             .px_2()
+            .overflow_hidden()
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(div().font_weight(FontWeight::BOLD).child("Terminal"))
-            .child(terminal_mode)
-            .child(
-                div()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(terminal_context),
-            )
-            .child(div().flex_1())
-            .child(if terminal_display_offset == 0 {
-                format!("{terminal_history_size} lines")
-            } else {
-                format!("{terminal_display_offset} above bottom")
+            .when(!compact_chrome, |header| {
+                header.child(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .flex_shrink_0()
+                        .child("Terminal"),
+                )
             })
-            .child(
+            .child(div().flex_shrink_0().child(terminal_mode))
+            .when(!compact_chrome, |header| {
+                header.child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(terminal_context),
+                )
+            })
+            .child(div().flex_1())
+            .when(!compact_chrome, |header| {
+                header.child(if terminal_display_offset == 0 {
+                    div()
+                        .flex_shrink_0()
+                        .child(format!("{terminal_history_size} lines"))
+                } else {
+                    div()
+                        .flex_shrink_0()
+                        .child(format!("{terminal_display_offset} above bottom"))
+                })
+            })
+            .child(if compact_chrome {
+                Button::new("select-terminal-text")
+                    .icon(IconName::ALargeSmall)
+                    .tooltip(if terminal_local_active {
+                        "Stop selecting terminal text"
+                    } else {
+                        "Select terminal text locally"
+                    })
+                    .ghost()
+                    .small()
+                    .selected(terminal_local_active)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.select_terminal_text(window, cx)),
+                    )
+            } else {
                 Button::new("select-terminal-text")
                     .label(if terminal_local_active {
                         "Stop selecting"
@@ -1479,8 +1717,8 @@ impl Render for KeaView {
                     .selected(terminal_local_active)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.select_terminal_text(window, cx)),
-                    ),
-            )
+                    )
+            })
             .child(
                 Button::new("copy-terminal-selection")
                     .icon(IconName::Copy)
@@ -1490,14 +1728,13 @@ impl Render for KeaView {
                     .disabled(!terminal_selection_available)
                     .on_click(cx.listener(|this, _, _, cx| this.copy_terminal_selection(cx))),
             )
-            // Manual acceptance E5: keyboard paste intentionally reaches the
-            // child while live-terminal focus owns the keyboard, which left no
-            // paste affordance for the terminal at all. This button lives on
-            // the surface it acts on, next to terminal copy.
+            // Plain Ctrl+V remains child input (0x16) while the live terminal
+            // owns the keyboard; explicit clipboard paste uses Ctrl+Shift+V
+            // (Cmd+V on macOS) plus this button on the surface it acts on.
             .child(
                 Button::new("paste-terminal")
                     .label("Paste")
-                    .tooltip("Paste clipboard into the terminal")
+                    .tooltip("Paste clipboard into the terminal (Ctrl+Shift+V)")
                     .ghost()
                     .small()
                     .disabled(!self.session.input_allowed())
@@ -1522,24 +1759,35 @@ impl Render for KeaView {
             .child(terminal_header)
             .child(terminal);
 
-        let mut output = div()
-            .flex()
-            .flex_1()
-            .min_h_0()
-            .overflow_hidden()
-            .child(terminal_panel);
-        if self.show_blocks {
-            output = output.child(
-                div()
-                    .id("block-inspector")
-                    .w(px(420.))
-                    .h_full()
-                    .flex_shrink_0()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .child(self.render_document(window, cx)),
-            );
-        }
+        let output = if self.show_blocks {
+            let inspector = div()
+                .id("block-inspector")
+                .size_full()
+                .border_l_1()
+                .border_color(cx.theme().border)
+                .child(self.render_document(window, cx));
+            div().flex().flex_1().min_h_0().overflow_hidden().child(
+                h_resizable("terminal-block-split")
+                    .child(
+                        resizable_panel()
+                            .size_range(px(300.)..Pixels::MAX)
+                            .child(terminal_panel),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(px(420.))
+                            .size_range(px(280.)..px(520.))
+                            .child(inspector),
+                    ),
+            )
+        } else {
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .child(terminal_panel)
+        };
 
         let mut completions = div().flex().flex_wrap().gap_1();
         if self.editor.read(cx).value().as_ref() == self.completion_text {
@@ -1561,18 +1809,33 @@ impl Render for KeaView {
             }
         }
 
-        let status = self
-            .notice
+        let status_warning = self
+            .session
+            .warning
             .clone()
-            .or_else(|| self.session.warning.clone())
+            .or_else(|| self.warning.clone());
+        let status_is_warning = status_warning.is_some();
+        let status = status_warning
+            .or_else(|| self.notice.clone())
             .unwrap_or_else(|| {
                 if self.session.is_history() {
                     // Manual acceptance D2: users did not notice read-only mode
                     // and felt the app had frozen. Name the way back out.
-                    format!(
-                        "Read-only history; the live process continues. Return live ({}) to resume typing.",
-                        self.keymap.label(Action::GoLive)
-                    )
+                    if compact_chrome {
+                        return "Return live".into();
+                    }
+                    if narrow_chrome {
+                        return "Read-only history · Return live to run or send.".into();
+                    }
+                    let shortcut = self.keymap.label_or(Action::GoLive, "");
+                    if shortcut.is_empty() {
+                        "Read-only history; the live process continues. The composer stays editable. Use Return live to run or send."
+                            .into()
+                    } else {
+                        format!(
+                            "Read-only history; the live process continues. The composer stays editable. Return live ({shortcut}) to run or send."
+                        )
+                    }
                 } else if self.document.prompt_ready() {
                     "Shell ready".into()
                 } else if self.shell.is_some() {
@@ -1619,6 +1882,7 @@ impl Render for KeaView {
             .key_context("KeaCommand")
             .size_full()
             .min_h_0()
+            .overflow_hidden()
             .flex()
             .flex_col()
             .gap_1()
@@ -1627,36 +1891,72 @@ impl Render for KeaView {
             .border_color(cx.theme().border)
             .child(
                 div()
+                    .h(composer_header_height)
+                    .flex_shrink_0()
                     .flex()
+                    .flex_nowrap()
                     .items_center()
                     .gap_2()
-                    .child(div().font_weight(FontWeight::BOLD).child("Composer"))
+                    .overflow_hidden()
                     .child(
                         div()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(shell_state),
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .font_weight(FontWeight::BOLD)
+                            .child("Composer"),
                     )
-                    .child(div().flex_1())
+                    .when(!compact_chrome, |header| {
+                        header.child(
+                            div()
+                                .flex_shrink_0()
+                                .whitespace_nowrap()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(shell_state),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0())
                     .child(self.control(
                         "run-draft",
-                        format!("Run · {}", self.keymap.label(Action::RunShell)),
+                        if compact_chrome {
+                            "Run".into()
+                        } else {
+                            action_label(&self.keymap, "Run", Action::RunShell)
+                        },
                         Action::RunShell,
                         cx,
                     ))
                     .child(self.control(
                         "send-draft",
-                        format!("Send · {}", self.keymap.label(Action::SendApplication)),
+                        if compact_chrome {
+                            "Send".into()
+                        } else {
+                            action_label(&self.keymap, "Send", Action::SendApplication)
+                        },
                         Action::SendApplication,
                         cx,
                     )),
             )
             .child(
-                Input::new(&self.editor)
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
                     .flex_1()
-                    .min_h(px(72.))
-                    .appearance(false)
-                    .disabled(!self.session.input_allowed())
-                    .bordered(false),
+                    .min_h_0()
+                    .child(div().flex_shrink_0().mt(px(4.)).child(self.composer_logo()))
+                    .child(
+                        // The composer stays editable even in history: drafting
+                        // text is harmless because Run/Send and every PTY send
+                        // path refuse while input is not allowed. Only the
+                        // terminal Paste button stays disabled, as it sends.
+                        Input::new(&self.editor)
+                            .flex_1()
+                            .h_full()
+                            .min_h(px(72.))
+                            .appearance(false)
+                            .bordered(false),
+                    ),
             )
             .child(
                 div()
@@ -1671,7 +1971,7 @@ impl Render for KeaView {
                 .child(
                     resizable_panel()
                         .size(px(205.))
-                        .size_range(px(120.)..px(520.))
+                        .size_range(px(144.)..px(520.))
                         .child(command_panel),
                 ),
         );
@@ -1681,23 +1981,68 @@ impl Render for KeaView {
         } else {
             "Copy visible terminal"
         };
+        let focus_terminal_control = if compact_chrome {
+            Button::new("focus-terminal")
+                .icon(IconName::SquareTerminal)
+                .tooltip("Focus terminal")
+                .ghost()
+                .small()
+                .on_click(cx.listener(|this, _, window, _| window.focus(&this.focus)))
+                .into_any_element()
+        } else {
+            button("focus-terminal", "Terminal")
+                .on_click(cx.listener(|this, _, window, _| window.focus(&this.focus)))
+                .into_any_element()
+        };
+        let focus_composer_control = if compact_chrome {
+            Button::new("focus-input")
+                .icon(IconName::PanelBottom)
+                .tooltip("Focus composer")
+                .ghost()
+                .small()
+                .on_click(cx.listener(|this, _, window, cx| this.focus_editor(window, cx)))
+                .into_any_element()
+        } else {
+            button("focus-input", "Composer")
+                .on_click(cx.listener(|this, _, window, cx| this.focus_editor(window, cx)))
+                .into_any_element()
+        };
+        let save_control = if compact_chrome {
+            Button::new("save-session")
+                .icon(IconName::File)
+                .tooltip(if self.session.persistence_active() {
+                    "Session is saving locally"
+                } else {
+                    "Save session locally"
+                })
+                .ghost()
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.save_session(cx)))
+                .into_any_element()
+        } else {
+            button(
+                "save-session",
+                if self.session.persistence_active() {
+                    "Saved"
+                } else {
+                    "Save session"
+                },
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.save_session(cx)))
+            .into_any_element()
+        };
         let mut toolbar = div()
-            .h(px(36.))
+            .h(toolbar_height)
             .flex_shrink_0()
             .flex()
+            .flex_nowrap()
             .items_center()
             .gap_1()
             .px_2()
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(
-                button("focus-terminal", "Terminal")
-                    .on_click(cx.listener(|this, _, window, _| window.focus(&this.focus))),
-            )
-            .child(
-                button("focus-input", "Composer")
-                    .on_click(cx.listener(|this, _, window, cx| this.focus_editor(window, cx))),
-            )
+            .child(focus_terminal_control)
+            .child(focus_composer_control)
             .child(self.icon_control(
                 "blocks",
                 if self.show_blocks {
@@ -1721,17 +2066,7 @@ impl Render for KeaView {
                 cx,
             ))
             .child(div().flex_1())
-            .child(
-                button(
-                    "save-session",
-                    if self.session.persistence_active() {
-                        "Saved"
-                    } else {
-                        "Save session"
-                    },
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.save_session(cx))),
-            );
+            .child(save_control);
         if self.session.is_history() {
             toolbar = toolbar
                 .child(self.icon_control(
@@ -1758,15 +2093,41 @@ impl Render for KeaView {
                     Action::PlayPause,
                     cx,
                 ))
-                .child(self.control("live", "Return live", Action::GoLive, cx));
+                .child(if compact_chrome {
+                    self.icon_control(
+                        "live",
+                        IconName::ArrowUp,
+                        "Return to live terminal",
+                        Action::GoLive,
+                        cx,
+                    )
+                    .into_any_element()
+                } else {
+                    self.control("live", "Return live", Action::GoLive, cx)
+                        .into_any_element()
+                });
         } else if self.session.recording().events().len() > 1 {
-            toolbar = toolbar.child(button("history", "History").on_click(cx.listener(
-                |this, _, window, cx| {
-                    let result = this.session.step(-1);
-                    window.focus(&this.focus);
-                    this.result(result, cx);
-                },
-            )));
+            toolbar = toolbar.child(if compact_chrome {
+                Button::new("history")
+                    .icon(IconName::GalleryVerticalEnd)
+                    .tooltip("Open terminal history")
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let result = this.session.step(-1);
+                        window.focus(&this.focus);
+                        this.result(result, cx);
+                    }))
+                    .into_any_element()
+            } else {
+                button("history", "History")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let result = this.session.step(-1);
+                        window.focus(&this.focus);
+                        this.result(result, cx);
+                    }))
+                    .into_any_element()
+            });
         }
 
         let timeline_weak = cx.entity().downgrade();
@@ -1781,7 +2142,7 @@ impl Render for KeaView {
             playback::format_micros(duration)
         );
         let history_timeline = div()
-            .h(px(34.))
+            .h(timeline_height)
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -1789,7 +2150,9 @@ impl Render for KeaView {
             .px_2()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().font_weight(FontWeight::BOLD).child("History"))
+            .when(!compact_chrome, |timeline| {
+                timeline.child(div().font_weight(FontWeight::BOLD).child("History"))
+            })
             .child(
                 div()
                     .id("timeline")
@@ -1860,22 +2223,50 @@ impl Render for KeaView {
                         .size_full(),
                     ),
             )
-            .child(div().w(px(145.)).flex_shrink_0().child(timeline_position));
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .child(timeline_position),
+            );
 
         let status_bar = div()
-            .h(px(24.))
+            .h(status_height)
             .flex_shrink_0()
             .flex()
+            .flex_nowrap()
             .items_center()
             .gap_3()
             .px_2()
+            .overflow_hidden()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().min_w_0().overflow_hidden().child(directory))
-            .child(div().flex_1())
-            .child(status)
+            .when(!compact_chrome, |bar| {
+                bar.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(directory),
+                )
+            })
             .child(
                 div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(status_is_warning, |status| {
+                        status.text_color(cx.theme().danger)
+                    })
+                    .child(status),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .text_color(cx.theme().muted_foreground)
                     .child(persistence_status),
             );
@@ -1912,6 +2303,8 @@ impl Render for KeaView {
 fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
+        .flex_shrink_0()
+        .whitespace_nowrap()
         .px_2()
         .py_1()
         .rounded_md()
@@ -1919,6 +2312,19 @@ fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
         .border_color(rgb(0x687380))
         .cursor_pointer()
         .child(label.into())
+}
+
+fn action_label(keymap: &Keymap, label: &str, action: Action) -> String {
+    let shortcut = keymap.label_or(action, "");
+    if shortcut.is_empty() {
+        label.into()
+    } else {
+        format!("{label} · {shortcut}")
+    }
+}
+
+fn uses_compact_chrome(window: &Window, cx: &App) -> bool {
+    f32::from(window.viewport_size().width) / f32::from(cx.theme().mono_font_size).max(1.) < 50.
 }
 
 fn apply_appearance(settings: &Settings, window: &mut Window, cx: &mut App) {

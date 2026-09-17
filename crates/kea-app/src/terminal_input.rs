@@ -2,6 +2,40 @@
 //! only committed text is forwarded to the child. No input log is kept.
 use super::*;
 use std::ops::Range;
+
+impl KeaView {
+    fn terminal_replacement_fits(
+        &mut self,
+        range: Option<&Range<usize>>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.terminal_composition.update(cx, |state, cx| {
+            let effective_range = range
+                .cloned()
+                .or_else(|| state.marked_text_range(window, cx))
+                .or_else(|| {
+                    state
+                        .selected_text_range(true, window, cx)
+                        .map(|selection| selection.range)
+                })
+                .unwrap_or_default();
+            let mut adjusted = None;
+            let replaced_bytes = state
+                .text_for_range(effective_range, &mut adjusted, window, cx)
+                .map_or(0, |replaced| replaced.len());
+            input::terminal_replacement_fits(state.value().len(), replaced_bytes, text.len())
+        })
+    }
+
+    fn reject_large_terminal_text(&mut self, cx: &mut Context<Self>) {
+        self.notice =
+            Some("Terminal text input exceeds 64 KiB; use explicit paste for large input.".into());
+        cx.notify();
+    }
+}
+
 impl EntityInputHandler for KeaView {
     fn text_for_range(
         &mut self,
@@ -48,15 +82,12 @@ impl EntityInputHandler for KeaView {
         if !self.focus.is_focused(window) || !self.session.input_allowed() {
             return;
         }
+        if !self.terminal_replacement_fits(range.as_ref(), text, window, cx) {
+            self.reject_large_terminal_text(cx);
+            return;
+        }
         if !text.is_empty() {
             self.session.clear_terminal_selection();
-        }
-        if text.len() > 16 * 1024 {
-            self.notice = Some(
-                "Terminal text input exceeds 16 KiB; use explicit paste for large input.".into(),
-            );
-            cx.notify();
-            return;
         }
         let text = self.terminal_composition.update(cx, |state, cx| {
             state.replace_text_in_range(range, text, window, cx);
@@ -89,7 +120,8 @@ impl EntityInputHandler for KeaView {
         if !self.focus.is_focused(window) || !self.session.input_allowed() {
             return;
         }
-        if text.len() + self.terminal_composition.read(cx).value().len() > 16 * 1024 {
+        if !self.terminal_replacement_fits(range.as_ref(), text, window, cx) {
+            self.reject_large_terminal_text(cx);
             return;
         }
         self.terminal_composition.update(cx, |state, cx| {

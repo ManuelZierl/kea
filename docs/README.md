@@ -1,6 +1,8 @@
 # Kea documentation
 
 Start with the [project README](../README.md) for setup, shortcuts and configuration.
+Use the [human desktop checklist](manual-testing.md) to validate real keyboard,
+mouse, clipboard, IME and TUI interactions.
 These documents describe the current product; superseded mode/selection proposals
 are not part of the active documentation.
 

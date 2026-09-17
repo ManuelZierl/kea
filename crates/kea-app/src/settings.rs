@@ -35,6 +35,8 @@ pub struct Settings {
     /// Off by default: submissions can contain secrets.
     pub persist_history: bool,
     pub shift_mouse_selects_locally: bool,
+    /// Allow the decorative composer bird to animate after draft changes.
+    pub animate_logo: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +53,7 @@ impl Default for Settings {
             post_submit_focus: PostSubmitFocus::Editor,
             persist_history: false,
             shift_mouse_selects_locally: true,
+            animate_logo: true,
         }
     }
 }
@@ -136,6 +139,7 @@ impl Settings {
                 "shift_mouse_selects_locally" => {
                     settings.shift_mouse_selects_locally = boolean(value)?
                 }
+                "animate_logo" => settings.animate_logo = boolean(value)?,
                 "post_submit_focus" => {
                     settings.post_submit_focus = match value {
                         "terminal" => PostSubmitFocus::Terminal,
@@ -172,7 +176,7 @@ mod tests {
         assert!(Settings::default().shift_mouse_selects_locally);
 
         let settings = Settings::parse(
-            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\n",
+            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\nanimate_logo = false\n",
         )
         .unwrap();
         assert_eq!(settings.appearance, Appearance::Dark);
@@ -180,6 +184,7 @@ mod tests {
         assert!(!settings.soft_wrap);
         assert_eq!(settings.post_submit_focus, PostSubmitFocus::Terminal);
         assert!(!settings.shift_mouse_selects_locally);
+        assert!(!settings.animate_logo);
     }
     #[test]
     fn rejects_unknown_and_unsafe_sizes() {

@@ -1,11 +1,12 @@
 use std::{
     collections::VecDeque,
-    fs,
-    io::Write as _,
+    fs::{self, File},
+    io::{Read as _, Write as _},
     path::{Path, PathBuf},
 };
 
 const DEFAULT_CAPACITY: usize = 500;
+const MAX_HISTORY_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Exact text the user intentionally submitted from Kea's editor.
 ///
@@ -19,6 +20,7 @@ pub struct DraftHistory {
     cursor: Option<usize>,
     scratch: String,
     persist_path: Option<PathBuf>,
+    persistence_warning: Option<String>,
 }
 
 impl Default for DraftHistory {
@@ -35,6 +37,7 @@ impl DraftHistory {
             cursor: None,
             scratch: String::new(),
             persist_path: None,
+            persistence_warning: None,
         }
     }
 
@@ -55,11 +58,16 @@ impl DraftHistory {
         }
         self.entries.push_back(text);
         self.reset_navigation();
-        // Persistence is best-effort and opt-in: memory stays authoritative, so a
-        // failing disk never breaks recall. Failures are intentionally silent here;
-        // startup surfaces an unreadable location instead.
-        if self.persist_path.is_some() {
-            let _ = self.save();
+        // Memory remains authoritative, but an opted-in disk copy must not fail
+        // silently. Stop retrying after the first error, like the session journal;
+        // the current process can still recall every retained entry.
+        if let Err(error) = self.save() {
+            if let Some(path) = self.persist_path.take() {
+                self.persistence_warning = Some(format!(
+                    "Draft history persistence stopped: {}: {error}. In-memory recall remains available for this session.",
+                    path.display()
+                ));
+            }
         }
     }
 
@@ -68,6 +76,7 @@ impl DraftHistory {
     /// via `persist_history`, because submissions can contain secrets.
     pub fn set_persisted_entries(&mut self, path: PathBuf, entries: Vec<String>) {
         self.persist_path = Some(path);
+        self.persistence_warning = None;
         for entry in entries {
             if entry.is_empty() {
                 continue;
@@ -78,6 +87,10 @@ impl DraftHistory {
             self.entries.push_back(entry);
         }
         self.reset_navigation();
+    }
+
+    pub fn take_persistence_warning(&mut self) -> Option<String> {
+        self.persistence_warning.take()
     }
 
     fn save(&self) -> std::io::Result<()> {
@@ -91,6 +104,15 @@ impl DraftHistory {
         for entry in &self.entries {
             encoded.push_str(&encode_entry(entry));
             encoded.push('\n');
+        }
+        if encoded.len() as u64 > MAX_HISTORY_FILE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "retained drafts need {} bytes; the persistence maximum is {MAX_HISTORY_FILE_BYTES}",
+                    encoded.len()
+                ),
+            ));
         }
         write_private(path, encoded.as_bytes())
     }
@@ -207,33 +229,66 @@ fn decode_entry(line: &str) -> String {
 /// Read previously persisted entries, oldest first. Missing files load as empty;
 /// only real I/O failures propagate so startup can warn visibly.
 pub fn load_history_file(path: &Path) -> std::io::Result<Vec<String>> {
-    let text = match fs::read_to_string(path) {
+    let mut file = match File::open(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         result => result?,
     };
-    Ok(text
+    let metadata = file.metadata()?;
+    if metadata.len() > MAX_HISTORY_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "history file is {} bytes; the maximum is {MAX_HISTORY_FILE_BYTES}",
+                metadata.len()
+            ),
+        ));
+    }
+    let mut text = String::new();
+    (&mut file)
+        .take(MAX_HISTORY_FILE_BYTES + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_HISTORY_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("history file exceeds the {MAX_HISTORY_FILE_BYTES}-byte maximum while reading"),
+        ));
+    }
+    let mut entries = text
         .lines()
+        .rev()
         .map(decode_entry)
         .filter(|entry| !entry.is_empty())
-        .collect())
+        .take(DEFAULT_CAPACITY)
+        .collect::<Vec<_>>();
+    entries.reverse();
+    Ok(entries)
 }
 
-/// Submissions can contain secrets, so the history file is owner-only.
+/// Submissions can contain secrets, so the history file is owner-only. Write a
+/// complete sibling first so an interrupted write cannot truncate the last good
+/// history file.
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".draft-history-")
+        .tempfile_in(parent)?;
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
     }
+    temporary.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -361,7 +416,75 @@ mod tests {
         let mut history = DraftHistory::default();
         history.set_persisted_entries("/proc/kea-history-test/draft-history.txt".into(), vec![]);
         history.record("kept".into());
+        let warning = history.take_persistence_warning().unwrap();
+        assert!(warning.contains("persistence stopped"));
+        assert!(warning.contains("In-memory recall remains available"));
         assert_eq!(history.previous(""), Some("kept".into()));
+        history.record("also kept".into());
+        assert!(history.take_persistence_warning().is_none());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn loading_is_bounded_to_recent_entries_and_rejects_oversized_files() {
+        let root = std::env::temp_dir().join(format!("kea-history-bounds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("draft-history.txt");
+        let text = (0..DEFAULT_CAPACITY + 2)
+            .map(|index| format!("entry-{index}\n"))
+            .collect::<String>();
+        std::fs::write(&path, text).unwrap();
+        let loaded = load_history_file(&path).unwrap();
+        assert_eq!(loaded.len(), DEFAULT_CAPACITY);
+        assert_eq!(loaded.first().map(String::as_str), Some("entry-2"));
+        assert_eq!(loaded.last().map(String::as_str), Some("entry-501"));
+
+        File::create(&path)
+            .unwrap()
+            .set_len(MAX_HISTORY_FILE_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            load_history_file(&path).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_replacement_keeps_the_previous_history_path_intact() {
+        let root = std::env::temp_dir().join(format!("kea-history-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("draft-history.txt");
+        std::fs::create_dir_all(&path).unwrap();
+
+        assert!(write_private(&path, b"replacement").is_err());
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_windows_history_survives_failed_replacement() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let root = std::env::temp_dir().join(format!("kea-history-locked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("draft-history.txt");
+        std::fs::write(&path, b"previous").unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+
+        assert!(write_private(&path, b"replacement").is_err());
+        drop(locked);
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

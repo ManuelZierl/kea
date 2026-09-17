@@ -62,7 +62,7 @@ GPUI Component supplies the editable draft, read-only block text and search fiel
 
 Editor submission keys are semantic/configurable actions. The editor-native default leaves Enter to the editor and binds Run in shell to Ctrl+Enter. A terminal/chat-style policy can instead bind Enter to Run and Shift+Enter to Newline.
 
-With live terminal focus, Kea accelerators other than `focus_editor`—defaults and user overrides—are masked at the deeper terminal key context. A local selection or caret owns Copy, Esc and navigation/extension; unrelated input clears it before normal terminal forwarding. Active IME composition takes precedence. The terminal encoder receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
+With live terminal focus, Kea accelerators other than `focus_editor`—defaults and user overrides—are masked at the deeper terminal key context. `focus_editor` is the single switch key (terminal → composer, and the same chord returns from composer focus). Explicit terminal clipboard paste (Ctrl+Shift+V, Cmd+V on macOS) is handled on the terminal key path rather than as a masked action; plain Ctrl+V stays ordinary child input. A local selection or caret owns Copy, Esc and navigation/extension; unrelated input clears it before normal terminal forwarding. Active IME composition takes precedence. The terminal encoder receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
 
 ## Completion
 

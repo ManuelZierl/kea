@@ -53,7 +53,10 @@ line_numbers = false
 soft_wrap = true
 output_wrap = true
 shift_mouse_selects_locally = true
+animate_logo = true
 ```
+
+`animate_logo = false` disables the decorative composer typing animation.
 
 Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid files produce a warning and fall back to defaults. Configuration is loaded at startup. Do not add a separate Kea preference for every OS preference. Expose overrides only where the host owns policy or where a specific override is useful.
 

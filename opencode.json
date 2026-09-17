@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "desktop_qa": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-c",
+        "repo_root=$(git rev-parse --show-toplevel) && exec \"$repo_root/.opencode/bin/agent-workspace-linux\" mcp"
+      ],
+      "cwd": ".",
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}

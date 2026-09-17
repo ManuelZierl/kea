@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Kea
+GenericName=Terminal Workspace
+Comment=A terminal workspace with a real editor for input
+Exec=kea
+Icon=kea
+Terminal=false
+Categories=Development;System;TerminalEmulator;
+StartupWMClass=kea
+Keywords=shell;terminal;editor;opencode;

@@ -19,7 +19,9 @@ def paint(*_):
 
 
 signal.signal(signal.SIGWINCH, paint)
-if "--mouse" in sys.argv[2:]:
+if "--motion" in sys.argv[2:]:
+    os.write(1, b"\x1b[?1003h\x1b[?1006h")
+elif "--mouse" in sys.argv[2:]:
     os.write(1, b"\x1b[?1002h\x1b[?1006h")
 paint()
 with open(sys.argv[1], "wb", buffering=0) as output:

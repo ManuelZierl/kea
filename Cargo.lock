@@ -3175,6 +3175,7 @@ dependencies = [
  "kea-document",
  "kea-session",
  "serde",
+ "tempfile",
  "tree-sitter-bash",
 ]
 

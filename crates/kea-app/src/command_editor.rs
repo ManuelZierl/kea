@@ -163,6 +163,14 @@ pub fn set_history_persistence(path: PathBuf, entries: Vec<String>, cx: &mut App
         .set_persisted_entries(path, entries);
 }
 
+/// Take the first write-through failure for display by the owning workspace.
+/// Recall remains memory-authoritative after persistence stops.
+pub fn take_history_warning(cx: &mut App) -> Option<String> {
+    cx.default_global::<DraftRecallGlobal>()
+        .history
+        .take_persistence_warning()
+}
+
 /// Retain the keystroke interceptor for as long as the app lives.
 pub fn retain_history_interceptor(subscription: Subscription, cx: &mut App) {
     cx.default_global::<DraftRecallGlobal>().interceptor = Some(subscription);

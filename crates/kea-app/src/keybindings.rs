@@ -256,6 +256,13 @@ impl Keymap {
                 .unwrap()
                 .push(Shortcut::parse("ctrl-y").unwrap());
         }
+        // Clipboard paste via Ctrl+Shift+V works in the composer and, through
+        // the terminal key handler, as explicit terminal paste. Plain Ctrl+V
+        // stays ordinary child input while the live terminal owns the keyboard.
+        bindings
+            .get_mut(&Action::Paste)
+            .unwrap()
+            .push(Shortcut::parse("ctrl-shift-v").unwrap());
         for (action, key) in [
             (Action::CopyDocument, "f10"),
             (Action::RunShell, "ctrl-enter"),
@@ -346,6 +353,16 @@ impl Keymap {
             ("focus_terminal", &keymap.focus_terminal),
         ] {
             for shortcut in shortcuts {
+                // `focus_terminal` acts only while the composer owns focus, while
+                // `focus_editor` is the terminal escape that now toggles back from
+                // the composer. Sharing one chord (e.g. Ctrl+L both ways) is an
+                // intentional single switch key across disjoint focus contexts,
+                // not an ambiguous double binding.
+                if name == "focus_terminal"
+                    && keymap.bindings[&Action::FocusEditor].contains(shortcut)
+                {
+                    continue;
+                }
                 if let Some(previous) = seen.insert(shortcut.clone(), name.into()) {
                     anyhow::bail!(
                         "{} is assigned to both {} and {}",
@@ -412,8 +429,13 @@ impl Keymap {
     }
 
     /// The child owns ordinary terminal input, but `focus_editor` is Kea's explicit
-    /// configurable host escape. Without it, submitting a draft strands a keyboard-only
-    /// user in the terminal. Users whose child needs Ctrl/Cmd+L can remap or unbind it.
+    /// configurable host escape and single switch key: from the live terminal it
+    /// focuses the composer, and from the composer the same chord returns to the
+    /// terminal. Without it, submitting a draft strands a keyboard-only user in
+    /// the terminal. It is the only Kea accelerator reserved while the terminal
+    /// owns input; the reverse `focus_terminal` shortcut acts only from composer
+    /// focus and never steals child keys. Users whose child needs Ctrl/Cmd+L can
+    /// remap or unbind it.
     pub fn gpui_bindings(&self) -> Vec<KeyBinding> {
         let defaults = Self::defaults_for(Platform::current());
         let mut result = vec![
@@ -512,7 +534,9 @@ const DEFAULT_KEYBINDINGS_CONF: &str = r#"# Kea keybindings: one `action = short
 # Shortcuts look like ctrl-l, ctrl-shift-enter, alt-up or f10. `none` unbinds.
 # Unknown actions or ambiguous shortcuts fall back to defaults with a warning.
 # focus_editor = ctrl-l
+#   Single switch key: terminal -> composer, and composer -> terminal.
 # focus_terminal = ctrl-shift-l
+#   Explicit composer -> terminal alternative; never reserved while a TUI owns input.
 # run_shell = ctrl-enter
 # send_application = ctrl-shift-enter
 # previous_draft = ctrl-up
@@ -533,6 +557,8 @@ pub(crate) const DEFAULT_SETTINGS_CONF: &str = r#"# Kea settings: one `key = val
 # shift_mouse_selects_locally = true
 #   Shift owns local selection gestures while the child reports mouse input.
 #   Set false to forward them; the Select text button remains available.
+# animate_logo = true
+#   Set false to keep the decorative composer bird still while typing.
 "#;
 
 /// Create the config directory and write a default file when nothing exists
@@ -644,7 +670,14 @@ mod tests {
             "copy = ctrl-up\nprevious_draft = ctrl-up"
         )
         .is_err());
-        assert!(Keymap::parse_overrides(Platform::Other, "focus_terminal = ctrl-l").is_err());
+        // Sharing one chord between focus_editor and focus_terminal is the
+        // intentional single switch key (disjoint focus contexts), not ambiguity.
+        let toggle = Keymap::parse_overrides(Platform::Other, "focus_terminal = ctrl-l").unwrap();
+        assert_eq!(
+            toggle.focus_terminal,
+            vec![Shortcut::parse("ctrl-l").unwrap()]
+        );
+        assert!(Keymap::parse_overrides(Platform::Other, "focus_terminal = ctrl-up").is_err());
     }
     #[test]
     fn live_terminal_has_only_the_explicit_composer_escape() {
@@ -672,6 +705,9 @@ mod tests {
         for spec in [
             "ctrl-c",
             "ctrl-v",
+            // Ctrl+Shift+V is clipboard paste handled by the terminal key path,
+            // not by a Kea action binding, so the keymap itself stays quiet.
+            "ctrl-shift-v",
             "ctrl-z",
             "ctrl-enter",
             "ctrl-shift-enter",
@@ -731,6 +767,39 @@ mod tests {
                 .as_any()
                 .downcast_ref::<Invoke>()
                 .is_some_and(|action| action.action == Action::SelectTerminalText)));
+        }
+    }
+
+    #[test]
+    fn focus_editor_switch_binds_in_terminal_and_composer() {
+        // The single switch key must dispatch in the live terminal
+        // (`KeaTerminal`) and in the composer (`KeaCommand > Input` via the
+        // generic `Kea > Input` descendant predicate).
+        let mut map = gpui::Keymap::new(vec![]);
+        map.add_bindings(Keymap::defaults_for(Platform::current()).gpui_bindings());
+        let focus = if cfg!(target_os = "macos") {
+            "cmd-l"
+        } else {
+            "ctrl-l"
+        };
+        for context in [
+            vec!["Kea", "KeaTerminal"],
+            vec!["Kea", "Input"],
+            vec!["Kea", "KeaCommand", "Input"],
+        ] {
+            let context = context
+                .into_iter()
+                .map(|context| gpui::KeyContext::parse(context).unwrap())
+                .collect::<Vec<_>>();
+            let bindings = map.bindings_for_input(&[key(focus)], &context).0;
+            assert!(
+                bindings.iter().any(|binding| binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<Invoke>()
+                    .is_some_and(|action| action.action == Action::FocusEditor)),
+                "focus switch missing in {context:?}"
+            );
         }
     }
 }

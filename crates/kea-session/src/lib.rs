@@ -788,6 +788,18 @@ mod tests {
     }
 
     #[test]
+    fn history_view_rejects_sends_until_back_live() {
+        // The composer stays editable in history, but no draft text may reach
+        // the live process until the view returns to LIVE.
+        let mut s = Session::demo().unwrap();
+        s.seek(0).unwrap();
+        assert!(s.is_history());
+        assert!(s.send(b"not-executed".to_vec()).is_err());
+        s.go_live();
+        assert!(!s.is_history());
+    }
+
+    #[test]
     fn seeking_restores_error_and_preserves_latest_state() {
         let mut s = Session::demo().unwrap();
         s.seek(2).unwrap();

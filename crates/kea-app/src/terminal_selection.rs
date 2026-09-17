@@ -28,6 +28,10 @@ pub fn mouse_owner(
     }
 }
 
+pub fn hover_is_local(reporting: bool, shift_local: bool, explicit: bool, shift: bool) -> bool {
+    mouse_owner(reporting, shift_local, explicit, shift, false) != MouseOwner::Forward
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Gesture {
     pub start: TerminalPoint,
@@ -204,6 +208,14 @@ mod tests {
             assert_eq!(mouse_owner(true, false, true, false, alt), local);
             assert_eq!(mouse_owner(false, false, false, false, alt), local);
         }
+    }
+
+    #[test]
+    fn local_pointer_policy_suppresses_reserved_hover() {
+        assert!(hover_is_local(true, true, false, true));
+        assert!(!hover_is_local(true, true, false, false));
+        assert!(!hover_is_local(true, false, false, true));
+        assert!(hover_is_local(true, false, true, false));
     }
 
     #[test]

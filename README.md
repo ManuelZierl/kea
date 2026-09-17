@@ -46,8 +46,9 @@ There is no hidden Document/PTY mode. Focus changes which surface receives input
 | Run draft in integrated shell | Ctrl+Enter |
 | Send draft to current terminal application | Ctrl+Shift+Enter |
 | Composer completion | Tab |
-| Terminal → composer | Ctrl+L / Cmd+L |
-| Composer → terminal | Ctrl+Shift+L / Cmd+Shift+L |
+| Terminal ⇄ composer (single switch key) | Ctrl+L / Cmd+L |
+| Composer → terminal (explicit alternative) | Ctrl+Shift+L / Cmd+Shift+L |
+| Paste clipboard into live terminal | Ctrl+Shift+V (Cmd+V on macOS) |
 | Select terminal text from composer/chrome | F4 |
 | Previous submitted draft | Ctrl+Up |
 | Next submitted draft / restore scratch | Ctrl+Down |
@@ -62,7 +63,7 @@ newline = shift-enter
 
 After a successful submission, Kea defaults to a fresh focused composer so the user can keep writing while output streams above. Set `post_submit_focus = terminal` to restore immediate terminal focus.
 
-`focus_editor` is the deliberate host escape that remains available while the terminal owns input. Other Kea semantic shortcuts stay out of the TUI's way. Users whose child application needs the default Ctrl/Cmd+L binding can remap or unbind it.
+`focus_editor` (Ctrl/Cmd+L) is the deliberate host escape that remains available while the terminal owns input, and the same chord returns from the composer to the terminal. Other Kea semantic shortcuts stay out of the TUI's way. Users whose child application needs the default Ctrl/Cmd+L binding can remap or unbind it. Plain Ctrl+V remains ordinary child input (0x16); clipboard paste into the live terminal uses Ctrl+Shift+V (Cmd+V on macOS) or the terminal Paste button.
 
 ## Run in shell vs Send to app
 
@@ -100,7 +101,7 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - Legacy, UTF-8 and SGR mouse-wheel reports are forwarded when requested.
 - Primary mouse press/release is forwarded when mouse reporting is active.
 - Drag/motion is forwarded only for the negotiated DECSET 1002/1003 modes.
-- **Shift+drag** selects locally by default. Set `shift_mouse_selects_locally = false` to forward Shift gestures to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
+- **Shift+drag** selects locally by default. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
 - **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
 - A local selection/caret owns Copy, Esc and navigation/extension keys. Other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
 
@@ -185,7 +186,10 @@ complete = tab
 toggle_blocks = ctrl-shift-space
 ```
 
-Multiple shortcuts may be comma-separated; `none` unbinds an action. Ambiguous assignments are rejected and Kea falls back safely.
+`focus_editor` is the single switch key (the same chord returns from composer
+focus); `focus_terminal` is an explicit alternative. Sharing one chord across
+both settings is allowed. Multiple shortcuts may be comma-separated; `none`
+unbinds an action. Ambiguous assignments are rejected and Kea falls back safely.
 
 Example `settings.conf`:
 
@@ -194,6 +198,7 @@ theme = system
 post_submit_focus = editor
 persist_history = false
 shift_mouse_selects_locally = true
+animate_logo = true
 show_blocks = false
 font_family = system
 font_size = system
@@ -202,6 +207,9 @@ line_numbers = false
 soft_wrap = true
 output_wrap = true
 ```
+
+Set `animate_logo = false` to keep the decorative composer bird still while
+typing.
 
 ## Run from source
 
@@ -214,9 +222,21 @@ sudo apt-get install -y build-essential pkg-config cmake clang libclang-dev \
   libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev \
   libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev
 
-git clone git@github.com:ManuelZierl/kea.git
-cd kea
-cargo run --locked --release
+ git clone git@github.com:ManuelZierl/kea.git
+ cd kea
+ cargo run --locked --release
+```
+
+Linux taskbar icon: the app reports `kea` as its Wayland app id. To show the
+bird icon next to it, install the desktop entry and icons once (replace `Exec`
+with your binary location if it differs):
+
+```bash
+sed "s|^Exec=kea$|Exec=$PWD/target/release/kea|" assets/linux/kea.desktop \
+  > ~/.local/share/applications/kea.desktop
+cp -r assets/linux/icons/hicolor ~/.local/share/icons/
+update-desktop-database ~/.local/share/applications
+gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor
 ```
 
 Useful launches:

@@ -3,6 +3,21 @@
 //! negotiated an extended keyboard protocol through the terminal emulator.
 use gpui::Keystroke;
 
+pub const MAX_TERMINAL_TEXT_BYTES: usize = 64 * 1024;
+
+/// Whether a platform text replacement keeps the terminal composition buffer
+/// within its bounded committed-input limit.
+pub fn terminal_replacement_fits(
+    current_bytes: usize,
+    replaced_bytes: usize,
+    replacement_bytes: usize,
+) -> bool {
+    current_bytes
+        .saturating_sub(replaced_bytes)
+        .saturating_add(replacement_bytes)
+        <= MAX_TERMINAL_TEXT_BYTES
+}
+
 /// Marked composition owns confirmation/navigation keys. Without marked text,
 /// GPUI's `is_ime_in_progress` is only a missing-character heuristic: it also
 /// returns true for ordinary Enter/Tab events whose `key_char` is absent.
@@ -11,6 +26,29 @@ pub fn defer_to_ime(key: &Keystroke, has_marked_text: bool) -> bool {
     has_marked_text
         || (key.is_ime_in_progress()
             && !matches!(key.key.as_str(), "enter" | "return" | "tab" | "space"))
+}
+
+/// Explicit clipboard-paste chord for the live terminal.
+///
+/// Plain Ctrl+V (Linux/Windows) remains ordinary child input (`0x16`) and
+/// Cmd+V handling stays platform-native; clipboard paste into the terminal
+/// uses Ctrl+Shift+V everywhere, plus Cmd+V on macOS. The terminal key handler
+/// checks this before encoding so the same screen shortcut pastes clipboard
+/// text (bracketed when supported) instead of sending a control byte.
+pub fn is_terminal_paste(key: &Keystroke) -> bool {
+    if key.key.as_str() != "v" {
+        return false;
+    }
+    let m = key.modifiers;
+    if m.alt || m.function {
+        return false;
+    }
+    // macOS: Cmd+V (allow Shift for Cmd+Shift+V variants), no Ctrl.
+    if m.platform && !m.control {
+        return true;
+    }
+    // Everywhere: Ctrl+Shift+V, no platform key.
+    m.control && m.shift && !m.platform
 }
 
 pub fn encode(
@@ -257,6 +295,36 @@ mod tests {
             paste("a\x1b[201~b", true).unwrap(),
             b"\x1b[200~a[201~b\x1b[201~"
         );
+    }
+    #[test]
+    fn terminal_paste_chord_leaves_plain_ctrl_v_as_child_input() {
+        // Plain Ctrl+V must keep encoding to 0x16 for the child (e.g. OpenCode).
+        assert_eq!(
+            encode(&Keystroke::parse("ctrl-v").unwrap(), false, false).unwrap(),
+            vec![22]
+        );
+        assert!(!is_terminal_paste(&Keystroke::parse("ctrl-v").unwrap()));
+        // Explicit clipboard paste: Ctrl+Shift+V everywhere, Cmd+V on macOS.
+        assert!(is_terminal_paste(
+            &Keystroke::parse("ctrl-shift-v").unwrap()
+        ));
+        assert!(is_terminal_paste(&Keystroke::parse("cmd-v").unwrap()));
+        assert!(is_terminal_paste(&Keystroke::parse("cmd-shift-v").unwrap()));
+        assert!(!is_terminal_paste(&Keystroke::parse("ctrl-c").unwrap()));
+        assert!(!is_terminal_paste(&Keystroke::parse("ctrl-alt-v").unwrap()));
+    }
+
+    #[test]
+    fn terminal_text_limit_applies_to_the_post_replacement_value() {
+        assert_eq!(MAX_TERMINAL_TEXT_BYTES, 64 * 1024);
+        assert!(terminal_replacement_fits(MAX_TERMINAL_TEXT_BYTES, 4, 4));
+        assert!(terminal_replacement_fits(MAX_TERMINAL_TEXT_BYTES, 4, 0));
+        assert!(!terminal_replacement_fits(MAX_TERMINAL_TEXT_BYTES, 0, 1));
+        assert!(!terminal_replacement_fits(
+            MAX_TERMINAL_TEXT_BYTES - 1024,
+            0,
+            2 * 1024
+        ));
     }
 }
 

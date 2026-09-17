@@ -198,7 +198,7 @@ fn complete_paths(
     results: &mut Vec<Candidate>,
     seen: &mut BTreeSet<String>,
 ) {
-    if token.is_empty() || token.starts_with('-') {
+    if token.starts_with('-') {
         return;
     }
     let separator = token.rfind(|ch| ch == '/' || (cfg!(windows) && ch == '\\'));
@@ -313,6 +313,28 @@ mod tests {
             Some(ShellFlavor::Posix)
         )
         .is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn empty_argument_completes_visible_entries_from_reported_cwd() {
+        let root =
+            std::env::temp_dir().join(format!("kea-empty-path-complete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("alpha")).unwrap();
+        std::fs::write(root.join("beta"), b"").unwrap();
+        std::fs::write(root.join(".hidden"), b"").unwrap();
+
+        let candidates = suggest("ls ", 3, Some(&root), None, &[], Some(ShellFlavor::Posix));
+        let replacements = candidates
+            .iter()
+            .map(|candidate| candidate.replacement.as_str())
+            .collect::<Vec<_>>();
+        assert!(replacements.contains(&"alpha/"));
+        assert!(replacements.contains(&"beta"));
+        assert!(!replacements.contains(&".hidden"));
+        assert!(suggest("ls -", 4, Some(&root), None, &[], Some(ShellFlavor::Posix)).is_empty());
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

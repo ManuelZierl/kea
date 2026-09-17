@@ -1,5 +1,6 @@
 /target/
 /smoke-artifacts/
+.venv/
 *.kea
 *.log
 .DS_Store
