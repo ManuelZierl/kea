@@ -1,4 +1,9 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    fs,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 const DEFAULT_CAPACITY: usize = 500;
 
@@ -13,6 +18,7 @@ pub struct DraftHistory {
     capacity: usize,
     cursor: Option<usize>,
     scratch: String,
+    persist_path: Option<PathBuf>,
 }
 
 impl Default for DraftHistory {
@@ -28,6 +34,7 @@ impl DraftHistory {
             capacity: capacity.max(1),
             cursor: None,
             scratch: String::new(),
+            persist_path: None,
         }
     }
 
@@ -48,6 +55,44 @@ impl DraftHistory {
         }
         self.entries.push_back(text);
         self.reset_navigation();
+        // Persistence is best-effort and opt-in: memory stays authoritative, so a
+        // failing disk never breaks recall. Failures are intentionally silent here;
+        // startup surfaces an unreadable location instead.
+        if self.persist_path.is_some() {
+            let _ = self.save();
+        }
+    }
+
+    /// Point recall at a plaintext file and seed it with previously saved entries
+    /// (oldest first). Manual acceptance decision: off by default, explicit opt-in
+    /// via `persist_history`, because submissions can contain secrets.
+    pub fn set_persisted_entries(&mut self, path: PathBuf, entries: Vec<String>) {
+        self.persist_path = Some(path);
+        for entry in entries {
+            if entry.is_empty() {
+                continue;
+            }
+            if self.entries.len() == self.capacity {
+                self.entries.pop_front();
+            }
+            self.entries.push_back(entry);
+        }
+        self.reset_navigation();
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        let Some(path) = self.persist_path.as_deref() else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut encoded = String::new();
+        for entry in &self.entries {
+            encoded.push_str(&encode_entry(entry));
+            encoded.push('\n');
+        }
+        write_private(path, encoded.as_bytes())
     }
 
     pub fn recent(&self, limit: usize) -> Vec<String> {
@@ -84,9 +129,7 @@ impl DraftHistory {
     /// Move toward newer submissions. Moving past the newest submission restores
     /// the exact scratch draft that existed before history navigation began.
     pub fn next(&mut self, current: &str) -> Option<String> {
-        let Some(index) = self.cursor else {
-            return None;
-        };
+        let index = self.cursor?;
         if self
             .entries
             .get(index)
@@ -122,6 +165,76 @@ impl DraftHistory {
             }
         }
     }
+}
+
+/// One entry per physical line. Decoding is total: unknown escapes are preserved
+/// literally, so loading never drops user text, however the file was produced.
+fn encode_entry(entry: &str) -> String {
+    let mut encoded = String::with_capacity(entry.len());
+    for character in entry.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            character => encoded.push(character),
+        }
+    }
+    encoded
+}
+
+fn decode_entry(line: &str) -> String {
+    let mut decoded = String::with_capacity(line.len());
+    let mut characters = line.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('\\') => decoded.push('\\'),
+            Some(next) => {
+                decoded.push('\\');
+                decoded.push(next);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    decoded
+}
+
+/// Read previously persisted entries, oldest first. Missing files load as empty;
+/// only real I/O failures propagate so startup can warn visibly.
+pub fn load_history_file(path: &Path) -> std::io::Result<Vec<String>> {
+    let text = match fs::read_to_string(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        result => result?,
+    };
+    Ok(text
+        .lines()
+        .map(decode_entry)
+        .filter(|entry| !entry.is_empty())
+        .collect())
+}
+
+/// Submissions can contain secrets, so the history file is owner-only.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -175,5 +288,80 @@ mod tests {
             history.recent(10),
             vec!["two".to_string(), "three".to_string()]
         );
+    }
+
+    #[test]
+    fn history_file_codec_round_trips_multiline_unicode_and_backslashes() {
+        for entry in [
+            "echo simple",
+            "multiline\nsecond line\nthird",
+            "cariage\rreturn",
+            "back\\slash",
+            "trailing\\",
+            "literal \\n escape",
+            "unicode ä😀ö",
+            "tabs\tand spaces  ",
+        ] {
+            assert_eq!(decode_entry(&encode_entry(entry)), entry, "{entry:?}");
+        }
+        // Decoding is total: foreign lines load literally instead of vanishing.
+        assert_eq!(decode_entry("plain"), "plain");
+        assert_eq!(decode_entry("\\x"), "\\x");
+    }
+
+    #[test]
+    fn persisted_entries_survive_a_restart_bounded_and_owner_only() {
+        let root = std::env::temp_dir().join(format!("kea-history-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("draft-history.txt");
+
+        let mut history = DraftHistory::with_capacity(2);
+        history.set_persisted_entries(
+            path.clone(),
+            vec!["stale\ndraft".into(), "fresh ä😀".into()],
+        );
+        assert_eq!(
+            history.recent(10),
+            vec!["stale\ndraft".to_string(), "fresh ä😀".to_string()]
+        );
+        // Recording evicts the oldest entry and writes the file through.
+        history.record("third".into());
+        assert_eq!(
+            history.recent(10),
+            vec!["fresh ä😀".to_string(), "third".to_string()]
+        );
+
+        let mut restarted = DraftHistory::with_capacity(2);
+        let loaded = load_history_file(&path).unwrap();
+        restarted.set_persisted_entries(path.clone(), loaded);
+        assert_eq!(
+            restarted.recent(10),
+            vec!["fresh ä😀".to_string(), "third".to_string()]
+        );
+        assert_eq!(restarted.previous(""), Some("third".into()));
+        assert_eq!(restarted.previous("third"), Some("fresh ä😀".into()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "history may contain secrets");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_history_file_loads_empty_and_failed_saves_keep_memory() {
+        let root = std::env::temp_dir().join(format!("kea-history-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("no-such-dir").join("draft-history.txt");
+        assert!(load_history_file(&path).unwrap().is_empty());
+
+        // Point persistence at an unwritable location: recall must keep working.
+        let mut history = DraftHistory::default();
+        history.set_persisted_entries("/proc/kea-history-test/draft-history.txt".into(), vec![]);
+        history.record("kept".into());
+        assert_eq!(history.previous(""), Some("kept".into()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1,8 +1,13 @@
-# Document boundary protocol
+# Optional command metadata protocol
 
-Kea Document mode needs exact command boundaries while retaining a normal PTY and an ordinary interactive shell. Prompt parsing is intentionally forbidden because prompts are arbitrary, localized and mutable.
+Kea's optional command blocks need exact boundaries while retaining a normal PTY
+and an ordinary interactive shell. Prompt parsing is forbidden because prompts
+are arbitrary, localized and mutable. Blocks observe execution; missing or
+invalid metadata never prevents commands from running.
 
-The standalone shell adapter therefore emits private OSC messages into the terminal output stream.
+The standalone shell adapter emits private OSC messages into the terminal output
+stream for **Run in shell**. **Send to app** and ordinary terminal input do not
+add command-boundary wrappers. There is no separate execution mode.
 
 ## Start
 
@@ -43,7 +48,10 @@ A shell adapter is responsible for:
 
 The application sends this wrapper as hidden application-owned PTY input. The wrapper text itself is not the user command block.
 
-The initial adapters are POSIX-style shells and PowerShell. Unknown shells remain fully usable in Direct PTY mode but do not get structured command execution until an explicit adapter exists.
+Adapters cover supported POSIX-style shells and PowerShell. Other shells and
+applications remain usable through terminal input and Send to app. Run in shell
+requires an integrated-shell adapter and an explicit prompt-ready report; see
+the [interaction contract](unified-session.md).
 
 ## Trust
 

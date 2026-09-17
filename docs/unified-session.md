@@ -4,13 +4,31 @@ Kea has one live terminal session and one persistent editor surface. They coexis
 
 The optional block inspector is a derived view of observed shell markers. Hiding it does not change input routing, execution, the child process, recording or replay.
 
+## Workspace and daily workflow
+
+The terminal is the largest surface, with the resizable composer below it.
+Compact chrome provides focus, optional blocks, explicit copy, Save session and
+History actions. Detailed replay controls appear only in History. The status
+bar identifies cwd, notices and persistence state.
+
+The daily loop is compose → Run or Send → keep composing while output streams →
+focus the terminal when the child needs input → return to the composer → recall,
+edit and submit previous authored text. Users should be able to complete that
+loop without a mouse or understanding PTY/event internals.
+
+`focus_editor` (Ctrl+L / Cmd+L) returns from the terminal;
+`focus_terminal` (Ctrl+Shift+L / Cmd+Shift+L) returns from the composer. Both are
+configurable. Ctrl+Up / Ctrl+Down recall successful submissions only in the
+composer, preserve the scratch draft and never execute automatically. Failed
+sends and Edit as new are not submitted-history entries.
+
 ## Focus owns physical input
 
 When the editor or a read-only text component is focused, GPUI Component/platform services own ordinary editing: selection, clipboard, undo/redo, pointer interaction and composition.
 
-When the live terminal is focused, Kea masks **all Kea semantic accelerators**, including user overrides. Representable Ctrl combinations, Tab, modified Enter and function keys reach the terminal encoder instead of invoking Kea actions. Composed text uses GPUI's platform text-input handler and is forwarded only after commit.
+When the live terminal is focused, Kea masks semantic accelerators including user overrides, except the configurable `focus_editor` escape. With no local selection/caret, representable Ctrl combinations, Tab, modified Enter and function keys reach the terminal encoder. A visible Kea selection/caret temporarily owns Copy, Esc and navigation/extension; other input clears it and follows normal terminal routing. Composed text uses GPUI's platform text-input handler and is forwarded only after commit. Active composition owns its candidate navigation/cancellation keys.
 
-“Pass all keys to the TUI” has a protocol boundary: terminal programs receive encoded bytes/sequences, not raw physical keyboard events. Classic terminal protocols intentionally collapse some combinations (for example Tab and Ctrl+I); the OS/window manager may reserve others; newer distinctions require extended keyboard protocols. Kea's invariant is to reserve nothing in live-terminal focus and preserve every distinction exposed by the platform + negotiated terminal protocol.
+“Pass all keys to the TUI” has a protocol boundary: terminal programs receive encoded bytes/sequences, not raw physical keyboard events. Classic terminal protocols intentionally collapse some combinations (for example Tab and Ctrl+I); the OS/window manager may reserve others; newer distinctions require extended keyboard protocols. Beyond the documented host escape and local text commands, Kea preserves every distinction exposed by the platform + negotiated terminal protocol.
 
 ## Explicit submission actions
 
@@ -28,7 +46,10 @@ run_shell = enter
 newline = shift-enter
 ```
 
-A successful Run/Send creates a fresh draft and focuses the terminal. Undo never changes a completed execution or reverses process side effects. Historical/replay views reject input.
+A successful Run/Send creates a fresh draft and keeps the composer focused by
+default (`post_submit_focus = editor`). Set `post_submit_focus = terminal` for
+immediate child interaction instead. Undo never changes a completed execution
+or reverses process side effects. Historical/replay views reject child input.
 
 Direct terminal input invalidates Run readiness until another explicit prompt report arrives. Kea may automate recovery only when it observed plain ASCII insertion followed by the exact number of ordinary Backspaces: Ctrl+Enter sends Ctrl+C, waits for a new prompt marker, revalidates the unchanged focused draft, and then uses the normal Run path. It does not restore readiness from that local observation or apply this recovery to arbitrary controls, pastes, Unicode editing, commands or TUIs.
 
@@ -83,7 +104,12 @@ PTY rows/columns are derived from the actual laid-out terminal canvas instead of
 
 The primary terminal screen retains up to 10,000 visual scrollback lines. Scrolling changes the emulator viewport without pausing the PTY or replay timeline. New output follows normally at the tail; while the reader is above the tail it stays there until **Return to bottom** or new terminal input explicitly returns it. Drag selection is viewport-aware, and selection copy never falls back to copying the whole screen.
 
-Ordinary local selection and scrollback apply when the child has not requested mouse reporting. While reporting is active, vertical wheel input is forwarded with the negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains local scrollback. Shift+drag explicitly selects locally. Button, drag, motion and the rest of the terminal mouse-protocol family remain compatibility work.
+Ordinary local selection and scrollback apply when the child has not requested mouse reporting. While reporting is active, vertical wheel input is forwarded with the negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains local scrollback. Primary-button gestures latch ownership at press. Shift+drag selects locally by default; `shift_mouse_selects_locally = false` forwards it. Select text (header button or F4 outside terminal focus) provides explicit entry. Alt-drag creates a block selection when locally owned. Child motion follows DECSET 1002/1003 and current modifiers. Hover reports preserve local selection and reading position.
+
+Ordinary output preserves retained selections. If selected text changes or the
+engine invalidates a range, a visible recovery caret and feedback replace it;
+caret-only interaction exits on focus loss. See the complete
+[terminal text selection contract](terminal-text-selection.md).
 
 New block views reveal their tail after layout without stealing focus. Focused/selected read-only snapshots are not replaced beneath a reader; explicit refresh remains available.
 

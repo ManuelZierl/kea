@@ -31,6 +31,10 @@ pub struct Settings {
     pub syntax_highlighting: bool,
     pub show_blocks: bool,
     pub post_submit_focus: PostSubmitFocus,
+    /// Keep submitted drafts across restarts in a plaintext owner-only file.
+    /// Off by default: submissions can contain secrets.
+    pub persist_history: bool,
+    pub shift_mouse_selects_locally: bool,
 }
 
 impl Default for Settings {
@@ -45,6 +49,8 @@ impl Default for Settings {
             syntax_highlighting: true,
             show_blocks: false,
             post_submit_focus: PostSubmitFocus::Editor,
+            persist_history: false,
+            shift_mouse_selects_locally: true,
         }
     }
 }
@@ -58,7 +64,22 @@ impl Settings {
             return (Self::default(), None);
         };
         match fs::read_to_string(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Self::default(), None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Leave a commented starting point behind, like keybindings.
+                if let Err(error) = crate::keybindings::ensure_default_file(
+                    &path,
+                    crate::keybindings::DEFAULT_SETTINGS_CONF,
+                ) {
+                    return (
+                        Self::default(),
+                        Some(format!(
+                            "Settings {} unavailable: {error}. Using system defaults.",
+                            path.display()
+                        )),
+                    );
+                }
+                (Self::default(), None)
+            }
             result => match result
                 .map_err(anyhow::Error::from)
                 .and_then(|text| Self::parse(&text))
@@ -111,6 +132,10 @@ impl Settings {
                 "output_wrap" => settings.output_wrap = boolean(value)?,
                 "syntax_highlighting" => settings.syntax_highlighting = boolean(value)?,
                 "show_blocks" => settings.show_blocks = boolean(value)?,
+                "persist_history" => settings.persist_history = boolean(value)?,
+                "shift_mouse_selects_locally" => {
+                    settings.shift_mouse_selects_locally = boolean(value)?
+                }
                 "post_submit_focus" => {
                     settings.post_submit_focus = match value {
                         "terminal" => PostSubmitFocus::Terminal,
@@ -144,15 +169,17 @@ mod tests {
             PostSubmitFocus::Editor
         );
         assert!(Settings::default().font_family.is_none());
+        assert!(Settings::default().shift_mouse_selects_locally);
 
         let settings = Settings::parse(
-            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\n",
+            "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\n",
         )
         .unwrap();
         assert_eq!(settings.appearance, Appearance::Dark);
         assert_eq!(settings.font_size, Some(16.));
         assert!(!settings.soft_wrap);
         assert_eq!(settings.post_submit_focus, PostSubmitFocus::Terminal);
+        assert!(!settings.shift_mouse_selects_locally);
     }
     #[test]
     fn rejects_unknown_and_unsafe_sizes() {
@@ -161,6 +188,7 @@ mod tests {
             "font_size = NaN",
             "font_size = 100",
             "post_submit_focus = smart",
+            "shift_mouse_selects_locally = sometimes",
             "typo = true",
         ] {
             assert!(Settings::parse(text).is_err());

@@ -2,9 +2,13 @@
 use alacritty_terminal::{
     event::{Event as TerminalEvent, EventListener},
     grid::{Dimensions, Scroll},
-    index::{Column, Point as GridPoint, Side},
+    index::{Column, Direction, Point as GridPoint, Side},
     selection::{Selection, SelectionType},
-    term::{cell::Flags, Config, TermMode},
+    term::{
+        cell::{Flags, LineLength},
+        Config, TermMode,
+    },
+    vi_mode::{ViModeCursor, ViMotion},
     vte::ansi::{Color, NamedColor, Processor},
     Term,
 };
@@ -48,6 +52,11 @@ pub struct Engine {
     parser: Processor,
     replies: Option<Arc<Mutex<Vec<String>>>>,
     size: Size,
+    selection_anchor: Option<GridPoint>,
+    selection_head: Option<GridPoint>,
+    selection_block: bool,
+    selection_explicit: bool,
+    selection_invalidated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +79,8 @@ pub struct Screen {
     pub cursor: Option<(usize, usize)>,
     pub display_offset: usize,
     pub history_size: usize,
+    pub local_caret: Option<(usize, usize)>,
+    pub selection_invalidated: bool,
 }
 impl Screen {
     pub fn text(&self) -> String {
@@ -92,6 +103,18 @@ impl Screen {
 pub struct TerminalPoint {
     pub row: usize,
     pub column: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectionMotion {
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +149,11 @@ impl Engine {
             parser: Processor::new(),
             replies,
             size,
+            selection_anchor: None,
+            selection_head: None,
+            selection_block: false,
+            selection_explicit: false,
+            selection_invalidated: false,
         }
     }
     pub fn at(recording: &Recording, end: usize) -> std::io::Result<Self> {
@@ -184,24 +212,152 @@ impl Engine {
         self.terminal.grid().history_size()
     }
     pub fn scroll_lines(&mut self, lines: i32) {
+        let had_selection = self.has_selection();
         self.terminal.scroll_display(Scroll::Delta(lines));
+        self.reconcile_selection(had_selection, None);
     }
     pub fn scroll_bottom(&mut self) {
+        let had_selection = self.has_selection();
         self.terminal.scroll_display(Scroll::Bottom);
+        self.reconcile_selection(had_selection, None);
     }
     pub fn begin_selection(&mut self, point: TerminalPoint) {
-        let point = self.grid_point(point);
-        self.terminal.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));
+        self.begin_selection_kind(point, false);
     }
     pub fn update_selection(&mut self, point: TerminalPoint) {
+        self.extend_selection(point);
+    }
+    pub fn extend_selection(&mut self, point: TerminalPoint) {
         let point = self.grid_point(point);
-        if let Some(selection) = &mut self.terminal.selection {
-            selection.update(point, Side::Right);
-            selection.include_all();
+        let anchor = self.selection_anchor.or(self.selection_head);
+        if let Some(anchor) = anchor {
+            self.selection_anchor = Some(anchor);
+            self.selection_head = Some(point);
+            self.apply_selection();
         }
     }
     pub fn clear_selection(&mut self) {
         self.terminal.selection = None;
+        self.selection_anchor = None;
+        self.selection_head = None;
+        self.selection_explicit = false;
+        self.selection_invalidated = false;
+        self.selection_block = false;
+    }
+    pub fn local_selection_active(&self) -> bool {
+        self.has_selection() || self.selection_head.is_some()
+    }
+    pub fn explicit_selection_active(&self) -> bool {
+        self.selection_explicit && self.local_selection_active()
+    }
+    pub fn enter_local_selection(&mut self) {
+        if self.local_selection_active() {
+            return;
+        }
+        let point = if self.terminal.mode().contains(TermMode::SHOW_CURSOR) {
+            let cursor = self.terminal.grid().cursor.point;
+            alacritty_terminal::term::point_to_viewport(self.display_offset(), cursor)
+                .filter(|point| {
+                    point.line < usize::from(self.size.rows)
+                        && point.column.0 < usize::from(self.size.columns)
+                })
+                .map(|_| cursor)
+                .unwrap_or_else(|| self.grid_point(TerminalPoint { row: 0, column: 0 }))
+        } else {
+            self.grid_point(TerminalPoint { row: 0, column: 0 })
+        };
+        self.selection_head = Some(point);
+        self.selection_explicit = true;
+        self.selection_invalidated = false;
+        self.selection_block = false;
+    }
+    pub fn begin_selection_kind(&mut self, point: TerminalPoint, block: bool) {
+        let point = self.grid_point(point);
+        self.selection_anchor = Some(point);
+        self.selection_head = Some(point);
+        self.selection_block = block;
+        // An explicit interaction may own this drag; clearing the range does
+        // not implicitly give ownership back to the child.
+        self.selection_invalidated = false;
+        self.terminal.selection = Some(Selection::new(
+            if block {
+                SelectionType::Block
+            } else {
+                SelectionType::Simple
+            },
+            point,
+            Side::Left,
+        ));
+    }
+    pub fn set_selection_block(&mut self, block: bool) {
+        self.selection_block = block;
+        if self.has_selection() {
+            self.apply_selection();
+        }
+    }
+    pub fn place_selection_caret(&mut self, point: TerminalPoint) {
+        self.terminal.selection = None;
+        self.selection_anchor = None;
+        self.selection_head = Some(self.grid_point(point));
+        self.selection_explicit = true;
+        self.selection_invalidated = false;
+        self.selection_block = false;
+    }
+    pub fn selection_focus_lost(&mut self) {
+        if !self.has_selection() {
+            self.clear_selection();
+        }
+    }
+    pub fn move_selection(&mut self, motion: SelectionMotion, extend: bool) {
+        if !self.local_selection_active() {
+            return;
+        }
+        let Some(current) = self.selection_head else {
+            return;
+        };
+        let had_range = self.has_selection();
+        if !extend && had_range && matches!(motion, SelectionMotion::Left | SelectionMotion::Right)
+        {
+            let range = self
+                .terminal
+                .selection
+                .as_ref()
+                .and_then(|selection| selection.to_range(&self.terminal));
+            let Some(range) = range else { return };
+            let point = if motion == SelectionMotion::Left {
+                range.start
+            } else {
+                range.end
+            };
+            self.terminal.selection = None;
+            self.selection_anchor = None;
+            self.selection_head = Some(point);
+            self.selection_explicit = true;
+            self.selection_block = false;
+            self.selection_invalidated = false;
+            self.scroll_to_caret();
+            return;
+        }
+        if !extend && had_range {
+            self.terminal.selection = None;
+            self.selection_anchor = None;
+        }
+        let point = self.moved_point(current, motion);
+        self.selection_head = Some(point);
+        self.selection_explicit = true;
+        if extend {
+            self.selection_anchor.get_or_insert(current);
+            self.apply_selection();
+        } else {
+            self.terminal.selection = None;
+            self.selection_anchor = None;
+            self.selection_block = false;
+        }
+        self.selection_invalidated = false;
+        self.scroll_to_caret();
+    }
+    pub fn selection_invalidated(&self) -> bool {
+        self.selection_invalidated
     }
     pub fn selection_text(&self) -> Option<String> {
         self.terminal
@@ -209,11 +365,89 @@ impl Engine {
             .filter(|text| !text.is_empty())
     }
     pub fn has_selection(&self) -> bool {
-        self.terminal
-            .selection
-            .as_ref()
-            .and_then(|selection| selection.to_range(&self.terminal))
-            .is_some()
+        self.terminal.selection.as_ref().is_some_and(|selection| {
+            !selection.is_empty() && selection.to_range(&self.terminal).is_some()
+        })
+    }
+    fn apply_selection(&mut self) {
+        let (Some(anchor), Some(head)) = (self.selection_anchor, self.selection_head) else {
+            return;
+        };
+        let ty = if self.selection_block {
+            SelectionType::Block
+        } else {
+            SelectionType::Simple
+        };
+        let mut selection = Selection::new(ty, anchor, Side::Left);
+        selection.update(head, Side::Right);
+        selection.include_all();
+        self.terminal.selection = Some(selection);
+    }
+    fn moved_point(&mut self, current: GridPoint, motion: SelectionMotion) -> GridPoint {
+        match motion {
+            SelectionMotion::Home => GridPoint::new(current.line, Column(0)),
+            SelectionMotion::End => {
+                let row = &self.terminal.grid()[current.line];
+                let column = row.line_length().saturating_sub(1);
+                self.terminal.expand_wide(
+                    GridPoint::new(current.line, Column(column)),
+                    Direction::Left,
+                )
+            }
+            SelectionMotion::PageUp | SelectionMotion::PageDown => {
+                let lines = usize::from(self.size.rows) as i32;
+                let lines = if motion == SelectionMotion::PageUp {
+                    lines
+                } else {
+                    -lines
+                };
+                let cursor = ViModeCursor::new(current).scroll(&self.terminal, lines);
+                self.terminal.scroll_display(Scroll::Delta(lines));
+                self.terminal.scroll_to_point(cursor.point);
+                cursor.point
+            }
+            SelectionMotion::Left => {
+                ViModeCursor::new(current)
+                    .motion(&mut self.terminal, ViMotion::Left)
+                    .point
+            }
+            SelectionMotion::Right => {
+                ViModeCursor::new(current)
+                    .motion(&mut self.terminal, ViMotion::Right)
+                    .point
+            }
+            SelectionMotion::Up => {
+                ViModeCursor::new(current)
+                    .motion(&mut self.terminal, ViMotion::Up)
+                    .point
+            }
+            SelectionMotion::Down => {
+                ViModeCursor::new(current)
+                    .motion(&mut self.terminal, ViMotion::Down)
+                    .point
+            }
+        }
+    }
+    fn scroll_to_caret(&mut self) {
+        if let Some(point) = self.selection_head {
+            self.terminal.scroll_to_point(point);
+            if !self.has_selection() {
+                self.clamp_caret_to_viewport();
+            }
+        }
+    }
+    fn clamp_caret_to_viewport(&mut self) {
+        let Some(mut point) = self.selection_head else {
+            return;
+        };
+        let top = -(self.display_offset() as i32);
+        let bottom = top + i32::from(self.size.rows) - 1;
+        point.line.0 = point.line.0.clamp(top, bottom);
+        point.column.0 = point
+            .column
+            .0
+            .min(usize::from(self.size.columns).saturating_sub(1));
+        self.selection_head = Some(point);
     }
     fn grid_point(&self, point: TerminalPoint) -> GridPoint {
         let row = point.row.min(usize::from(self.size.rows).saturating_sub(1));
@@ -281,6 +515,15 @@ impl Engine {
             cursor,
             display_offset,
             history_size,
+            local_caret: self.selection_head.and_then(|point| {
+                alacritty_terminal::term::point_to_viewport(display_offset, point)
+                    .filter(|point| {
+                        point.line < usize::from(self.size.rows)
+                            && point.column.0 < usize::from(self.size.columns)
+                    })
+                    .map(|point| (point.line, point.column.0))
+            }),
+            selection_invalidated: self.selection_invalidated,
         }
     }
     fn color(&self, color: Color) -> u32 {
@@ -316,11 +559,94 @@ impl Engine {
 }
 impl Projection for Engine {
     fn output(&mut self, bytes: &[u8]) {
+        let had_selection = self.has_selection();
+        let old_snapshot = self.selection_snapshot();
         self.parser.advance(&mut self.terminal, bytes);
+        self.reconcile_selection(had_selection, old_snapshot);
     }
     fn resize(&mut self, size: Size) {
+        let had_selection = self.has_selection();
+        let snapshot = self.selection_snapshot();
         self.terminal.resize(Geometry(size));
         self.size = size;
+        self.reconcile_selection(had_selection, snapshot);
+    }
+}
+
+impl Engine {
+    fn selection_snapshot(&self) -> Option<String> {
+        self.terminal.selection_to_string()
+    }
+    fn invalidate_selection(&mut self) {
+        self.terminal.selection = None;
+        self.selection_anchor = None;
+        self.selection_head = Some(self.grid_point(TerminalPoint { row: 0, column: 0 }));
+        self.selection_explicit = true;
+        self.selection_invalidated = true;
+        self.selection_block = false;
+        self.clamp_caret_to_viewport();
+    }
+    fn reconcile_selection(&mut self, had_selection: bool, old_snapshot: Option<String>) {
+        if had_selection && self.has_selection() {
+            if old_snapshot.is_some() && old_snapshot != self.selection_snapshot() {
+                self.invalidate_selection();
+                return;
+            }
+            if let Some(range) = self
+                .terminal
+                .selection
+                .as_ref()
+                .and_then(|selection| selection.to_range(&self.terminal))
+            {
+                let Some((anchor, head)) = self.selection_anchor.zip(self.selection_head) else {
+                    return;
+                };
+                if self.selection_block {
+                    let row_forward = anchor.line <= head.line;
+                    let column_forward = anchor.column <= head.column;
+                    self.selection_anchor = Some(GridPoint::new(
+                        if row_forward {
+                            range.start.line
+                        } else {
+                            range.end.line
+                        },
+                        if column_forward {
+                            range.start.column
+                        } else {
+                            range.end.column
+                        },
+                    ));
+                    self.selection_head = Some(GridPoint::new(
+                        if row_forward {
+                            range.end.line
+                        } else {
+                            range.start.line
+                        },
+                        if column_forward {
+                            range.end.column
+                        } else {
+                            range.start.column
+                        },
+                    ));
+                } else if anchor <= head {
+                    self.selection_anchor = Some(range.start);
+                    self.selection_head = Some(range.end);
+                } else {
+                    self.selection_anchor = Some(range.end);
+                    self.selection_head = Some(range.start);
+                }
+            }
+        } else if had_selection {
+            self.invalidate_selection();
+        } else if self.selection_head.is_some() {
+            self.clamp_caret_to_viewport();
+            if self.selection_anchor.is_some() {
+                // An unextended pointer anchor is still empty, not a range to
+                // resurrect at pre-resize or evicted coordinates.
+                self.selection_anchor = self.selection_head;
+                self.terminal.selection = None;
+            }
+        }
     }
 }
 
@@ -481,6 +807,31 @@ mod tests {
         assert!(engine.screen().cells.iter().any(|cell| cell.selected));
     }
 
+    /// Manual acceptance: select, scroll the viewport, then copy. Scrolling
+    /// must neither move nor lose the content-anchored selection, and further
+    /// drags must extend from the current viewport offset.
+    #[test]
+    fn scrolling_preserves_and_extends_a_scrollback_selection() {
+        let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+        engine.output(b"L1\r\nL2\r\nL3\r\nL4\r\nL5");
+        // Viewport shows L2..L5; select the bottom line.
+        engine.begin_selection(TerminalPoint { row: 3, column: 0 });
+        engine.update_selection(TerminalPoint { row: 3, column: 1 });
+        assert_eq!(engine.selection_text().as_deref(), Some("L5"));
+
+        // Scroll two lines up: the selection stays glued to L5 content even
+        // though L5 has left the viewport.
+        engine.scroll_lines(2);
+        assert!(engine.display_offset() > 0);
+        assert_eq!(engine.selection_text().as_deref(), Some("L5"));
+
+        // Extend from the new viewport top (now showing L1) while the button is
+        // still held: the anchor stays at the original press, so the selection
+        // grows back across the scrolled content.
+        engine.update_selection(TerminalPoint { row: 0, column: 1 });
+        assert_eq!(engine.selection_text().as_deref(), Some("1\nL2\nL3\nL4\nL"));
+    }
+
     #[test]
     fn scrollback_retention_and_mouse_reporting_are_explicitly_bounded() {
         let mut engine = Engine::new(Size::new(4, 2).unwrap(), false);
@@ -503,6 +854,222 @@ mod tests {
         assert_eq!(engine.mouse_encoding(), Some(MouseEncoding::Sgr));
         engine.output(b"\x1b[?1003l\x1b[?1002l\x1b[?1000l");
         assert_eq!(engine.mouse_encoding(), None);
+    }
+
+    #[test]
+    fn block_selection_and_local_caret_are_distinct() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"abcd\r\nefgh");
+        engine.begin_selection_kind(TerminalPoint { row: 0, column: 1 }, true);
+        engine.update_selection(TerminalPoint { row: 1, column: 2 });
+        assert_eq!(engine.selection_text().as_deref(), Some("bc\nfg"));
+        assert!(!engine.explicit_selection_active());
+
+        engine.clear_selection();
+        engine.enter_local_selection();
+        assert!(engine.local_selection_active());
+        assert!(engine.screen().local_caret.is_some());
+        assert!(engine.selection_text().is_none());
+    }
+
+    #[test]
+    fn pointer_press_is_empty_until_extended_and_remains_valid_after_resize() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"abcdefgh");
+        engine.begin_selection(TerminalPoint { row: 2, column: 7 });
+        assert!(!engine.has_selection());
+        assert!(engine.selection_text().is_none());
+        engine.resize(Size::new(3, 1).unwrap());
+        engine.update_selection(TerminalPoint { row: 0, column: 0 });
+        assert!(engine.has_selection());
+        assert_eq!(engine.screen().local_caret, Some((0, 0)));
+    }
+
+    #[test]
+    fn caret_and_selection_head_stay_visible_during_page_navigation() {
+        let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+        engine.output(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine");
+        engine.place_selection_caret(TerminalPoint { row: 2, column: 1 });
+        engine.move_selection(SelectionMotion::PageUp, true);
+        assert_eq!(engine.display_offset(), 4);
+        assert_eq!(engine.screen().local_caret, Some((2, 0)));
+        assert!(engine.has_selection());
+        engine.move_selection(SelectionMotion::Left, false);
+        assert!(engine.screen().local_caret.is_some());
+        engine.move_selection(SelectionMotion::PageDown, false);
+        assert_eq!(engine.display_offset(), 0);
+        assert!(engine.screen().local_caret.is_some());
+        assert!(!engine.has_selection());
+    }
+
+    #[test]
+    fn focus_loss_clears_caret_but_preserves_a_range() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"text");
+        engine.enter_local_selection();
+        engine.selection_focus_lost();
+        assert!(!engine.local_selection_active());
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        engine.selection_focus_lost();
+        assert_eq!(engine.selection_text().as_deref(), Some("tex"));
+        engine.move_selection(SelectionMotion::Right, false);
+        engine.selection_focus_lost();
+        assert!(!engine.local_selection_active());
+    }
+
+    #[test]
+    fn selection_uses_alacritty_wide_and_wrapped_cell_semantics() {
+        let mut engine = Engine::new(Size::new(4, 3).unwrap(), false);
+        engine.output("ab界d".as_bytes());
+        engine.begin_selection(TerminalPoint { row: 0, column: 1 });
+        engine.update_selection(TerminalPoint { row: 1, column: 1 });
+        assert_eq!(engine.selection_text().as_deref(), Some("b界d"));
+    }
+
+    #[test]
+    fn navigation_collapses_then_extends_and_pages() {
+        let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+        engine.output(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix");
+        engine.begin_selection_kind(TerminalPoint { row: 1, column: 0 }, false);
+        engine.update_selection(TerminalPoint { row: 1, column: 2 });
+        engine.move_selection(SelectionMotion::Left, false);
+        assert!(engine.explicit_selection_active());
+        assert!(!engine.has_selection());
+        engine.move_selection(SelectionMotion::Right, true);
+        assert!(engine.has_selection());
+        engine.move_selection(SelectionMotion::PageDown, false);
+        assert!(!engine.has_selection());
+        assert!(engine.screen().local_caret.is_some());
+    }
+
+    #[test]
+    fn collapse_does_not_take_an_extra_step_and_vertical_collapse_moves_head() {
+        let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+        engine.output(b"zero\r\none\r\ntwo");
+        engine.begin_selection(TerminalPoint { row: 1, column: 1 });
+        engine.update_selection(TerminalPoint { row: 1, column: 3 });
+        engine.move_selection(SelectionMotion::Left, false);
+        assert_eq!(engine.screen().local_caret, Some((1, 1)));
+        engine.move_selection(SelectionMotion::Left, false);
+        assert_eq!(engine.screen().local_caret, Some((1, 0)));
+
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 1, column: 2 });
+        engine.move_selection(SelectionMotion::Down, false);
+        assert_eq!(engine.screen().local_caret, Some((2, 2)));
+    }
+
+    #[test]
+    fn home_and_end_stop_at_visual_row_boundaries() {
+        let mut engine = Engine::new(Size::new(4, 3).unwrap(), false);
+        engine.output(b"abcdef");
+        engine.place_selection_caret(TerminalPoint { row: 0, column: 1 });
+        engine.move_selection(SelectionMotion::End, false);
+        assert_eq!(engine.screen().local_caret, Some((0, 3)));
+        engine.move_selection(SelectionMotion::Home, false);
+        assert_eq!(engine.screen().local_caret, Some((0, 0)));
+    }
+
+    #[test]
+    fn caret_extension_creates_a_simple_range_and_preserves_explicit_ownership() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"abcdef");
+        engine.enter_local_selection();
+        engine.place_selection_caret(TerminalPoint { row: 0, column: 1 });
+        engine.extend_selection(TerminalPoint { row: 0, column: 3 });
+        assert_eq!(engine.selection_text().as_deref(), Some("bcd"));
+        assert!(engine.explicit_selection_active());
+        engine.clear_selection();
+        engine.enter_local_selection();
+        engine.begin_selection_kind(TerminalPoint { row: 0, column: 1 }, false);
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        assert!(engine.explicit_selection_active());
+    }
+
+    #[test]
+    fn reverse_block_axes_remain_independent_when_scrolled() {
+        let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+        engine.output(b"abcdefgh\r\nijklmnop\r\nqrstuvwx\r\nyzABCDEF\r\nGHIJKLMN");
+        engine.begin_selection_kind(TerminalPoint { row: 2, column: 5 }, true);
+        engine.update_selection(TerminalPoint { row: 1, column: 7 });
+        engine.scroll_lines(1);
+        engine.update_selection(TerminalPoint { row: 0, column: 6 });
+        assert_eq!(engine.selection_text().as_deref(), Some("fg\nno\nvw\nDE"));
+    }
+
+    #[test]
+    fn invalidated_selection_becomes_a_caret() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"old text");
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        engine.output(b"\x1b[2J");
+        assert!(!engine.has_selection());
+        assert!(engine.local_selection_active());
+        assert!(engine.selection_invalidated());
+        assert!(engine.screen().local_caret.is_some());
+    }
+
+    #[test]
+    fn overwriting_selected_cells_invalidates_even_if_alacritty_retains_range() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"old text");
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        engine.output(b"\x1b[1;1HX");
+        assert!(!engine.has_selection());
+        assert!(engine.selection_invalidated());
+        assert!(engine.screen().local_caret.is_some());
+    }
+
+    #[test]
+    fn buffer_switch_and_eviction_never_resurrect_a_stale_selection() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"selected");
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        engine.output(b"\x1b[?1049h\x1b[2Jalt\x1b[?1049l");
+        assert!(!engine.has_selection());
+        assert!(engine.selection_invalidated());
+        assert!(engine.screen().local_caret.is_some());
+
+        engine.clear_selection();
+        engine.output(b"primary\r\n");
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 2 });
+        for _ in 0..TERMINAL_SCROLLBACK_LINES + 2 {
+            engine.output(b"x\r\n");
+        }
+        assert!(!engine.has_selection());
+        assert!(engine.selection_invalidated());
+        assert!(engine.screen().local_caret.is_some());
+    }
+
+    #[test]
+    fn caret_is_clamped_after_resize_and_history_eviction() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"caret");
+        engine.place_selection_caret(TerminalPoint { row: 2, column: 7 });
+        engine.resize(Size::new(3, 1).unwrap());
+        assert_eq!(engine.screen().local_caret, Some((0, 2)));
+        for _ in 0..TERMINAL_SCROLLBACK_LINES + 2 {
+            engine.output(b"x\r\n");
+        }
+        let caret = engine.screen().local_caret.expect("caret remains visible");
+        assert!(caret.0 < 1 && caret.1 < 3);
+    }
+
+    #[test]
+    fn resizing_columns_invalidates_selection_but_resize_preserves_rows() {
+        let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+        engine.output(b"wide content");
+        engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+        engine.update_selection(TerminalPoint { row: 0, column: 3 });
+        engine.resize(Size::new(10, 3).unwrap());
+        assert!(!engine.has_selection());
+        assert!(engine.selection_invalidated());
+        assert!(engine.screen().local_caret.is_some());
     }
 
     #[test]

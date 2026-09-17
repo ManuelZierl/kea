@@ -27,7 +27,7 @@ A successful submission replaces the draft editor with a fresh entity and fresh 
 
 The terminal and editor are separated by a draggable platform-component divider. Resizing changes presentation and the measured PTY dimensions; it does not create another session or execution mode.
 
-The simultaneously visible terminal has its own focus/key context and retains the same process. No Kea action reserves a live-terminal shortcut. Toolbar buttons remain available without stealing control sequences. The optional block inspector changes presentation only; see unified-session.md. The Alacritty/canvas/input adapter provides bounded local scrollback and pointer selection. It forwards vertical wheel input when the child requests mouse reporting, while button/drag/motion protocols and wider platform acceptance remain compatibility work.
+The simultaneously visible terminal has its own focus/key context and retains the same process. The configurable `focus_editor` escape remains available; other semantic shortcuts are masked. Local terminal selection/caret owns only Copy, Esc and navigation/extension; unrelated input clears local state before forwarding. Platform composition takes precedence. Select text is available in the header or with F4 from composer/chrome. The optional block inspector changes presentation only; see unified-session.md. The Alacritty/canvas/input adapter provides bounded scrollback, simple/block selection and caret movement, plus negotiated wheel and primary-button/drag/motion forwarding. Wider platform acceptance remains separate work.
 
 ## Read-only output
 
@@ -52,6 +52,7 @@ syntax_highlighting = true
 line_numbers = false
 soft_wrap = true
 output_wrap = true
+shift_mouse_selects_locally = true
 ```
 
 Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid files produce a warning and fall back to defaults. Configuration is loaded at startup. Do not add a separate Kea preference for every OS preference. Expose overrides only where the host owns policy or where a specific override is useful.
@@ -61,6 +62,11 @@ Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid fil
 The host tests the component's composition/replacement API and Kea's execution guard, UTF-16 ranges, default/overridden/unbound shortcut resolution, and settings validation. The Linux graphical smoke test exercises typing, selection-only copy, cut, undo/redo, multiline Unicode paste, explicit execution, fresh draft history, read-only output and existing replay behavior.
 
 Synthetic component input tests are not real IBus/Fcitx, Wayland, macOS or Windows IME acceptance tests. Keep those, accessibility, OS prediction/dictation coverage, richer shell metadata, complete terminal mouse/keyboard/image protocols, and OS packaging separately tracked. A successful Linux smoke test cannot certify all those capabilities.
+
+Terminal local-selection routing and engine lifecycle have dedicated unit tests;
+real candidate-window placement, composition cancellation/commit and selection
+control accessibility require the manual checks in
+[terminal-text-selection.md](terminal-text-selection.md).
 
 ## Zed integration
 

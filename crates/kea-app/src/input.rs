@@ -3,6 +3,16 @@
 //! negotiated an extended keyboard protocol through the terminal emulator.
 use gpui::Keystroke;
 
+/// Marked composition owns confirmation/navigation keys. Without marked text,
+/// GPUI's `is_ime_in_progress` is only a missing-character heuristic: it also
+/// returns true for ordinary Enter/Tab events whose `key_char` is absent.
+/// These named terminal controls must still reach the encoder.
+pub fn defer_to_ime(key: &Keystroke, has_marked_text: bool) -> bool {
+    has_marked_text
+        || (key.is_ime_in_progress()
+            && !matches!(key.key.as_str(), "enter" | "return" | "tab" | "space"))
+}
+
 pub fn encode(
     key: &Keystroke,
     application_cursor: bool,
@@ -164,6 +174,34 @@ pub fn paste(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn named_terminal_keys_without_key_char_are_not_unfinished_composition() {
+        for (spec, bytes) in [
+            ("enter", b"\r".as_slice()),
+            ("return", b"\r".as_slice()),
+            ("shift-enter", b"\r".as_slice()),
+            ("ctrl-enter", b"\r".as_slice()),
+            ("tab", b"\t".as_slice()),
+            ("shift-tab", b"\x1b[Z".as_slice()),
+            ("space", b" ".as_slice()),
+        ] {
+            let key = Keystroke::parse(spec).unwrap();
+            assert!(key.key_char.is_none());
+            assert!(!defer_to_ime(&key, false), "swallowed {spec}");
+            assert_eq!(encode(&key, false, false).as_deref(), Some(bytes));
+            assert!(defer_to_ime(&key, true), "composition lost {spec}");
+        }
+    }
+
+    #[test]
+    fn actual_composition_still_precedes_terminal_and_selection_routing() {
+        assert!(defer_to_ime(&Keystroke::parse("a").unwrap(), false));
+        assert!(!defer_to_ime(&Keystroke::parse("a->ä").unwrap(), false));
+        for spec in ["enter", "escape", "left", "shift-right", "ctrl-c"] {
+            assert!(defer_to_ime(&Keystroke::parse(spec).unwrap(), true));
+        }
+    }
+
     #[test]
     fn modified_enter_respects_keyboard_protocol_negotiation() {
         let enter = Keystroke::parse("enter").unwrap();

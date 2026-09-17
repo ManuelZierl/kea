@@ -1,6 +1,8 @@
 /target/
+/smoke-artifacts/
 *.kea
 *.log
 .DS_Store
 
 .opencode/
+.notes/

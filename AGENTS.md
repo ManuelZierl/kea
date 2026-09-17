@@ -8,7 +8,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-in
 - Blocks are optional/fail-open observers. **Never make command execution depend on creating, retaining or completing a block.** Missing structure must degrade to untracked execution, not queued/stuck execution.
 - `Run in shell` and `Send to app` are explicit separate actions. Run requires an explicit integrated-shell prompt-ready marker. Send never adds shell wrappers. Never infer readiness from prompt text, cursor position or idle time.
 - Editor-native Enter/newline is the default, but submission/newline shortcuts are semantic and configurable. Support terminal/chat policy (`run_shell = enter`, `newline = shift-enter`) without changing execution architecture.
-- Live terminal focus reserves no Kea accelerators, including user overrides. Use visible chrome controls for Kea actions while the child owns the keyboard.
+- While the live child owns the keyboard, `focus_editor` is the sole configurable Kea accelerator. Mask other Kea accelerators, including user overrides; visible chrome remains available. A visible Kea selection/caret owns only the local read-only commands in docs/terminal-text-selection.md, with unrelated input clearing local state and following normal terminal routing.
 - Preserve every key distinction exposed by the OS + terminal protocol. Do not claim physical-key distinctions that classic terminal encoding cannot represent; extended keyboard protocol support is a compatibility concern.
 - Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
 - Ordinary editor text/composition arrives through the component/platform input handler, not manual keycode-to-character conversion. Terminal committed IME text also uses the platform text-input bridge.
@@ -43,4 +43,4 @@ Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-in
 
 Run cargo fmt, portable tests/Clippy with -D warnings, cargo test -p kea-app --lib, cargo build -p kea-app and the Linux desktop smoke test where dependencies exist. Commit Cargo.lock and use --locked. Preserve real assertions rather than disabling tests to obtain a green build.
 
-Outstanding compatibility work includes terminal mouse/selection/scrollback, extended keyboard negotiation, image protocols, actual OS input-service/accessibility acceptance, long-session indexing/checkpoints and platform packages. Do not describe those as already provided by the editor dependency.
+Outstanding work includes cross-platform/application acceptance and edge cases for terminal mouse, selection and scrollback; higher extended-keyboard protocol levels; image protocols; actual OS input-service/accessibility acceptance; long-session indexing/checkpoints; and platform packages. Existing terminal support is implemented by Kea's adapters, not automatically provided by the editor dependency.

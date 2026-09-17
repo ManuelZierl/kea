@@ -4,7 +4,7 @@
 
 Kea displays a live terminal and a persistent editor together. Focus decides who receives physical input. A block inspector is optional presentation, hidden by default; it is not an execution mode. See [interaction contract](unified-session.md).
 
-The editor/platform owns ordinary text editing, selection, clipboard, undo and composition. Kea owns explicit submission, process/session history, optional metadata and historical inspection. A live terminal reserves no Kea semantic shortcuts.
+The editor/platform owns ordinary text editing, selection, clipboard, undo and composition. Kea owns explicit submission, process/session history, optional metadata and historical inspection. The configurable `focus_editor` escape is the only semantic accelerator reserved in live-terminal focus; visible local text interaction temporarily owns its limited read-only commands.
 
 The same PTY is used by terminal input, **Run in shell**, and **Send to app**. There is no second shell, no submission-target mode and no application-name guessing.
 
@@ -62,7 +62,7 @@ GPUI Component supplies the editable draft, read-only block text and search fiel
 
 Editor submission keys are semantic/configurable actions. The editor-native default leaves Enter to the editor and binds Run in shell to Ctrl+Enter. A terminal/chat-style policy can instead bind Enter to Run and Shift+Enter to Newline.
 
-With live terminal focus, every Kea accelerator—defaults and user overrides—is masked at the deeper terminal key context. The terminal encoder then receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
+With live terminal focus, Kea accelerators other than `focus_editor`—defaults and user overrides—are masked at the deeper terminal key context. A local selection or caret owns Copy, Esc and navigation/extension; unrelated input clears it before normal terminal forwarding. Active IME composition takes precedence. The terminal encoder receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
 
 ## Completion
 
@@ -83,6 +83,14 @@ PTY rows/columns come from the actual laid-out terminal canvas, not guessed wind
 The terminal emulator retains a bounded 10,000-line visual scrollback projection. Scrolling changes only the selected emulator viewport: live PTY output, recording and protocol replies continue, and new output does not force a reader back to the tail. When the child requests mouse reporting, ordinary vertical wheel input uses its negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains an explicit local-scrollback override. Pointer selection and selection text extraction reuse Alacritty's grid, wrapping and wide-cell semantics rather than implementing a second terminal text model. Whole-view copy remains a separate explicit action.
 
 Block widgets are bounded/paged. Output text is read-only/selectable. Focused or selected live snapshots do not change under the reader; explicit refresh updates them. Block UI actions cannot execute commands or alter recorded history.
+
+Terminal [text selection](terminal-text-selection.md) keeps simple/block ranges,
+caret movement and lifecycle reconciliation in `kea-alacritty`, with narrow
+`kea-session` passthroughs. The app owns press-latched pointer routing, settings,
+focus, actions and feedback. Shift's local mouse override is configurable;
+explicit Select text remains available. Valid ranges follow Alacritty scrolling;
+invalidation creates a visible recovery caret instead of restoring stale ranges.
+No selection state is recorded and historical interaction cannot send PTY input.
 
 ## Replay and retention
 

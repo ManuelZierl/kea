@@ -48,6 +48,9 @@ impl EntityInputHandler for KeaView {
         if !self.focus.is_focused(window) || !self.session.input_allowed() {
             return;
         }
+        if !text.is_empty() {
+            self.session.clear_terminal_selection();
+        }
         if text.len() > 16 * 1024 {
             self.notice = Some(
                 "Terminal text input exceeds 16 KiB; use explicit paste for large input.".into(),
@@ -61,6 +64,9 @@ impl EntityInputHandler for KeaView {
         });
         self.terminal_composition = cx.new(|cx| InputState::new(window, cx));
         if !text.is_empty() {
+            // A committed text event is child input, never a local selection
+            // command. End local interaction before attempting delivery.
+            self.session.clear_terminal_selection();
             let result = self.session.send(text.as_bytes().to_vec());
             if result.is_ok() {
                 self.session.scroll_bottom();
@@ -98,7 +104,10 @@ impl EntityInputHandler for KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let (row, col) = self.session.screen().cursor.unwrap_or((0, 0));
+        let screen = self.session.screen();
+        let (row, col) = screen.local_caret.or(screen.cursor).unwrap_or((0, 0));
+        let row = row.min(usize::from(screen.size.rows).saturating_sub(1));
+        let col = col.min(usize::from(screen.size.columns).saturating_sub(1));
         let metrics = terminal_font_metrics(window, cx);
         Some(Bounds::new(
             bounds.origin
@@ -115,6 +124,6 @@ impl EntityInputHandler for KeaView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<usize> {
-        Some(0)
+        None
     }
 }

@@ -12,6 +12,7 @@ use gpui_component::{
     highlighter::{LanguageConfig, LanguageRegistry},
     input::InputState,
 };
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HistoryDirection {
@@ -151,6 +152,15 @@ pub fn submission_text(
             .submission_candidate = Some((editor.clone(), text.clone()));
     }
     text
+}
+
+/// Seed submitted-draft recall with entries persisted by a previous session.
+/// Called once at startup when `persist_history` is enabled; memory stays
+/// authoritative afterwards and every new submission is written through.
+pub fn set_history_persistence(path: PathBuf, entries: Vec<String>, cx: &mut App) {
+    cx.default_global::<DraftRecallGlobal>()
+        .history
+        .set_persisted_entries(path, entries);
 }
 
 /// Retain the keystroke interceptor for as long as the app lives.
@@ -410,6 +420,65 @@ mod tests {
                     cx
                 ));
                 assert_eq!(fresh.read(cx).value().as_ref(), "prompt\nwith details");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn recall_navigates_all_submissions_not_just_the_last(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            register_languages();
+        });
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|_| EmptyView);
+            Root::new(view, window, cx)
+        });
+        window
+            .update(cx, |_, window, cx| {
+                // Mimic two successful Runs: reading the focused draft stages the
+                // submission candidate, and the empty fresh draft commits it.
+                for submitted in ["echo one", "echo two"] {
+                    let editor = new_draft(None, &Settings::default(), submitted, window, cx);
+                    editor.update(cx, |state, cx| state.focus(window, cx));
+                    assert_eq!(
+                        submission_text(&editor, window, cx).as_deref(),
+                        Some(submitted)
+                    );
+                    let fresh = new_draft(None, &Settings::default(), "", window, cx);
+                    fresh.update(cx, |state, cx| state.focus(window, cx));
+                    let _ = editor;
+                }
+                assert_eq!(submitted_history_len(cx), 2);
+                let composer = cx
+                    .default_global::<DraftRecallGlobal>()
+                    .current_editor
+                    .clone()
+                    .unwrap();
+                assert!(navigate_submitted_drafts(
+                    HistoryDirection::Previous,
+                    window,
+                    cx
+                ));
+                assert_eq!(composer.read(cx).value().as_ref(), "echo two");
+                assert!(navigate_submitted_drafts(
+                    HistoryDirection::Previous,
+                    window,
+                    cx
+                ));
+                assert_eq!(composer.read(cx).value().as_ref(), "echo one");
+                assert!(navigate_submitted_drafts(
+                    HistoryDirection::Next,
+                    window,
+                    cx
+                ));
+                assert_eq!(composer.read(cx).value().as_ref(), "echo two");
+                assert!(navigate_submitted_drafts(
+                    HistoryDirection::Next,
+                    window,
+                    cx
+                ));
+                assert_eq!(composer.read(cx).value().as_ref(), "");
             })
             .unwrap();
     }

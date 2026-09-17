@@ -14,12 +14,15 @@ Timestamps are monotonic session-relative microseconds. Equal timestamps preserv
 
 Readers reject unknown versions/kinds, invalid lengths/dimensions, backwards timestamps, events after exit, corrupt checksums and quota violations. Only an incomplete final length/body/checksum is recoverable as a prefix with `truncated_tail=true`. EOF at a frame boundary is valid.
 
-## Structured Document metadata
+## Optional command metadata
 
-The v1 frame schema has no separate command/input frame type. Document-mode command boundaries are encoded as Kea-private OSC messages inside ordinary output frames. A start marker carries command ID + Base64 UTF-8 command text; a completion marker carries ID + exit status. See `document-protocol.md`.
+The v1 frame schema has no separate command/input frame type. Optional command
+boundaries are encoded as Kea-private OSC messages inside ordinary output frames.
+A start marker carries command ID + Base64 UTF-8 command text; a completion
+marker carries ID + exit status. See the [command metadata protocol](document-protocol.md).
 
 This means raw terminal output remains the canonical recording and older v1 readers can still treat the marker bytes as terminal output. A document-aware reader can derive persistent command/output blocks from the same file without re-executing commands.
 
-Raw keyboard events, environment snapshots and working-directory metadata are not stored as dedicated v1 fields. Output itself can contain secrets, and Document markers explicitly contain submitted command text. There are no snapshots, fonts, external resources, authentication or encryption fields.
+Raw keyboard events, environment snapshots and working-directory metadata are not stored as dedicated v1 fields. Output itself can contain secrets, and command markers explicitly contain submitted command text. There are no snapshots, fonts, external resources, authentication or encryption fields.
 
 Future format versions should add an emulator/config fingerprint before claiming equivalent rendering across engines. If richer structured metadata eventually becomes canonical rather than derived, it should be introduced as a versioned format change rather than silently overloading existing frame kinds.

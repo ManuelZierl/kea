@@ -31,4 +31,28 @@ Explicit `--record NEW.kea` remains supported for callers that want a specific c
 
 ## Alpha acceptance
 
-Start a live session without `--record`, produce output, choose **Save session**, produce more output, exit Kea, then open the resulting `.kea` recording. Both the output from before and after choosing Save must be present, and the original process must never have been restarted or re-executed.
+The session-persistence release criteria are:
+
+1. Start temporary, produce recognizable output, choose **Save session**, produce
+   more output, close, and replay the file. Both periods must be present.
+2. Saving to an existing path refuses rather than overwrites it.
+3. A disk-writer failure leaves the live PTY running and visibly reports that
+   saving stopped.
+4. Exhausting retained history leaves the live PTY running and visibly identifies
+   the incomplete history/recording.
+5. A session never explicitly saved creates no `.kea` recording.
+6. Saved files on Unix are owner-only (`0600`).
+7. Replay neither launches the original process nor sends input to it.
+
+## Submitted-draft history
+
+Draft recall is separate from `.kea` session recording. It is in-memory by
+default. The opt-in `persist_history = true` setting stores submitted drafts in
+`draft-history.txt` in the session directory and reloads up to 500 entries on
+startup. The text is plaintext; Unix files are owner-only. Disabling the setting
+does not remove a previously written file.
+
+Current limitation: draft-history write failures do not have the session
+journal's visible failure reporting, and writes replace the history file. Do not
+apply the journal's create-new and failure-feedback guarantees to this separate
+feature.

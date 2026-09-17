@@ -28,10 +28,11 @@ pub enum Action {
     PlayPause,
     GoLive,
     Quit,
+    SelectTerminalText,
 }
 
 impl Action {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -54,6 +55,7 @@ impl Action {
         Self::PlayPause,
         Self::GoLive,
         Self::Quit,
+        Self::SelectTerminalText,
     ];
 
     fn config_name(self) -> &'static str {
@@ -80,6 +82,7 @@ impl Action {
             Self::PlayPause => "play_pause",
             Self::GoLive => "go_live",
             Self::Quit => "quit",
+            Self::SelectTerminalText => "select_terminal_text",
         }
     }
 
@@ -195,6 +198,18 @@ impl Keymap {
         };
         match fs::read_to_string(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Manual acceptance A3: users had to hand-create the config
+                // directory and file before they could remap anything. Leave a
+                // commented starting point behind instead. Never overwrite.
+                if let Err(error) = ensure_default_file(&path, DEFAULT_KEYBINDINGS_CONF) {
+                    return (
+                        Self::defaults_for(Platform::current()),
+                        Some(format!(
+                            "Keybindings {} unavailable: {error}. Using OS/editor defaults.",
+                            path.display()
+                        )),
+                    );
+                }
                 (Self::defaults_for(Platform::current()), None)
             }
             result => match result
@@ -269,6 +284,7 @@ impl Keymap {
                     "ctrl-shift-q"
                 },
             ),
+            (Action::SelectTerminalText, "f4"),
         ] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
@@ -427,6 +443,7 @@ impl Keymap {
                     &["KeaCommand > Input"]
                 }
                 Action::FocusEditor => &["Kea > Input", "KeaChrome", "KeaTerminal"],
+                Action::SelectTerminalText => &["Kea > Input", "KeaChrome"],
                 _ => &["Kea > Input", "KeaChrome"],
             };
             for shortcut in &self.bindings[&action] {
@@ -487,11 +504,89 @@ pub(crate) fn config_path() -> Option<PathBuf> {
         .map(|p| p.join("kea/keybindings.conf"))
 }
 
+/// Commented starting point written next to `settings.conf` when neither file
+/// exists yet. Every line is a comment, so a fresh file behaves exactly like
+/// built-in defaults; uncomment a line to override it. Restart Kea after
+/// editing for now.
+const DEFAULT_KEYBINDINGS_CONF: &str = r#"# Kea keybindings: one `action = shortcut, ...` per line, `#` starts a comment.
+# Shortcuts look like ctrl-l, ctrl-shift-enter, alt-up or f10. `none` unbinds.
+# Unknown actions or ambiguous shortcuts fall back to defaults with a warning.
+# focus_editor = ctrl-l
+# focus_terminal = ctrl-shift-l
+# run_shell = ctrl-enter
+# send_application = ctrl-shift-enter
+# previous_draft = ctrl-up
+# next_draft = ctrl-down
+# copy_document = f10
+# select_terminal_text = f4
+"#;
+
+/// Starting point for `settings.conf`, kept next to the keybindings file.
+pub(crate) const DEFAULT_SETTINGS_CONF: &str = r#"# Kea settings: one `key = value` per line, `#` starts a comment.
+# post_submit_focus = editor
+# theme = system
+# soft_wrap = true
+# show_blocks = false
+# persist_history = false
+#   Keep submitted drafts across restarts. The history file is plaintext and
+#   owner-only on Unix. Submissions can contain secrets; persistence is opt-in.
+# shift_mouse_selects_locally = true
+#   Shift owns local selection gestures while the child reports mouse input.
+#   Set false to forward them; the Select text button remains available.
+"#;
+
+/// Create the config directory and write a default file when nothing exists
+/// yet. Returns `true` when the file was created. Existing files are never
+/// touched; any other failure is reported so callers can fall back visibly.
+pub(crate) fn ensure_default_file(path: &std::path::Path, template: &str) -> std::io::Result<bool> {
+    if path.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // `create_new` keeps this a no-op when another Kea instance wins the race.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            use std::io::Write as _;
+            file.write_all(template.as_bytes())?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn key(spec: &str) -> Keystroke {
         Keystroke::parse(spec).unwrap()
+    }
+    #[test]
+    fn default_config_files_are_created_but_never_overwritten() {
+        let root = std::env::temp_dir().join(format!("kea-config-test-{}", std::process::id()));
+        let path = root.join("nested").join("kea").join("keybindings.conf");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(ensure_default_file(&path, DEFAULT_KEYBINDINGS_CONF).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            DEFAULT_KEYBINDINGS_CONF
+        );
+        // A second call, and a call with different content, leave the file alone.
+        assert!(!ensure_default_file(&path, "focus_editor = none\n").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            DEFAULT_KEYBINDINGS_CONF
+        );
+        // The commented template parses as plain defaults.
+        let map = Keymap::parse_overrides(Platform::Other, DEFAULT_KEYBINDINGS_CONF).unwrap();
+        assert_eq!(map.action_for(&key("ctrl-l")), Some(Action::FocusEditor));
+        let _ = std::fs::remove_dir_all(&root);
     }
     #[test]
     fn defaults_are_editor_native_and_submission_actions_are_distinct() {
@@ -582,6 +677,7 @@ mod tests {
             "ctrl-shift-enter",
             "ctrl-shift-l",
             "ctrl-shift-space",
+            "f4",
             "f6",
             "f7",
             "f8",
@@ -618,5 +714,23 @@ mod tests {
         .unwrap();
         assert_eq!(disabled.action_for(&key("ctrl-l")), None);
         assert!(disabled.focus_terminal.is_empty());
+    }
+
+    #[test]
+    fn selection_entry_is_bound_outside_the_live_terminal() {
+        let mut map = gpui::Keymap::new(vec![]);
+        map.add_bindings(Keymap::defaults_for(Platform::current()).gpui_bindings());
+        for context in [vec!["Kea", "Input"], vec!["Kea", "KeaChrome"]] {
+            let context = context
+                .into_iter()
+                .map(|context| gpui::KeyContext::parse(context).unwrap())
+                .collect::<Vec<_>>();
+            let bindings = map.bindings_for_input(&[key("f4")], &context).0;
+            assert!(bindings.iter().any(|binding| binding
+                .action()
+                .as_any()
+                .downcast_ref::<Invoke>()
+                .is_some_and(|action| action.action == Action::SelectTerminalText)));
+        }
     }
 }

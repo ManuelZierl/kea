@@ -10,17 +10,19 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     input::{self as edit, Input, InputState},
     resizable::{resizable_panel, v_resizable},
-    ActiveTheme, Disableable as _, IconName, Root, Sizable as _, Theme, ThemeMode, TitleBar,
+    ActiveTheme, Disableable as _, IconName, Root, Selectable as _, Sizable as _, Theme, ThemeMode,
+    TitleBar,
 };
 use kea_alacritty::{MouseTracking, Screen, TerminalPoint, TERMINAL_SCROLLBACK_LINES};
 use kea_app::{
-    command_editor, completion, input,
+    command_editor, completion, draft_history, input,
     keybindings::{Action, Invoke, Keymap},
     playback, session_files,
     settings::{Appearance, Settings},
     shell::ShellFlavor,
     terminal_mouse::{self, PointerButton, PointerEvent, WheelDirection},
     terminal_recovery::PromptLineTracker,
+    terminal_selection::{self, KeyModifiers, LocalKey, MouseOwner},
 };
 use kea_document::Document;
 use kea_session::{Observed, Session};
@@ -161,13 +163,39 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     let (keymap, warning) = Keymap::load();
     let (settings, settings_warning) = Settings::load();
     let mut warnings: Vec<String> = warning.into_iter().chain(settings_warning).collect();
+    // Draft history persistence is explicit opt-in (default off): the file is
+    // plaintext and submissions can contain secrets. Load outside the UI loop;
+    // the loop only hands the entries to recall.
+    let persisted_history = if settings.persist_history && !demo && !replay_requested {
+        match session_files::session_directory() {
+            Ok(directory) => {
+                let path = directory.join("draft-history.txt");
+                match draft_history::load_history_file(&path) {
+                    Ok(entries) => Some((path, entries)),
+                    Err(error) => {
+                        warnings.push(format!(
+                            "Draft history will not persist: {}: {error}.",
+                            path.display()
+                        ));
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                warnings.push(format!("Draft history will not persist: {error}."));
+                None
+            }
+        }
+    } else {
+        None
+    };
     if !demo && !replay_requested && shell.is_none() {
         warnings.push(
             "No integrated local shell detected. Terminal input and Send to app remain available; Run in shell and shell cwd completion are unavailable."
                 .into(),
         );
     }
-    let notice = (!warnings.is_empty()).then(|| warnings.join(" "));
+    let notice = (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join(" ")));
 
     Application::new()
         .with_assets(gpui_component_assets::Assets)
@@ -175,6 +203,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             gpui_component::init(cx);
             command_editor::register_languages();
             keymap.install(cx);
+            if let Some((path, entries)) = persisted_history {
+                command_editor::set_history_persistence(path, entries, cx);
+            }
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -241,7 +272,7 @@ struct KeaView {
     terminal_bounds: Option<Bounds<Pixels>>,
     terminal_scroll_remainder: f32,
     terminal_mouse_scroll_remainder: f32,
-    terminal_selection_start: Option<TerminalPoint>,
+    terminal_gesture: Option<terminal_selection::Gesture>,
     timeline_track_bounds: Option<Bounds<Pixels>>,
     timeline_hovered: bool,
     prompt_line: PromptLineTracker,
@@ -259,6 +290,7 @@ struct KeaView {
     _pump: Task<()>,
     _appearance: Subscription,
     _filter_change: Subscription,
+    _focus_lost: Subscription,
 }
 
 impl KeaView {
@@ -293,6 +325,10 @@ impl KeaView {
                 }
             },
         );
+        let focus_lost = cx.on_blur(&focus, window, |this, _, cx| {
+            this.session.terminal_selection_focus_lost();
+            cx.notify();
+        });
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             apply_appearance(&this.settings, window, cx);
             cx.notify();
@@ -331,6 +367,12 @@ impl KeaView {
                             _ => {}
                         }
                         let prompt_arrived = this.pump_session(cx);
+                        if !this.focus.is_focused(window) {
+                            // Output can invalidate a range after focus has
+                            // already left. Do not retain a new caret-only
+                            // interaction in an unfocused surface.
+                            this.session.terminal_selection_focus_lost();
+                        }
                         if prompt_arrived {
                             this.complete_pending_run(window, cx);
                         }
@@ -354,7 +396,7 @@ impl KeaView {
             terminal_bounds: None,
             terminal_scroll_remainder: 0.,
             terminal_mouse_scroll_remainder: 0.,
-            terminal_selection_start: None,
+            terminal_gesture: None,
             timeline_track_bounds: None,
             timeline_hovered: false,
             prompt_line: PromptLineTracker::default(),
@@ -372,6 +414,7 @@ impl KeaView {
             _pump: pump,
             _appearance: appearance,
             _filter_change: filter_change,
+            _focus_lost: focus_lost,
         }
     }
 
@@ -435,29 +478,47 @@ impl KeaView {
         self.focus_editor(window, cx);
     }
 
-    fn copy_document(&self, cx: &mut App) {
+    fn copy_document(&mut self, cx: &mut Context<Self>) {
+        let scope = if self.show_blocks && !self.session.is_history() {
+            "command history"
+        } else {
+            "visible terminal"
+        };
         let text = if self.show_blocks && !self.session.is_history() {
             self.document.text()
         } else {
-            self.session.screen().text()
+            // Manual acceptance: copying the visible screen used to append one
+            // blank line per empty grid row below the content. Drop that empty
+            // tail; it was never selected or visible content.
+            self.session.screen().text().trim_end().to_string()
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+        // Manual acceptance A7: the copy buttons gave no visible feedback.
+        self.notice = Some(format!("Copied {scope}."));
+        cx.notify();
     }
 
     fn copy_terminal_selection(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self.session.terminal_selection_text() else {
-            self.notice = Some(if self.session.terminal_mouse_reporting() {
-                "No terminal text is selected. Hold Shift while dragging over the terminal, then copy the selection."
-                    .into()
+            self.notice = if self.session.terminal_explicit_selection_active() {
+                Some("No terminal text is selected.".into())
+            } else if self.session.terminal_mouse_reporting()
+                && self.settings.shift_mouse_selects_locally
+            {
+                Some("No terminal text is selected. Hold Shift while dragging over the terminal, then copy the selection.".into())
+            } else if self.session.terminal_mouse_reporting() {
+                Some(
+                    "No terminal text is selected. Use Select terminal text for local selection."
+                        .into(),
+                )
             } else {
-                "No terminal text is selected. Drag over terminal output, then copy the selection."
-                    .into()
-            });
+                Some("No terminal text is selected. Drag over terminal output, then copy the selection.".into())
+            };
             cx.notify();
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.notice = Some("Copied terminal selection.".into());
+        self.notice = Some("Copy requested for terminal selection.".into());
         cx.notify();
     }
 
@@ -476,6 +537,17 @@ impl KeaView {
         self.notice = None;
     }
 
+    fn select_terminal_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.terminal_local_selection_active() {
+            self.session.clear_terminal_selection();
+        } else {
+            self.session.enter_terminal_selection();
+        }
+        window.focus(&self.focus);
+        self.notice = None;
+        cx.notify();
+    }
+
     fn terminal_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -492,33 +564,58 @@ impl KeaView {
         ) else {
             return;
         };
-        if let Some(encoding) = self.session.terminal_mouse_encoding() {
-            if !event.modifiers.shift {
-                self.terminal_selection_start = None;
-                let result = terminal_mouse::encode_pointer(
-                    encoding,
+        let reporting = self.session.terminal_mouse_reporting();
+        let owner = terminal_selection::mouse_owner(
+            reporting,
+            self.settings.shift_mouse_selects_locally,
+            self.session.terminal_explicit_selection_active(),
+            event.modifiers.shift,
+            event.modifiers.alt,
+        );
+        let gesture = terminal_selection::Gesture::new(
+            point,
+            owner,
+            self.session.terminal_explicit_selection_active(),
+            event.modifiers.shift,
+            self.session.terminal_has_selection(),
+        );
+        self.terminal_gesture = Some(gesture);
+        match owner {
+            MouseOwner::LocalSimple | MouseOwner::LocalBlock => {
+                if gesture.shift_extend {
+                    self.session.extend_terminal_selection(point);
+                } else if gesture.explicit {
+                    self.session.place_terminal_selection_caret(point);
+                } else {
+                    // Alt changes the shape only after movement. An Alt click
+                    // without movement follows the ordinary local click rule.
+                    self.session.begin_terminal_selection(point);
+                }
+                self.notice = None;
+                cx.notify();
+            }
+            MouseOwner::Forward => {
+                let result = self.forward_pointer(
                     PointerEvent::Press,
-                    Some(PointerButton::Left),
                     point,
-                    event.modifiers.shift,
-                    event.modifiers.alt,
-                    event.modifiers.control,
-                )
-                .map_err(anyhow::Error::msg)
-                .and_then(|bytes| self.session.send(bytes));
-                if result.is_ok() {
-                    self.note_forwarded_terminal_input();
+                    KeyModifiers {
+                        shift: event.modifiers.shift,
+                        alt: event.modifiers.alt,
+                        control: event.modifiers.control,
+                        ..Default::default()
+                    },
+                    true,
+                    cx,
+                );
+                if result.is_err() {
+                    // No successful press means there is no child gesture to
+                    // complete with later motion or release events.
+                    self.terminal_gesture = None;
                 }
                 self.result(result, cx);
                 cx.stop_propagation();
-                return;
             }
         }
-        self.session.clear_terminal_selection();
-        self.session.begin_terminal_selection(point);
-        self.terminal_selection_start = Some(point);
-        self.notice = None;
-        cx.notify();
     }
 
     fn terminal_mouse_move(
@@ -527,7 +624,7 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(start) = self.terminal_selection_start {
+        if let Some(mut gesture) = self.terminal_gesture {
             if !event.dragging() {
                 return;
             }
@@ -538,23 +635,42 @@ impl KeaView {
                 &metrics,
                 self.session.terminal_size(),
             ) {
-                if point != start {
-                    self.session.update_terminal_selection(point);
+                if gesture.owner != MouseOwner::Forward {
+                    self.update_local_gesture(&mut gesture, point);
                     cx.notify();
+                } else if gesture.owner == MouseOwner::Forward {
+                    let tracking = self.session.terminal_mouse_tracking();
+                    let should_report =
+                        matches!(tracking, Some(MouseTracking::Drag | MouseTracking::Motion))
+                            && (event.pressed_button == Some(MouseButton::Left)
+                                || matches!(tracking, Some(MouseTracking::Motion)));
+                    if should_report {
+                        let result = self.forward_pointer(
+                            PointerEvent::Motion,
+                            point,
+                            KeyModifiers {
+                                shift: event.modifiers.shift,
+                                alt: event.modifiers.alt,
+                                control: event.modifiers.control,
+                                ..Default::default()
+                            },
+                            false,
+                            cx,
+                        );
+                        self.result(result, cx);
+                        cx.stop_propagation();
+                    }
                 }
+                self.terminal_gesture = Some(gesture);
             }
             return;
         }
 
-        let Some(tracking) = self.session.terminal_mouse_tracking() else {
-            return;
-        };
-        let should_report = match tracking {
-            MouseTracking::Click => false,
-            MouseTracking::Drag => event.pressed_button == Some(MouseButton::Left),
-            MouseTracking::Motion => true,
-        };
-        if !should_report {
+        // A held button without a press owned by this surface is not a child
+        // gesture. Only unpressed, negotiated hover can start here.
+        if event.pressed_button.is_some()
+            || self.session.terminal_mouse_tracking() != Some(MouseTracking::Motion)
+        {
             return;
         }
         let metrics = terminal_font_metrics(window, cx);
@@ -569,23 +685,20 @@ impl KeaView {
         let Some(encoding) = self.session.terminal_mouse_encoding() else {
             return;
         };
-        let button =
-            (event.pressed_button == Some(MouseButton::Left)).then_some(PointerButton::Left);
         let result = terminal_mouse::encode_pointer(
             encoding,
             PointerEvent::Motion,
-            button,
+            None,
             point,
-            false,
+            event.modifiers.shift,
             event.modifiers.alt,
             event.modifiers.control,
         )
         .map_err(anyhow::Error::msg)
         .and_then(|bytes| self.session.send(bytes));
-        if result.is_ok() {
-            self.note_forwarded_terminal_input();
+        if result.is_err() {
+            self.result(result, cx);
         }
-        self.result(result, cx);
         cx.stop_propagation();
     }
 
@@ -595,7 +708,7 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(start) = self.terminal_selection_start.take() {
+        if let Some(mut gesture) = self.terminal_gesture.take() {
             let metrics = terminal_font_metrics(window, cx);
             let point = terminal_point(
                 event.position,
@@ -603,45 +716,84 @@ impl KeaView {
                 &metrics,
                 self.session.terminal_size(),
             );
-            if point == Some(start) {
-                self.session.clear_terminal_selection();
+            if gesture.owner != MouseOwner::Forward {
+                if let Some(point) = point {
+                    self.update_local_gesture(&mut gesture, point);
+                    if !gesture.moved && !gesture.preserve_click && !gesture.explicit {
+                        self.session.clear_terminal_selection();
+                    }
+                }
+                cx.notify();
             } else if let Some(point) = point {
-                self.session.update_terminal_selection(point);
+                let result = self.forward_pointer(
+                    PointerEvent::Release,
+                    point,
+                    KeyModifiers {
+                        shift: event.modifiers.shift,
+                        alt: event.modifiers.alt,
+                        control: event.modifiers.control,
+                        ..Default::default()
+                    },
+                    false,
+                    cx,
+                );
+                self.result(result, cx);
+                cx.stop_propagation();
             }
-            cx.notify();
+        }
+    }
+
+    fn update_local_gesture(
+        &mut self,
+        gesture: &mut terminal_selection::Gesture,
+        point: TerminalPoint,
+    ) {
+        let first_move = !gesture.moved;
+        if !gesture.moved_to(point) {
             return;
         }
-        if event.modifiers.shift {
-            return;
+        if first_move && gesture.potential_block {
+            // Keep the original content-anchored endpoint, including when
+            // Shift extends an existing selection or the viewport scrolls.
+            self.session.set_terminal_selection_block(true);
+        }
+        self.session.update_terminal_selection(point);
+    }
+
+    fn forward_pointer(
+        &mut self,
+        event: PointerEvent,
+        point: TerminalPoint,
+        modifiers: KeyModifiers,
+        input_effects: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if event == PointerEvent::Press {
+            // A child-owned press ends local interaction even if delivery fails.
+            self.session.clear_terminal_selection();
         }
         let Some(encoding) = self.session.terminal_mouse_encoding() else {
-            return;
+            return Ok(());
         };
-        let metrics = terminal_font_metrics(window, cx);
-        let Some(point) = terminal_point(
-            event.position,
-            self.terminal_bounds,
-            &metrics,
-            self.session.terminal_size(),
-        ) else {
-            return;
-        };
-        let result = terminal_mouse::encode_pointer(
+        let button = Some(PointerButton::Left);
+        let bytes = terminal_mouse::encode_pointer(
             encoding,
-            PointerEvent::Release,
-            Some(PointerButton::Left),
+            event,
+            button,
             point,
-            false,
-            event.modifiers.alt,
-            event.modifiers.control,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.control,
         )
-        .map_err(anyhow::Error::msg)
-        .and_then(|bytes| self.session.send(bytes));
-        if result.is_ok() {
+        .map_err(anyhow::Error::msg)?;
+        let result = self.session.send(bytes);
+        if input_effects && result.is_ok() {
             self.note_forwarded_terminal_input();
         }
-        self.result(result, cx);
-        cx.stop_propagation();
+        if result.is_err() {
+            cx.notify();
+        }
+        result
     }
 
     fn terminal_scroll(
@@ -715,7 +867,9 @@ impl KeaView {
     }
 
     fn paste_terminal(&mut self, cx: &mut Context<Self>) {
+        self.session.clear_terminal_selection();
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            cx.notify();
             return;
         };
         let result = input::paste(&text, self.session.bracketed_paste())
@@ -1016,6 +1170,7 @@ impl KeaView {
             Action::Find => window.dispatch_action(Box::new(edit::Search), cx),
             Action::CopyDocument => self.copy_document(cx),
             Action::FocusEditor => self.focus_editor(window, cx),
+            Action::SelectTerminalText => self.select_terminal_text(window, cx),
             Action::Interrupt => {
                 let result = self.session.send(vec![3]);
                 if result.is_ok() {
@@ -1068,11 +1223,45 @@ impl KeaView {
     }
 
     fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.terminal_composition.update(cx, |state, cx| {
+        let has_marked_text = self.terminal_composition.update(cx, |state, cx| {
             state.marked_text_range(window, cx).is_some()
-        }) {
+        });
+        if input::defer_to_ime(&event.keystroke, has_marked_text) {
             return;
         }
+        match terminal_selection::local_key(
+            &event.keystroke.key,
+            event.keystroke.modifiers.shift,
+            event.keystroke.modifiers.control,
+            event.keystroke.modifiers.alt,
+            event.keystroke.modifiers.platform,
+            event.keystroke.modifiers.function,
+            self.session.terminal_local_selection_active(),
+        ) {
+            LocalKey::Copy => {
+                self.copy_terminal_selection(cx);
+                cx.stop_propagation();
+                return;
+            }
+            LocalKey::Escape => {
+                self.session.clear_terminal_selection();
+                self.notice = None;
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            LocalKey::Move { motion, extend } => {
+                self.session.move_terminal_selection(motion, extend);
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            LocalKey::Forward => {}
+        }
+        // Fail open: the triggering input ends local interaction even if PTY
+        // delivery later fails, so selection never traps terminal input.
+        self.session.clear_terminal_selection();
+        cx.notify();
         if let Some(bytes) = input::encode(
             &event.keystroke,
             self.session.application_cursor(),
@@ -1159,6 +1348,8 @@ impl Render for KeaView {
         let terminal_display_offset = screen.display_offset;
         let terminal_history_size = screen.history_size;
         let terminal_selection_available = self.session.terminal_has_selection();
+        let terminal_local_active = self.session.terminal_local_selection_active();
+        let terminal_selection_invalidated = screen.selection_invalidated;
         let terminal_mouse_reporting = self.session.terminal_mouse_reporting();
         let terminal_metrics = terminal_font_metrics(window, cx);
         let layout_metrics = terminal_metrics.clone();
@@ -1232,10 +1423,23 @@ impl Render for KeaView {
         } else {
             "Live"
         };
-        let terminal_context = if terminal_mouse_reporting {
-            "Mouse to app · Shift selects"
+        let terminal_context = if self
+            .terminal_gesture
+            .is_some_and(|gesture| gesture.owner != MouseOwner::Forward)
+        {
+            "Selecting terminal text locally"
+        } else if terminal_selection_invalidated {
+            "Selection changed · local caret retained"
+        } else if terminal_local_active {
+            "Local selection · arrows move · Shift+arrows extend · Esc clears"
+        } else if self.session.is_history() {
+            "History · select/copy only"
+        } else if terminal_mouse_reporting && self.settings.shift_mouse_selects_locally {
+            "Keyboard and mouse to app · Shift-drag selects locally"
+        } else if terminal_mouse_reporting {
+            "Keyboard and mouse to app · Use Select terminal text"
         } else if self.focus.is_focused(window) {
-            "Input active"
+            "Keyboard to app · Drag selects terminal text"
         } else {
             "Click to interact"
         };
@@ -1243,6 +1447,7 @@ impl Render for KeaView {
             .min_h(px(30.))
             .flex_shrink_0()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_2()
             .px_2()
@@ -1262,6 +1467,21 @@ impl Render for KeaView {
                 format!("{terminal_display_offset} above bottom")
             })
             .child(
+                Button::new("select-terminal-text")
+                    .label(if terminal_local_active {
+                        "Stop selecting"
+                    } else {
+                        "Select text"
+                    })
+                    .tooltip("Toggle local terminal text selection")
+                    .ghost()
+                    .small()
+                    .selected(terminal_local_active)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.select_terminal_text(window, cx)),
+                    ),
+            )
+            .child(
                 Button::new("copy-terminal-selection")
                     .icon(IconName::Copy)
                     .tooltip("Copy terminal selection")
@@ -1269,6 +1489,19 @@ impl Render for KeaView {
                     .small()
                     .disabled(!terminal_selection_available)
                     .on_click(cx.listener(|this, _, _, cx| this.copy_terminal_selection(cx))),
+            )
+            // Manual acceptance E5: keyboard paste intentionally reaches the
+            // child while live-terminal focus owns the keyboard, which left no
+            // paste affordance for the terminal at all. This button lives on
+            // the surface it acts on, next to terminal copy.
+            .child(
+                Button::new("paste-terminal")
+                    .label("Paste")
+                    .tooltip("Paste clipboard into the terminal")
+                    .ghost()
+                    .small()
+                    .disabled(!self.session.input_allowed())
+                    .on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx))),
             );
         if terminal_display_offset > 0 {
             terminal_header = terminal_header.child(
@@ -1334,7 +1567,12 @@ impl Render for KeaView {
             .or_else(|| self.session.warning.clone())
             .unwrap_or_else(|| {
                 if self.session.is_history() {
-                    "Read-only history; the live process continues.".into()
+                    // Manual acceptance D2: users did not notice read-only mode
+                    // and felt the app had frozen. Name the way back out.
+                    format!(
+                        "Read-only history; the live process continues. Return live ({}) to resume typing.",
+                        self.keymap.label(Action::GoLive)
+                    )
                 } else if self.document.prompt_ready() {
                     "Shell ready".into()
                 } else if self.shell.is_some() {
@@ -1855,6 +2093,16 @@ fn paint_screen(
                 } else {
                     cell.foreground
                 }),
+            ));
+        }
+    }
+    if let Some((row, column)) = screen.local_caret {
+        let origin =
+            bounds.origin + point(px(column as f32 * cell_width), px(row as f32 * line_height));
+        if origin.x < bounds.right() && origin.y < bounds.bottom() {
+            window.paint_quad(fill(
+                Bounds::new(origin, size(px(2.), metrics.line_height)),
+                rgb(0xffc857),
             ));
         }
     }

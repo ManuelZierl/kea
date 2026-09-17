@@ -2,7 +2,7 @@
 mod journal;
 use anyhow::{Context, Result};
 use journal::Journal;
-use kea_alacritty::{Engine, MouseEncoding, Screen, TerminalPoint};
+use kea_alacritty::{Engine, MouseEncoding, Screen, SelectionMotion, TerminalPoint};
 use kea_core::{Kind, Projection, Recording, Size};
 use kea_pty::{Message, Pty};
 use std::{ffi::OsString, path::Path, time::Instant};
@@ -289,8 +289,21 @@ impl Session {
         self.displayed_engine_mut().begin_selection(point);
     }
 
+    pub fn begin_terminal_selection_kind(&mut self, point: TerminalPoint, block: bool) {
+        self.displayed_engine_mut()
+            .begin_selection_kind(point, block);
+    }
+
     pub fn update_terminal_selection(&mut self, point: TerminalPoint) {
         self.displayed_engine_mut().update_selection(point);
+    }
+
+    pub fn set_terminal_selection_block(&mut self, block: bool) {
+        self.displayed_engine_mut().set_selection_block(block);
+    }
+
+    pub fn extend_terminal_selection(&mut self, point: TerminalPoint) {
+        self.displayed_engine_mut().extend_selection(point);
     }
 
     pub fn clear_terminal_selection(&mut self) {
@@ -303,6 +316,30 @@ impl Session {
 
     pub fn terminal_has_selection(&self) -> bool {
         self.displayed_engine().has_selection()
+    }
+
+    pub fn terminal_local_selection_active(&self) -> bool {
+        self.displayed_engine().local_selection_active()
+    }
+
+    pub fn terminal_explicit_selection_active(&self) -> bool {
+        self.displayed_engine().explicit_selection_active()
+    }
+
+    pub fn enter_terminal_selection(&mut self) {
+        self.displayed_engine_mut().enter_local_selection();
+    }
+
+    pub fn terminal_selection_focus_lost(&mut self) {
+        self.displayed_engine_mut().selection_focus_lost();
+    }
+
+    pub fn place_terminal_selection_caret(&mut self, point: TerminalPoint) {
+        self.displayed_engine_mut().place_selection_caret(point);
+    }
+
+    pub fn move_terminal_selection(&mut self, motion: SelectionMotion, extend: bool) {
+        self.displayed_engine_mut().move_selection(motion, extend);
     }
 
     pub fn terminal_size(&self) -> Size {
@@ -806,6 +843,26 @@ mod tests {
 
         session.go_live();
         assert_eq!(session.screen().size, original_size);
+    }
+
+    #[test]
+    fn terminal_selection_controls_forward_to_displayed_engine() {
+        let size = Size::new(12, 3).unwrap();
+        let mut recording = Recording::new(size).unwrap();
+        recording
+            .append(0, Kind::Output(b"one\r\ntwo\r\nthree".to_vec()))
+            .unwrap();
+        let mut session = Session::from_recording(recording).unwrap();
+
+        session.enter_terminal_selection();
+        assert!(session.terminal_local_selection_active());
+        assert!(session.terminal_explicit_selection_active());
+        session.move_terminal_selection(SelectionMotion::Right, true);
+        assert!(session.terminal_has_selection());
+        session.terminal_selection_focus_lost();
+        assert!(session.terminal_has_selection());
+        session.clear_terminal_selection();
+        assert!(!session.terminal_local_selection_active());
     }
 
     #[cfg(unix)]

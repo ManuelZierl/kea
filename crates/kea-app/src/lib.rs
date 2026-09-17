@@ -11,5 +11,6 @@ pub mod settings;
 pub mod shell;
 pub mod terminal_mouse;
 pub mod terminal_recovery;
+pub mod terminal_selection;
 
 pub mod completion;

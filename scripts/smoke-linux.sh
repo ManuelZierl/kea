@@ -48,14 +48,14 @@ cleanup_app
 printf 'theme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/keys.bin >smoke-artifacts/terminal.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/terminal.log
-key space ctrl+c ctrl+v Tab F6 F7 F8 F9 F10 ctrl+shift+space
+key space ctrl+c ctrl+v Return Tab F6 F7 F8 F9 F10 ctrl+shift+space
 python3 - <<'PY'
 from pathlib import Path
 actual = Path('smoke-artifacts/keys.bin').read_bytes()
-expected = b' \x03\x16\t\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~\0'
+expected = b' \x03\x16\r\t\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~\0'
 assert actual == expected, (actual, expected)
 PY
-echo 'Actual Space/Ctrl/Tab/function-key delivery passed.'
+echo 'Actual Space/Ctrl/Enter/Tab/function-key delivery passed.'
 focus_editor
 import -window "$window" smoke-artifacts/terminal-editor-focus.png
 put_clipboard $'message one\nmessage two'
@@ -101,7 +101,7 @@ xdotool mousemove --window "$window" 220 160
 xdotool mousedown 1
 xdotool mousemove --window "$window" 260 170
 xdotool mouseup 1
-key shift+Return
+key Return shift+Return
 sleep .3
 python3 - <<'PY'
 from pathlib import Path
@@ -110,10 +110,24 @@ assert b'\x1b[<0;' in actual and b'M' in actual, actual
 assert b'\x1b[<32;' in actual, actual
 assert b'\x1b[<0;' in actual and b'm' in actual, actual
 assert b'\x1b[13;2u' in actual, actual
+assert b'\r' in actual, actual
 PY
 cleanup_app
 
-# Users can explicitly choose the older terminal-after-submit policy.
+# Manual acceptance F3: without a negotiated keyboard protocol, modified Enter
+# must collapse to classic CR instead of leaking CSI-u or vanishing.
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/classic-enter.bin >smoke-artifacts/classic-enter.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/classic-enter.log
+key Return shift+Return
+sleep .3
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/classic-enter.bin').read_bytes()
+assert actual == b'\r\r', actual
+assert b'13;2u' not in actual, actual
+PY
+cleanup_app
 printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/terminal-focus-policy.bin >smoke-artifacts/terminal-policy.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/terminal-policy.log
@@ -125,6 +139,148 @@ python3 - <<'PY'
 from pathlib import Path
 actual = Path('smoke-artifacts/terminal-focus-policy.bin').read_bytes()
 assert actual.endswith(b'\x1b[200~policy\x1b[201~\rz'), actual
+PY
+cleanup_app
+
+# Explicit terminal text selection from the composer must create local ownership
+# without changing the child's input stream. Keyboard extension selects the
+# stable first output line, so clipboard content proves this is real app text,
+# not a local action that merely reports success.
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection.bin >smoke-artifacts/selection.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/selection.log
+focus_editor
+key F4 Home shift+End ctrl+c
+selection_before=$(wc -c < smoke-artifacts/selection.bin)
+selection_clipboard=$(clipboard)
+[[ "$selection_clipboard" == '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' ]] || {
+  printf 'Expected fixture text in terminal selection; got <%s>\n' "$selection_clipboard"
+  exit 1
+}
+# Navigation and the first Escape remain local. The second Escape is forwarded.
+key Left Escape
+[[ "$(wc -c < smoke-artifacts/selection.bin)" -eq "$selection_before" ]] || {
+  echo 'Local navigation or first Escape reached the child'
+  exit 1
+}
+key Escape
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/selection.bin').read_bytes()
+assert actual.endswith(b'\x1b'), actual
+PY
+# Once local selection is active, printable input exits local ownership and is
+# forwarded exactly once rather than being consumed by the selection handler.
+key ctrl+l F4 Home shift+End
+selection_before=$(wc -c < smoke-artifacts/selection.bin)
+xdotool type --clearmodifiers q
+sleep .2
+export SELECTION_BEFORE="$selection_before"
+python3 - <<'PY'
+import os
+from pathlib import Path
+before = int(os.environ['SELECTION_BEFORE'])
+actual = Path('smoke-artifacts/selection.bin').read_bytes()
+assert actual[before:] == b'q', actual[before:]
+PY
+# With reporting off, Alt drag creates a column selection. Identical fixture
+# rows make equal copied lines distinguish a rectangle from a linear range.
+selection_before=$(wc -c < smoke-artifacts/selection.bin)
+put_clipboard selection-sentinel
+xdotool keydown Alt
+xdotool mousemove --window "$window" 35 160
+xdotool mousedown 1
+xdotool mousemove --window "$window" 150 180
+xdotool mouseup 1
+xdotool keyup Alt
+key ctrl+c
+export ALT_SELECTION="$(clipboard)"
+python3 - <<'PY'
+import os
+rows = os.environ['ALT_SELECTION'].splitlines()
+assert len(rows) >= 2 and rows[0] and len(set(rows)) == 1, rows
+assert rows[0] in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', rows
+PY
+[[ "$(wc -c < smoke-artifacts/selection.bin)" -eq "$selection_before" ]] || {
+  echo 'Alt local selection reached the child'
+  exit 1
+}
+cleanup_app
+
+# With mouse reporting active, the default Shift gesture is wholly local and
+# emits no partial press/release to the child. Disabling the policy forwards the
+# same gesture with the current Shift modifier encoded in both SGR events.
+printf 'theme = dark\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-default.bin --mouse >smoke-artifacts/selection-default.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/selection-default.log
+selection_before=$(wc -c < smoke-artifacts/selection-default.bin)
+xdotool keydown Shift
+xdotool mousemove --window "$window" 25 160
+xdotool mousedown 1
+xdotool mousemove --window "$window" 190 160
+xdotool keyup Shift
+xdotool mousemove --window "$window" 200 160
+xdotool mouseup 1
+[[ "$(wc -c < smoke-artifacts/selection-default.bin)" -eq "$selection_before" ]] || {
+  echo 'Default Shift drag reached the mouse-reporting child'
+  exit 1
+}
+key ctrl+c
+default_clipboard=$(clipboard)
+[[ -n "$default_clipboard" && '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' == *"$default_clipboard"* ]] || {
+  printf 'Expected local copy after default Shift drag; got <%s>\n' "$default_clipboard"
+  exit 1
+}
+# Regression: a mouse-created range must own both Copy and Shift+arrow, not
+# merely explicit F4 selections. Check clipboard growth and the actual PTY log.
+key shift+Right ctrl+c
+export SELECTION_BEFORE_TEXT="$default_clipboard"
+export SELECTION_AFTER_TEXT="$(clipboard)"
+python3 - <<'PY'
+import os
+from pathlib import Path
+before, after = os.environ['SELECTION_BEFORE_TEXT'], os.environ['SELECTION_AFTER_TEXT']
+assert after.startswith(before) and len(after) == len(before) + 1, (before, after)
+assert Path('smoke-artifacts/selection-default.bin').read_bytes() == b''
+PY
+# Keyboard navigation promotes the range to explicit local interaction. Exit it
+# before exercising a new child-owned gesture.
+key Escape
+# Adding Shift after a child-owned press cannot turn its remaining events local.
+export SELECTION_BEFORE="$(wc -c < smoke-artifacts/selection-default.bin)"
+xdotool mousemove --window "$window" 25 160 mousedown 1
+xdotool keydown Shift
+xdotool mousemove --window "$window" 190 160 mouseup 1
+xdotool keyup Shift
+sleep .2
+python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+actual = Path('smoke-artifacts/selection-default.bin').read_bytes()[int(os.environ['SELECTION_BEFORE']):]
+reports = re.findall(rb'\x1b\[<(\d+);\d+;\d+([Mm])', actual)
+assert reports[0] == (b'0', b'M') and reports[-1] == (b'4', b'm'), actual
+assert (b'36', b'M') in reports, actual
+PY
+cleanup_app
+
+printf 'theme = dark\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-forwarded.bin --mouse >smoke-artifacts/selection-forwarded.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/selection-forwarded.log
+xdotool keydown Shift
+xdotool mousemove --window "$window" 25 160
+xdotool mousedown 1
+xdotool mousemove --window "$window" 190 160
+xdotool mouseup 1
+xdotool keyup Shift
+sleep .2
+python3 - <<'PY'
+from pathlib import Path
+import re
+actual = Path('smoke-artifacts/selection-forwarded.bin').read_bytes()
+reports = re.findall(rb'\x1b\[<(\d+);\d+;\d+([Mm])', actual)
+assert reports[0] == (b'4', b'M') and reports[-1] == (b'4', b'm'), actual
+assert (b'36', b'M') in reports, actual
 PY
 cleanup_app
 

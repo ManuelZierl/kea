@@ -48,6 +48,7 @@ There is no hidden Document/PTY mode. Focus changes which surface receives input
 | Composer completion | Tab |
 | Terminal → composer | Ctrl+L / Cmd+L |
 | Composer → terminal | Ctrl+Shift+L / Cmd+Shift+L |
+| Select terminal text from composer/chrome | F4 |
 | Previous submitted draft | Ctrl+Up |
 | Next submitted draft / restore scratch | Ctrl+Down |
 | Show/hide optional command blocks | Ctrl+Shift+Space |
@@ -83,6 +84,10 @@ Kea therefore retains the exact text of successful **Run in shell** and **Send t
 
 Entering history preserves the current unsubmitted scratch draft. Navigating forward past the newest submission restores that scratch draft exactly. Recall edits the composer only: it never sends bytes or re-executes anything.
 
+Recall is in-memory by default. `persist_history = true` opts into a plaintext
+`draft-history.txt` file across restarts, separately from saved terminal sessions.
+See [draft-history persistence and its current limits](docs/session-persistence.md#submitted-draft-history).
+
 ## Terminal/TUI compatibility
 
 Terminal applications receive encoded terminal input, not raw physical keyboard events. Kea uses the terminal emulator's negotiated state rather than scraping screen text.
@@ -95,7 +100,13 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - Legacy, UTF-8 and SGR mouse-wheel reports are forwarded when requested.
 - Primary mouse press/release is forwarded when mouse reporting is active.
 - Drag/motion is forwarded only for the negotiated DECSET 1002/1003 modes.
-- **Shift+drag** always selects locally and **Shift+wheel** always uses Kea scrollback.
+- **Shift+drag** selects locally by default. Set `shift_mouse_selects_locally = false` to forward Shift gestures to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
+- **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
+- A local selection/caret owns Copy, Esc and navigation/extension keys. Other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
+
+Valid selections survive ordinary scrolling output. If selected text changes or
+is discarded, Kea shows a recovery caret instead of silently turning the next
+Copy chord into child input. See [terminal text selection](docs/terminal-text-selection.md).
 
 Some distinctions remain impossible in classic terminal protocols, and OS/window-manager shortcuts may never reach Kea. Advanced graphics protocols, higher Kitty key-release/repeat levels, focus-event forwarding and accessibility certification are tracked separately from the first alpha compatibility gate.
 
@@ -128,7 +139,11 @@ Default saved-session locations:
 
 `--record NEW.kea` remains available when an explicit create-new path is desired.
 
-The status bar distinguishes **Temporary**, **Saving**, and **Saving stopped**. Recordings are currently unencrypted and bounded; persistence failure never stops the live PTY.
+The persistence status distinguishes **Temporary**, **Saving**, and **Saving
+stopped**. A **History stopped** warning separately identifies exhausted retained
+history: the PTY may continue, but replay and saved output are incomplete beyond
+that point. Recordings are unencrypted and bounded; persistence failure never
+stops the live PTY.
 
 See [session persistence](docs/session-persistence.md).
 
@@ -163,6 +178,7 @@ run_shell = ctrl-enter
 send_application = ctrl-shift-enter
 focus_editor = ctrl-l
 focus_terminal = ctrl-shift-l
+select_terminal_text = f4
 previous_draft = ctrl-up
 next_draft = ctrl-down
 complete = tab
@@ -176,6 +192,8 @@ Example `settings.conf`:
 ```text
 theme = system
 post_submit_focus = editor
+persist_history = false
+shift_mouse_selects_locally = true
 show_blocks = false
 font_family = system
 font_size = system
@@ -241,9 +259,14 @@ cargo test --locked -p kea-app --lib
 cargo build --locked -p kea-app
 ```
 
-Real OS validation is separate from compilation/unit tests. The alpha compatibility matrix is documented in [docs/terminal-compatibility-alpha.md](docs/terminal-compatibility-alpha.md), persistence checks in [docs/alpha-persistence-acceptance.md](docs/alpha-persistence-acceptance.md), and the product loop in [docs/daily-driver-product.md](docs/daily-driver-product.md).
+Real OS validation is separate from compilation/unit tests. See the
+[terminal compatibility matrix](docs/terminal-compatibility-alpha.md),
+[persistence acceptance criteria](docs/session-persistence.md#alpha-acceptance)
+and [daily workflow](docs/unified-session.md#workspace-and-daily-workflow).
 
-See also [architecture](docs/architecture.md), [interaction contract](docs/unified-session.md), [recording format](docs/recording-format.md), [roadmap](docs/roadmap.md), and [development invariants](AGENTS.md).
+See the [documentation index](docs/README.md), [architecture](docs/architecture.md),
+[interaction contract](docs/unified-session.md), [recording format](docs/recording-format.md),
+[roadmap](docs/roadmap.md), and [development invariants](AGENTS.md).
 
 ## License
 

@@ -75,7 +75,10 @@ impl ShellFlavor {
     /// Instrumentation must be observational: after the wrapper finishes, the shell's
     /// visible status must be the user's command status, not the status of Kea's marker
     /// printf/unset bookkeeping. The final subshell `exit` restores `$?` without exiting
-    /// the interactive parent shell.
+    /// the interactive parent shell. Symmetrically, the wrapper snapshots the entry
+    /// `$?` before its own display line runs and restores it immediately before `eval`,
+    /// so user code observing `$?` (for example `echo $?` after a failing Run) sees the
+    /// previous command status instead of Kea's display `printf` status.
     pub fn wrap(self, id: u64, input: &str, prompt_column: usize) -> Result<Vec<u8>, Error> {
         let encoded = encode_input(input)?;
         let display = display_source(input);
@@ -84,12 +87,13 @@ impl ShellFlavor {
             Self::Posix => {
                 let source = encode_posix_source(input);
                 let display = encode_posix_source(&display);
+                let entry_var = format!("__kea_entry_{id}");
                 let source_var = format!("__kea_source_{id}");
                 let status_var = format!("__kea_status_{id}");
                 let command = format!(
-                    "{source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; (exit \"${status_var}\"); {source_var}_kea_rc=$?; unset {source_var} {status_var}; (exit \"${{{source_var}_kea_rc}}\")\r"
+                    "{entry_var}=$?; printf '\\033[{display_column}G%b' '{display}'; {source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; (exit \"${entry_var}\"); eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; (exit \"${status_var}\"); {source_var}_kea_rc=$?; unset {entry_var} {source_var} {status_var}; (exit \"${{{source_var}_kea_rc}}\")\r"
                 );
-                format!("printf '\\033[{display_column}G%b' '{display}'; {command}")
+                command
             }
             Self::PowerShell => {
                 let source_var = format!("$__kea_source_{id}");
@@ -165,6 +169,58 @@ mod tests {
         assert!(wrapper.contains("__kea_status_7=$?"));
         assert!(wrapper.contains("__kea_source_7_kea_rc=$?"));
         assert!(wrapper.ends_with("(exit \"${__kea_source_7_kea_rc}\")\r"));
+    }
+
+    /// Manual acceptance A5: `false` via Run, then `echo $?` via Run, must print
+    /// `1`. The wrapper's own display line must not become the `$?` that user
+    /// code observes, so this drives the real wrapper through a real bash.
+    #[cfg(unix)]
+    #[test]
+    fn posix_wrapper_preserves_entry_status_in_real_bash() {
+        use std::ffi::OsString;
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+
+        let installed = Command::new("bash")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !installed {
+            eprintln!("skipping: bash is not installed");
+            return;
+        }
+        // Kea feeds the PTY through the line discipline, where `\r` submits the
+        // line. A pipe has no line discipline, so submit with `\n` instead.
+        let feed = |bytes: Vec<u8>| {
+            bytes
+                .into_iter()
+                .map(|b| if b == b'\r' { b'\n' } else { b })
+                .collect::<Vec<_>>()
+        };
+        let integration = feed(ShellFlavor::Posix.integration(&[OsString::from("bash")]));
+        let failing = feed(ShellFlavor::Posix.wrap(7, "false", 0).unwrap());
+        let probe = feed(ShellFlavor::Posix.wrap(9, "echo MARKER:$?", 0).unwrap());
+
+        let mut child = Command::new("bash")
+            .args(["--noprofile", "--norc", "-i"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn bash for wrapper status check");
+        {
+            let stdin = child.stdin.as_mut().expect("piped bash stdin");
+            stdin.write_all(&integration).expect("feed hook");
+            stdin.write_all(&failing).expect("feed failing command");
+            stdin.write_all(&probe).expect("feed status probe");
+            stdin.write_all(b"exit\n").expect("feed exit");
+        }
+        let output = child.wait_with_output().expect("reap bash");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("MARKER:1"),
+            "expected the probe to observe the previous Run status; got:\n{stdout}"
+        );
     }
 
     #[test]

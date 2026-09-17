@@ -17,7 +17,8 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 - Command blocks are optional/fail-open observers. Execution does not queue or depend on a block.
 - Read-only command/output surfaces preserve selection during live output changes.
 - The primary terminal screen has bounded local scrollback, viewport-aware pointer selection and selection-only copy.
-- Legacy/UTF-8/SGR mouse wheel and primary-button reporting are forwarded from Alacritty's negotiated mode state; DECSET 1002/1003 controls drag/motion forwarding. Shift remains Kea's explicit local selection/scrollback override.
+- Legacy/UTF-8/SGR mouse wheel and primary-button reporting are forwarded from Alacritty's negotiated mode state; DECSET 1002/1003 controls drag/motion forwarding. Shift's left-button local override is configurable; Shift+wheel stays local.
+- Terminal selection supports simple/block ranges, explicit caret entry, read-only keyboard navigation and selection-only Copy. Invalidated ranges become visible recovery carets; unrelated input exits locally and reaches the child once.
 - Alacritty's Kitty keyboard support is enabled for negotiation. Classic key encoding remains the fallback and modified Enter uses CSI-u only when the child negotiated an extended keyboard mode.
 - Replay uses a separate silent historical emulator while live capture continues.
 - Sessions start temporary and can transition to an explicit saved journal without losing already-retained history.
@@ -33,7 +34,7 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 7. **PATH autocomplete:** modify PATH in the shell, return to a prompt, and verify editor completion sees an executable in the new PATH. File completion is relative to the reported cwd. No draft is evaluated for completion.
 8. **Native completion:** terminal Tab reaches Bash/PowerShell/OpenCode/REPL completion unchanged, including profile-provided PowerShell completers.
 9. **TUI keys:** with terminal focus, verify Space, Tab/Shift+Tab, Ctrl combinations, modified Enter and function keys are delivered as the negotiated terminal protocol permits.
-10. **TUI mouse:** verify SGR click/drag/release reaches a mouse-aware TUI; Shift+drag remains local selection and Shift+wheel remains local scrollback.
+10. **TUI mouse/selection:** verify SGR click/drag/release reaches a mouse-aware TUI; Shift+drag is local by default and forwarded when configured. Verify explicit selection, block drag, keyboard collapse/extension, copy, focus loss, streaming output and IME precedence per [terminal text selection](terminal-text-selection.md). Shift+wheel remains local scrollback.
 11. **Output:** block output remains read-only/selectable; selected/focused snapshots do not jump on live output. Collapse/filter/page/Edit-as-new remain presentation-only.
 12. **Replay:** save/reopen without re-executing commands; inspect an overwritten TUI error while live capture remains isolated from historical state.
 13. **Persistence:** start temporary, save mid-session, produce more output, reopen the recording and verify both pre-save and post-save history is present.
