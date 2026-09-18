@@ -12,6 +12,12 @@ The original draft seeds a separate search field. Editing that query never edits
 the draft. With an empty draft the popup shows ranked recent input and available
 saved memories.
 
+The compact list emphasizes command text and named memories. Long summaries stay
+on one line; Actions shows the exact preview, directory, scope and submission
+details. Controls reveal shortcut hints on hover. A short footer states that
+Enter inserts without running and identifies whether new history is session-only
+or saved locally; storage details are available on hover and in Actions.
+
 | Input | Action |
 | --- | --- |
 | Type | Case-insensitive, Unicode-aware subsequence search across words |
@@ -24,6 +30,10 @@ saved memories.
 | Escape | Back, then close without changing the original draft |
 | Click outside | Close without stealing focus from the clicked surface |
 | Mouse wheel | Move through results or actions |
+
+Keyboard navigation keeps selection until the pointer actually moves; merely
+leaving the mouse over a row does not override arrows or page navigation. Mouse
+callbacks from an older page or menu cannot select or activate its stale items.
 
 Right Arrow retains its normal search-field cursor behavior. The action shortcut
 is Ctrl-Enter, not a hidden interception of ordinary text navigation. Every
@@ -68,6 +78,13 @@ Global memories are available everywhere. Exact-directory memories require a
 currently reported matching local-shell directory; unknown or stale context does
 not count as a match. No parent-directory/project inheritance is implied.
 
+Forget asks for explicit confirmation and reports completion. Forgetting a named
+memory removes that definition only; same-text submitted history is separate.
+Forgetting a history result removes its grouped occurrences. If disk deletion
+fails partway, the popup reports how many records were removed and refreshes the
+remaining results instead of displaying a stale group. Completion of an operation
+started before closing the popup does not change focus in a newly opened popup.
+
 Save draft also works before any execution, and without a matching result. Saving
 is explicit and never executes. Memory names are unique per input kind and scope.
 A memory recalled into another shell remains editable text: there is no automatic
@@ -110,10 +127,10 @@ rather than silently claiming complete history.
 
 ## Boundaries and storage
 
-`reverse_search.rs` is a std-only model and bounded fuzzy ranking implementation.
-`reverse_search_store.rs` handles versioned, length-checked files.
-`reverse_search_worker.rs` owns I/O and search on a bounded channel.
-`reverse_search_view.rs` is a GPUI component with no PTY or execution capability.
+`src/reverse_search/model.rs` is a std-only model and bounded fuzzy ranking implementation.
+`src/reverse_search/store.rs` handles versioned, length-checked files.
+`src/reverse_search/worker.rs` owns I/O and search on a bounded channel.
+`src/reverse_search/view.rs` is a GPUI component with no PTY or execution capability.
 The host observes successful Run/Send submissions and provides the current editor
 and explicitly known directory context. No replay-core dependencies change.
 

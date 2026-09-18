@@ -1,0 +1,235 @@
+use super::*;
+use anyhow::{Context as _, Result};
+use gpui_component::TitleBar;
+use kea_app::{editor::history as draft_history, history::session_files, reverse_search::view};
+use std::{ffi::OsString, fs::File, path::PathBuf};
+
+pub(super) fn run() -> Result<()> {
+    let mut args = std::env::args_os().skip(1);
+    let (mut demo, mut replay, mut record, mut terminal_focus) = (false, None, None, false);
+    let mut command: Vec<OsString> = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            command.extend(args);
+            break;
+        }
+        if arg == "--demo" {
+            demo = true;
+        } else if arg == "--direct" || arg == "--terminal-focus" {
+            terminal_focus = true;
+        } else if arg == "--replay" {
+            replay = Some(PathBuf::from(args.next().context("--replay needs a path")?));
+        } else if arg == "--record" {
+            record = Some(PathBuf::from(
+                args.next().context("--record needs a new file path")?,
+            ));
+        } else if arg == "--help" || arg == "-h" {
+            let help = "Kea — one terminal session with a persistent text editor
+
+kea [--terminal-focus] [--record NEW.kea] [-- PROGRAM ARG...]
+kea --replay SESSION.kea
+kea --demo
+
+Terminal and editor are visible together; focus decides who receives keyboard input.
+Editor defaults: Enter = new line, Ctrl+Enter = Run in shell, Ctrl+Shift+Enter = send literal text to the current terminal app, Tab = complete.
+Ctrl+R in the compose editor opens history and saved memories; Enter inserts, never runs.
+All semantic shortcuts are configurable. Terminal-like editor behavior is possible with:
+  run_shell = enter
+  newline = shift-enter
+
+Blocks are an optional observational view. They never gate command execution.
+The current integrated local-shell directory is reported by shell hooks; while a TUI/remote app owns the terminal, Kea labels it last reported rather than guessing.
+Terminal Tab and other representable keys go to the child application.
+Mouse buttons/wheel are forwarded when the child negotiates mouse reporting; hold Shift for local selection/scrollback.
+Modified Enter is distinguished only after the child negotiates an extended keyboard protocol.
+
+KEA_KEYBINDINGS and KEA_SETTINGS select explicit configuration files.
+Input history stays session-only unless history_persistence = true. Explicit named saves persist.
+KEA_MEMORY_DIR selects an absolute input-memory directory. See docs/reverse-search.md.
+Sessions are temporary unless Save session or --record is used. Saved recordings are bounded and unencrypted; commands/output can contain secrets.";
+            #[cfg(not(windows))]
+            println!("{help}");
+            #[cfg(windows)]
+            show_message(help.to_string());
+            return Ok(());
+        } else if arg.to_string_lossy().starts_with('-') {
+            anyhow::bail!("unknown option: {}", arg.to_string_lossy());
+        } else {
+            command.push(arg);
+            command.extend(args);
+            break;
+        }
+    }
+
+    let replay_requested = replay.is_some();
+    if (demo && replay_requested)
+        || ((demo || replay_requested) && (record.is_some() || !command.is_empty()))
+    {
+        anyhow::bail!(
+            "--demo and --replay cannot be combined with each other, --record, or a command"
+        );
+    }
+
+    #[cfg(windows)]
+    if !demo && !replay_requested && command.is_empty() {
+        command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
+    }
+
+    let shell = if demo || replay_requested {
+        None
+    } else {
+        ShellFlavor::detect(&command)
+    };
+    let mut session = if demo {
+        Session::demo()?
+    } else if let Some(path) = replay {
+        let loaded = kea_core::read_from(File::open(path)?)?;
+        let mut session = Session::from_recording(loaded.recording)?;
+        session.go_live();
+        if loaded.truncated_tail {
+            session.warning =
+                Some("Recovered complete events; the final recording frame was truncated.".into());
+        }
+        session
+    } else {
+        Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
+    };
+
+    if let Some(shell) = shell {
+        session.send_hidden(shell.integration(&command))?;
+    }
+    let document = Document::from_recording(session.recording());
+    let initial_focus = if demo || terminal_focus || shell.is_none() {
+        InitialFocus::Terminal
+    } else {
+        InitialFocus::Editor
+    };
+    let (keymap, warning) = Keymap::load();
+    let (settings, settings_warning) = Settings::load();
+    let mut warnings: Vec<String> = warning.into_iter().chain(settings_warning).collect();
+    // Load explicit draft-history persistence before entering the UI loop.
+    let persisted_history = if settings.persist_history && !demo && !replay_requested {
+        match session_files::session_directory() {
+            Ok(directory) => {
+                let path = directory.join("draft-history.txt");
+                match draft_history::load_history_file(&path) {
+                    Ok(entries) => Some((path, entries)),
+                    Err(error) => {
+                        warnings.push(format!(
+                            "Draft history will not persist: {}: {error}.",
+                            path.display()
+                        ));
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                warnings.push(format!("Draft history will not persist: {error}."));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if !demo && !replay_requested && shell.is_none() {
+        warnings.push(
+            "No integrated local shell detected. Terminal input and Send to app remain available; Run in shell and shell cwd completion are unavailable."
+                .into(),
+        );
+    }
+    let notice = (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join(" ")));
+
+    Application::new()
+        .with_assets(gpui_component_assets::Assets)
+        .run(move |cx: &mut App| {
+            gpui_component::init(cx);
+            command_editor::register_languages();
+            keymap.install(cx);
+            if let Some((path, entries)) = persisted_history {
+                command_editor::set_history_persistence(path, entries, cx);
+            }
+            view::install(cx);
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1050.), px(780.)),
+                    cx,
+                ))),
+                window_min_size: Some(size(px(760.), px(500.))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Kea".into()),
+                    ..TitleBar::title_bar_options()
+                }),
+                window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
+                // Group the window under the installed desktop entry's app id.
+                app_id: Some("kea".into()),
+                ..Default::default()
+            };
+            if let Err(error) = cx.open_window(options, |window, cx| {
+                rendering::apply_appearance(&settings, window, cx);
+                let view = cx.new(|cx| {
+                    KeaView::new(
+                        session,
+                        document,
+                        shell,
+                        keymap,
+                        settings,
+                        initial_focus,
+                        notice,
+                        window,
+                        cx,
+                    )
+                });
+                let weak = view.downgrade();
+                window.defer(cx, move |window, cx| {
+                    let _ = weak.update(cx, |view, cx| {
+                        if initial_focus == InitialFocus::Terminal {
+                            window.focus(&view.focus);
+                        } else {
+                            view.focus_editor(window, cx);
+                        }
+                    });
+                });
+                let app = cx.new(|_| KeaRoot { view });
+                cx.new(|cx| Root::new(app, window, cx))
+            }) {
+                eprintln!("kea: cannot open window: {error:#}");
+                cx.quit();
+            }
+            cx.activate(true);
+        });
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(super) fn show_message(message: String) {
+    struct Message(String);
+    impl Render for Message {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .p_4()
+                .bg(rgb(0x171b20))
+                .text_color(rgb(0xd7dae0))
+                .child(self.0.clone())
+        }
+    }
+    Application::new().run(move |cx| {
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new(|_| Message(message))
+        });
+        cx.activate(true);
+    });
+}

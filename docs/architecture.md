@@ -29,6 +29,34 @@ This keeps the optional block model useful without making terminal correctness d
 
 A Zed integration should use Zed's editor/actions/terminal renderer/PTY ownership while reusing the portable recording/document layers. The standalone GPUI UI is replaceable.
 
+### Source and test layout
+
+Each crate's `lib.rs` is its module/export boundary. Implementation lives in
+responsibility-named modules rather than being accumulated in the crate root:
+
+- `kea-core`: event types, recording, file format and replay.
+- `kea-document`: document model, marker parsing, input encoding and output text.
+- `kea-alacritty`: engine lifecycle, screen projection, negotiated modes and selection.
+- `kea-session`: session orchestration, observation, presentation filtering and journal.
+- `kea-pty`: the small transport boundary remains in `lib.rs`.
+- `kea-app`: `config/`, `editor/`, `history/`, `reverse_search/`, `shell/`,
+  `terminal/` and `ui/` hold reusable library code. `app/` holds the binary's
+  startup, workspace state, actions, composer, pointer routing and views;
+  `main.rs` only enters the application.
+
+Unit tests live under each crate's `tests/unit/`, mirroring the source path:
+`src/terminal/input.rs` → `tests/unit/terminal/input.rs`, for example. A `mod.rs`
+module uses the corresponding directory's `mod.rs` test file. Source modules
+mount these files with `#[cfg(test)]` and `#[path]`, retaining access to private
+implementation details without making them public just for tests. Cargo does
+not discover nested test files as separate integration-test executables.
+
+Public-boundary integration tests remain under `tests/` (currently the real PTY
+session test). `kea-app/tests/standalone/` provides the dependency-free
+reverse-search harness used by `scripts/test-reverse-search-core.sh`. Run
+`cargo test --locked -p kea-app` to include the binary host's tests as well as
+the library/component tests; `--lib` intentionally runs only the latter.
+
 ## Canonical stream and metadata
 
 Raw terminal output plus ordered resize/lifecycle events are canonical. Live sessions also retain a bounded, event-aligned presentation stream for rewind, so application-owned shell driver echoes hidden from the live terminal remain hidden during playback without changing raw bytes, timestamps or journal data. Imported v1 recordings have no separate presentation data and replay their canonical stream. Structured records are derived from explicit OSC metadata, never prompt regexes, idle time, cursor position or `$`/`>` text.

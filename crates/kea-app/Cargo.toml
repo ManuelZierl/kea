@@ -8,7 +8,6 @@ publish.workspace = true
 [[bin]]
 name = "kea"
 path = "src/main.rs"
-test = false
 
 [dependencies]
 kea-core.workspace = true

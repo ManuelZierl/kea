@@ -110,12 +110,50 @@ xdotool type --clearmodifiers --delay 10 'different-query'
 key Escape
 key ctrl+a ctrl+c
 assert_clipboard 'scratch-draft'
+# Save a memory, mix mouse and keyboard navigation, then forget via confirmation.
+key ctrl+r ctrl+s
+xdotool type --clearmodifiers --delay 10 'Smoke memory'
+key Return
+sleep .5
+shopt -s nullglob
+memory_files=("$KEA_MEMORY_DIR"/*.kmem)
+[[ ${#memory_files[@]} -eq 1 ]] || { echo 'Named memory was not persisted'; exit 1; }
+key ctrl+a BackSpace
+sleep .4
+# The last result is history; Up must take selection back to the saved memory
+# even though the pointer remains over the historical row.
+xdotool mousemove --window "$window" 90 "$((HEIGHT-303))"
+sleep .2
+key Up
+import -window "$window" smoke-artifacts/reverse-search-mouse-keyboard.png
+key Return
+key ctrl+a ctrl+c
+assert_clipboard 'scratch-draft'
+key ctrl+a BackSpace
+key ctrl+r
+sleep .4
+# Open Actions with the mouse, select Forget by keyboard, then confirm by mouse.
+xdotool mousemove --window "$window" 590 "$((HEIGHT-270))" click 1
+sleep .3
+key Up Return
+import -window "$window" smoke-artifacts/reverse-search-forget-confirm.png
+xdotool mousemove --window "$window" 328 "$((HEIGHT-270))" click 1
+for _ in $(seq 1 40); do
+  memory_files=("$KEA_MEMORY_DIR"/*.kmem)
+  [[ ${#memory_files[@]} -eq 0 ]] && break
+  sleep .05
+done
+[[ ${#memory_files[@]} -eq 0 ]] || { echo 'Confirmed Forget did not delete the saved memory'; exit 1; }
+shopt -u nullglob
+sleep .3
+import -window "$window" smoke-artifacts/reverse-search-forgotten.png
+key Escape
 python3 - <<'PY'
 from pathlib import Path
 actual = Path('smoke-artifacts/reverse-search.bin').read_bytes()
 assert actual == b'\x12\x1b[200~reverse-search-probe\x1b[201~\r', actual
 PY
-echo 'Reverse-search recall, undo, cancellation and terminal Ctrl-R passthrough passed.'
+echo 'Reverse-search recall, undo, cancellation, mouse/keyboard handoff, confirmed Forget and terminal Ctrl-R passthrough passed.'
 cleanup_app
 
 # Capture actual bytes in a raw child before any editor interaction.

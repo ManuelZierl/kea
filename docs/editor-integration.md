@@ -9,7 +9,7 @@ Reuse platform services and established editor/terminal components. Kea owns exe
 
 ## Implementation
 
-The standalone host uses `gpui-component` 0.5.1 `InputState`/`Input`, on GPUI 0.2.2, for the command editor, read-only command/output text and search fields. `command_editor.rs` is a small construction/submission adapter, not a buffer/cursor/undo implementation. Selection, grapheme-aware movement, mouse text interaction, scrolling, undo/redo, composition and clipboard operations are delegated to that component.
+The standalone host uses `gpui-component` 0.5.1 `InputState`/`Input`, on GPUI 0.2.2, for the command editor, read-only command/output text and search fields. `src/editor/command.rs` is a small construction/submission adapter, not a buffer/cursor/undo implementation. Selection, grapheme-aware movement, mouse text interaction, scrolling, undo/redo, composition and clipboard operations are delegated to that component.
 
 The component registers GPUI's platform `EntityInputHandler`. Text arrives through committed/replaced/composing text ranges, not Kea translating key codes into a String. The component provides candidate-window geometry and UTF-16 range conversion for the platform bridge. This is integration with OS input services, **not** a promise that every platform autocomplete, dictation, accessibility or input-method feature works on every desktop. Verify those combinations explicitly. Kea adds no autocorrection or smart-quote substitutions to executable text.
 
