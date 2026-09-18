@@ -37,6 +37,8 @@ pub struct Settings {
     pub shift_mouse_selects_locally: bool,
     /// Allow the decorative composer bird to animate after draft changes.
     pub animate_logo: bool,
+    /// Persist successful compose submissions; explicit saved memories always persist.
+    pub history_persistence: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +56,7 @@ impl Default for Settings {
             persist_history: false,
             shift_mouse_selects_locally: true,
             animate_logo: true,
+            history_persistence: false,
         }
     }
 }
@@ -147,6 +150,7 @@ impl Settings {
                         _ => anyhow::bail!("post_submit_focus must be terminal or editor"),
                     }
                 }
+                "history_persistence" => settings.history_persistence = boolean(value)?,
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }
@@ -185,6 +189,16 @@ mod tests {
         assert_eq!(settings.post_submit_focus, PostSubmitFocus::Terminal);
         assert!(!settings.shift_mouse_selects_locally);
         assert!(!settings.animate_logo);
+    }
+    #[test]
+    fn input_history_persistence_requires_explicit_opt_in() {
+        assert!(!Settings::default().history_persistence);
+        assert!(
+            Settings::parse("history_persistence = true")
+                .unwrap()
+                .history_persistence
+        );
+        assert!(Settings::parse("history_persistence = yes").is_err());
     }
     #[test]
     fn rejects_unknown_and_unsafe_sizes() {

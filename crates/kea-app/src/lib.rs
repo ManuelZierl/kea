@@ -14,3 +14,7 @@ pub mod terminal_recovery;
 pub mod terminal_selection;
 
 pub mod completion;
+pub mod reverse_search;
+mod reverse_search_store;
+pub mod reverse_search_view;
+mod reverse_search_worker;
