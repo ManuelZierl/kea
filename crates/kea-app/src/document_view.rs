@@ -40,6 +40,13 @@ impl DocumentUi {
             collapsed: HashSet::new(),
         }
     }
+
+    pub fn set_output_wrap(&self, wrap: bool, window: &mut Window, cx: &mut App) {
+        for view in self.visible.values() {
+            view.editor
+                .update(cx, |state, cx| state.set_soft_wrap(wrap, window, cx));
+        }
+    }
 }
 impl KeaView {
     pub(super) fn render_document(

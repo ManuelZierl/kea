@@ -17,7 +17,7 @@ Bash syntax highlighting is provided by Tree-sitter through the editor's languag
 
 ## Focus and actions
 
-Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatched to the focused editor. Do not intercept all window key events. Kea installs configurable bindings at the editor context so a remapped/unbound shortcut actually overrides the component's default. Ordinary navigation and text entry remain with the editor and platform. The terminal canvas uses Alacritty's selection model for pointer selection, wrapping-aware extraction and visible highlighting.
+Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatched to the focused editor. Do not intercept all window key events. Kea installs configurable bindings at the editor context so a remapped/unbound shortcut actually overrides the component's default. Ordinary navigation and text entry remain with the editor and platform. Composer Find reveals its active match even when that match is outside the current editor viewport; revealing a match does not move the draft caret or mutate selection/undo state. The terminal canvas uses Alacritty's selection model for pointer selection, wrapping-aware extraction and visible highlighting.
 
 `copy` copies only the focused selection. An empty selection leaves the clipboard unchanged. `copy_document` explicitly exports the retained command history or visible terminal screen. Each block has its own Copy block action. Terminal selection-copy uses the visible Alacritty viewport and never silently substitutes the entire screen.
 
@@ -39,7 +39,7 @@ Only 24 blocks at a time have editor entities. Older/Newer/Latest navigation and
 
 ## Defaults and configuration
 
-Appearance defaults to system light/dark and observes appearance changes. Fonts and sizes default to the component's platform-appropriate defaults; `system` in font settings means no Kea override, not that GPUI embeds the OS's native text widget. The compatibility terminal retains its ANSI palette and current fixed metrics.
+Appearance defaults to system light/dark and observes appearance changes. The in-app Settings dialog exposes System, Light and Dark choices and applies them live; System keeps observing OS changes while explicit overrides win. Fonts and sizes default to the component's platform-appropriate defaults; `system` in font settings means no Kea override, not that GPUI embeds the OS's native text widget. The compatibility terminal retains its ANSI palette and current fixed metrics.
 
 `settings.conf`, next to `keybindings.conf`, supports:
 
@@ -58,7 +58,7 @@ animate_logo = true
 
 `animate_logo = false` disables the decorative composer typing animation.
 
-Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid files produce a warning and fall back to defaults. Configuration is loaded at startup. Do not add a separate Kea preference for every OS preference. Expose overrides only where the host owns policy or where a specific override is useful.
+Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid files produce a warning and fall back to defaults. The Settings dialog atomically replaces `settings.conf` with a validated complete snapshot and applies presentation/input-policy changes without recreating the draft. Draft-history persistence changes are intentionally restart-scoped. External file edits and keybinding changes are loaded at startup. Do not add a separate Kea preference for every OS preference. Expose overrides only where the host owns policy or where a specific override is useful.
 
 ## Validation and scope
 

@@ -26,6 +26,26 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document
       - run: cargo clippy --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document --all-targets -- -D warnings
+      - name: Build macOS release binary
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
+        run: cargo build --release --locked -p kea-app
+      - name: Package macOS release binary
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          architecture="$(uname -m)"
+          archive="kea-${GITHUB_REF_NAME}-macos-${architecture}.tar.gz"
+          mkdir -p dist/package
+          cp target/release/kea dist/package/kea
+          tar -czf "dist/${archive}" -C dist/package kea
+          rm -rf dist/package
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
+        with:
+          name: kea-release-macos-${{ runner.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
   desktop-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -41,8 +61,36 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
       - run: cargo test --locked -p kea-app
       - run: cargo build --locked -p kea-app
+      - name: Build Linux release binary
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cargo build --release --locked -p kea-app
       - name: Shared terminal/editor acceptance
-        run: timeout 180s xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash scripts/smoke-linux.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -e "${lvp_icds[0]}"
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 180s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-linux.sh
+      - name: Package Linux release binary
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          archive="kea-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
+          mkdir -p dist/package
+          cp target/release/kea dist/package/kea
+          tar -czf "dist/${archive}" -C dist/package kea
+          rm -rf dist/package
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: kea-release-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -66,8 +114,67 @@ jobs:
       - run: cargo build --release --locked -p kea-app
       - name: Verify Windows GUI subsystem
         run: python scripts/verify-windows-subsystem.py target/release/kea.exe
+      - name: Package Windows release binary
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item target/release/kea.exe dist/package/kea.exe
+          $archive = "dist/kea-$env:GITHUB_REF_NAME-windows-x86_64.zip"
+          Compress-Archive -Path dist/package/kea.exe -DestinationPath $archive
+          Remove-Item -Recurse -Force dist/package
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: kea-release-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: kea-windows-x86_64
           path: target/release/kea.exe
           if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [engine, desktop-linux, desktop-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tag version and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF")"
+          git merge-base --is-ancestor "$tag_commit" origin/main || {
+            echo "Release tag $GITHUB_REF_NAME is not reachable from origin/main." >&2
+            exit 1
+          }
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kea-app") | .version')"
+          test "$GITHUB_REF_NAME" = "v${version}" || {
+            echo "Release tag $GITHUB_REF_NAME does not match workspace version v${version}." >&2
+            exit 1
+          }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kea-release-*
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        run: sha256sum dist/* > dist/SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "Kea $GITHUB_REF_NAME"
+          fi

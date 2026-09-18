@@ -22,6 +22,9 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 - Alacritty's Kitty keyboard support is enabled for negotiation. Classic key encoding remains the fallback and modified Enter uses CSI-u only when the child negotiated an extended keyboard mode.
 - Replay uses a separate silent historical emulator while live capture continues.
 - Sessions start temporary and can transition to an explicit saved journal without losing already-retained history.
+- The in-app Settings dialog persists validated preferences atomically and exposes live System/Light/Dark appearance choices; System follows OS appearance changes.
+- Composer Find reveals off-screen active matches without moving the draft caret or changing undo history.
+- Version tags matching the workspace version and reachable from `main` publish cross-platform archives after CI succeeds.
 
 ## Acceptance
 
@@ -38,7 +41,8 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 11. **Output:** block output remains read-only/selectable; selected/focused snapshots do not jump on live output. Collapse/filter/page/Edit-as-new remain presentation-only.
 12. **Replay:** save/reopen without re-executing commands; inspect an overwritten TUI error while live capture remains isolated from historical state.
 13. **Persistence:** start temporary, save mid-session, produce more output, reopen the recording and verify both pre-save and post-save history is present.
-14. **Appearance/config:** system theme follows OS changes; explicit overrides win; invalid key/settings files fail visibly and safely.
+14. **Appearance/config:** change System/Light/Dark in the in-app Settings dialog and verify the choice persists and applies without replacing the draft. System follows OS changes; explicit overrides win; invalid or unwritable settings fail visibly and safely.
+15. **Composer Find:** search a long draft for text above and below the current viewport. Query changes and previous/next navigation reveal the active match without moving the caret or changing the selection/undo history.
 
 ## Remaining work after the first alpha compatibility gate
 

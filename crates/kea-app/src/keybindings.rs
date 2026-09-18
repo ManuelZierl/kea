@@ -550,6 +550,7 @@ const DEFAULT_KEYBINDINGS_CONF: &str = r#"# Kea keybindings: one `action = short
 # send_application = ctrl-shift-enter
 # previous_draft = ctrl-up
 # next_draft = ctrl-down
+# reverse_search = ctrl-r
 # copy_document = f10
 # select_terminal_text = f4
 "#;
@@ -563,6 +564,9 @@ pub(crate) const DEFAULT_SETTINGS_CONF: &str = r#"# Kea settings: one `key = val
 # persist_history = false
 #   Keep submitted drafts across restarts. The history file is plaintext and
 #   owner-only on Unix. Submissions can contain secrets; persistence is opt-in.
+# history_persistence = false
+#   Separate Ctrl-R search history persistence; takes effect on next launch.
+#   Explicit named memories persist independently of this setting.
 # shift_mouse_selects_locally = true
 #   Shift owns local selection gestures while the child reports mouse input.
 #   Set false to forward them; the Select text button remains available.

@@ -1,5 +1,6 @@
 /target/
 /smoke-artifacts/
+/dist/
 .venv/
 *.kea
 *.log
@@ -7,3 +8,7 @@
 
 .opencode/
 .notes/
+
+# Registry bookkeeping is not part of the vendored source patch.
+/vendor/*/.cargo-ok
+/vendor/*/.cargo_vcs_info.json

@@ -28,6 +28,19 @@ start() {
   sleep 1
 }
 key() { xdotool key --clearmodifiers "$@"; sleep .15; }
+fkey() {
+  local code
+  case "$1" in
+    F6) code=72 ;;
+    F7) code=73 ;;
+    F8) code=74 ;;
+    F9) code=75 ;;
+    F10) code=76 ;;
+    *) echo "Unsupported function key: $1" >&2; return 1 ;;
+  esac
+  xdotool key --clearmodifiers "$code"
+  sleep .15
+}
 clip() { timeout 3 xclip -selection clipboard -o; }
 put() { printf '%s' "$1" | xclip -selection clipboard; sleep .1; }
 assert_clip() { local actual; actual=$(clip); [[ "$actual" == "$1" ]] || { printf 'Expected <%s>, got <%s>\n' "$1" "$actual"; return 1; }; }
@@ -39,10 +52,14 @@ editor_click() {
 
 start demo --demo
 sleep 4
-key F6 F6 F6 F10
+fkey F6
+fkey F6
+fkey F6
+fkey F10
 clip > smoke-artifacts/history.txt
 grep -q 'ERROR: connection failed' smoke-artifacts/history.txt
-key F9 F10
+fkey F9
+fkey F10
 clip > smoke-artifacts/latest.txt
 grep -q 'Ready. The error has disappeared' smoke-artifacts/latest.txt
 cleanup_app
@@ -58,12 +75,14 @@ key ctrl+z ctrl+a ctrl+c; assert_clip abcXYZ
 key ctrl+shift+z ctrl+a ctrl+c; assert_clip abc
 key ctrl+a BackSpace
 put $'cd /tmp\nprintf "kea_doc_one ä\\n"\nprintf "kea_doc_two\\n"'
-key ctrl+v F10
+key ctrl+v
+fkey F10
 [[ -z "$(clip)" ]]
 key ctrl+Return
 found=''
 for _ in $(seq 1 60); do
-  key F10; clip > smoke-artifacts/document.txt
+  fkey F10
+  clip > smoke-artifacts/document.txt
   if grep -Fq 'kea_doc_one ä' smoke-artifacts/document.txt && grep -Fq 'exit 0' smoke-artifacts/document.txt; then found=1; break; fi
   sleep .1
 done
@@ -94,7 +113,13 @@ start raw --direct -- python3 -u scripts/terminal-input-probe.py "$probe"
 for _ in $(seq 1 50); do [[ -f "${probe%.bin}.ready" ]] && break; sleep .1; done
 [[ -f "${probe%.bin}.ready" ]]
 xdotool type --clearmodifiers --delay 20 'a b'
-key Tab shift+Tab ctrl+c ctrl+v ctrl+z ctrl+l F6 F7 F8 F9 F10 ctrl+Return
+key Tab shift+Tab ctrl+c ctrl+v ctrl+z ctrl+l
+fkey F6
+fkey F7
+fkey F8
+fkey F9
+fkey F10
+key ctrl+Return
 sleep .3
 python3 - "$probe" <<'PY'
 import pathlib,sys

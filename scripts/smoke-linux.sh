@@ -5,7 +5,10 @@ exec > >(tee -a smoke-artifacts/acceptance.log) 2>&1
 export XDG_RUNTIME_DIR="$(mktemp -d)"
 chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
+export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
+export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/input-memory"
 printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
+: > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 kea_pid=''; window=''
 cleanup_app() { if [[ -n "$kea_pid" ]]; then kill "$kea_pid" 2>/dev/null || true; wait "$kea_pid" 2>/dev/null || true; kea_pid=''; fi; }
@@ -26,6 +29,20 @@ wait_window() {
   echo 'No Kea window'; exit 1
 }
 key() { xdotool key --clearmodifiers "$@"; sleep .15; }
+fkey() {
+  local code
+  case "$1" in
+    F4) code=70 ;;
+    F6) code=72 ;;
+    F7) code=73 ;;
+    F8) code=74 ;;
+    F9) code=75 ;;
+    F10) code=76 ;;
+    *) echo "Unsupported function key: $1" >&2; return 1 ;;
+  esac
+  xdotool key --clearmodifiers "$code"
+  sleep .15
+}
 clipboard() { timeout 3s xclip -selection clipboard -t UTF8_STRING -o; }
 put_clipboard() { printf '%s' "$1" | xclip -selection clipboard; sleep .15; }
 assert_clipboard() { local actual; actual=$(clipboard); [[ "$actual" == "$1" ]] || { printf 'Expected <%s>; got <%s>\n' "$1" "$actual"; exit 1; }; }
@@ -35,20 +52,83 @@ focus_editor() { xdotool mousemove --window "$window" 120 "$((HEIGHT-170))" clic
 ./target/debug/kea --demo >smoke-artifacts/demo.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/demo.log
 sleep 4
-key F6 F6 F6 F10
+fkey F6
+fkey F6
+fkey F6
+fkey F10
 clipboard >smoke-artifacts/history.txt
 grep -q 'ERROR: connection failed' smoke-artifacts/history.txt
-key F9
-key ctrl+shift+space F10
+fkey F9
+key ctrl+shift+space
+fkey F10
 clipboard >smoke-artifacts/latest.txt
 grep -q 'Ready. The error has disappeared' smoke-artifacts/latest.txt
+cleanup_app
+
+# Settings must render above the workspace, save through the app-owned path, and
+# leave the current editor entity/draft intact while presentation changes live.
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/settings-ui.bin >smoke-artifacts/settings-ui.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/settings-ui.log
+focus_editor
+xdotool type --clearmodifiers --delay 10 'settings-draft'
+xdotool mousemove --window "$window" "$((WIDTH-214))" 51 click 1
+sleep .5
+xdotool mousemove --window "$window" "$((WIDTH/2+217))" 332 click 1
+sleep .5
+grep -q '^theme = light$' "$KEA_SETTINGS"
+import -window "$window" smoke-artifacts/settings-light.png
+key Escape
+import -window "$window" smoke-artifacts/settings-draft-preserved.png
+cleanup_app
+
+# Ctrl-R recalls into the draft without sending another byte to the child.
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/reverse-search.bin >smoke-artifacts/reverse-search.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/reverse-search.log
+key ctrl+r
+focus_editor
+xdotool type --clearmodifiers --delay 10 'reverse-search-probe'
+key ctrl+shift+Return
+sleep .3
+key ctrl+r
+sleep .5
+import -window "$window" smoke-artifacts/reverse-search.png
+key Return
+key ctrl+a ctrl+c
+assert_clipboard 'reverse-search-probe'
+key ctrl+z
+key ctrl+a
+put_clipboard 'unchanged-empty-draft'
+key ctrl+c
+assert_clipboard 'unchanged-empty-draft'
+xdotool type --clearmodifiers --delay 10 'scratch-draft'
+key ctrl+r
+sleep .3
+key ctrl+a
+xdotool type --clearmodifiers --delay 10 'different-query'
+key Escape
+key ctrl+a ctrl+c
+assert_clipboard 'scratch-draft'
+python3 - <<'PY'
+from pathlib import Path
+actual = Path('smoke-artifacts/reverse-search.bin').read_bytes()
+assert actual == b'\x12\x1b[200~reverse-search-probe\x1b[201~\r', actual
+PY
+echo 'Reverse-search recall, undo, cancellation and terminal Ctrl-R passthrough passed.'
 cleanup_app
 
 # Capture actual bytes in a raw child before any editor interaction.
 printf 'theme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/keys.bin >smoke-artifacts/terminal.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/terminal.log
-key space ctrl+c ctrl+v Return Tab F6 F7 F8 F9 F10 ctrl+shift+space
+key space ctrl+c ctrl+v Return Tab
+fkey F6
+fkey F7
+fkey F8
+fkey F9
+fkey F10
+key ctrl+shift+space
 python3 - <<'PY'
 from pathlib import Path
 actual = Path('smoke-artifacts/keys.bin').read_bytes()
@@ -168,7 +248,8 @@ printf 'theme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection.bin >smoke-artifacts/selection.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection.log
 focus_editor
-key F4 Home shift+End ctrl+c
+fkey F4
+key Home shift+End ctrl+c
 selection_before=$(wc -c < smoke-artifacts/selection.bin)
 selection_clipboard=$(clipboard)
 [[ "$selection_clipboard" == '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' ]] || {
@@ -189,7 +270,9 @@ assert actual.endswith(b'\x1b'), actual
 PY
 # Once local selection is active, printable input exits local ownership and is
 # forwarded exactly once rather than being consumed by the selection handler.
-key ctrl+l F4 Home shift+End
+key ctrl+l
+fkey F4
+key Home shift+End
 selection_before=$(wc -c < smoke-artifacts/selection.bin)
 xdotool type --clearmodifiers q
 sleep .2
@@ -318,13 +401,14 @@ key ctrl+z ctrl+a ctrl+c; assert_clipboard abcXYZ
 key ctrl+shift+z ctrl+a ctrl+c; assert_clipboard abc
 key ctrl+a BackSpace
 put_clipboard $'printf "kea_doc_one ä\\n";\nprintf "kea_doc_two\\n"'
-key ctrl+v F10
+key ctrl+v
+fkey F10
 [[ -z "$(clipboard)" ]] || { echo 'Paste executed a command'; exit 1; }
 key ctrl+Return
 # Default post-submit focus is the fresh composer, so no refocus click is needed.
 found=''
 for _ in $(seq 1 60); do
-  key F10
+  fkey F10
   clipboard >smoke-artifacts/document.txt
   if grep -Fq 'kea_doc_one ä' smoke-artifacts/document.txt && grep -Fq 'exit 0' smoke-artifacts/document.txt; then found=1; break; fi
   sleep .1
@@ -358,7 +442,7 @@ xdotool type --clearmodifiers --delay 10 'printf first'
 key Return
 xdotool type --clearmodifiers --delay 10 'printf second'
 key ctrl+a ctrl+c; assert_clipboard $'printf first\nprintf second'
-key F10
+fkey F10
 clipboard >smoke-artifacts/after-newline.txt
 [[ "$(grep -c '^exit ' smoke-artifacts/after-newline.txt)" -eq 1 ]]
 import -window "$window" smoke-artifacts/document.png

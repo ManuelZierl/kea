@@ -130,6 +130,27 @@ pub fn new_draft(
     editor
 }
 
+/// Apply presentation-only composer settings without replacing the entity, text,
+/// selection, or undo history.
+pub fn apply_settings(
+    editor: &Entity<InputState>,
+    shell: Option<ShellFlavor>,
+    settings: &Settings,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
+        "bash"
+    } else {
+        "text"
+    };
+    editor.update(cx, |state, cx| {
+        state.set_highlighter(language, cx);
+        state.set_line_number(settings.line_numbers, window, cx);
+        state.set_soft_wrap(settings.soft_wrap, window, cx);
+    });
+}
+
 /// Exact focus excludes the embedded find field; composition is not execution.
 pub fn submission_text(
     editor: &Entity<InputState>,

@@ -16,7 +16,7 @@ kea-alacritty.workspace = true
 kea-session.workspace = true
 kea-document.workspace = true
 gpui.workspace = true
-gpui-component = { version = "=0.5.1", default-features = false }
+gpui-component = { path = "../../vendor/gpui-component", version = "=0.5.1", default-features = false }
 gpui-component-assets = "=0.5.1"
 anyhow.workspace = true
 serde = { version = "1", features = ["derive"] }

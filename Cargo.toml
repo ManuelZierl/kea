@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty", "crates/kea-session", "crates/kea-document", "crates/kea-app"]
+exclude = ["vendor/gpui-component"]
 default-members = ["crates/kea-app"]
 resolver = "2"
 

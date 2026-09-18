@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod document_view;
+mod settings_window;
 mod shell_metadata;
 mod terminal_input;
 
@@ -271,7 +272,8 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                         }
                     });
                 });
-                cx.new(|cx| Root::new(view, window, cx))
+                let app = cx.new(|_| KeaRoot { view });
+                cx.new(|cx| Root::new(app, window, cx))
             }) {
                 eprintln!("kea: cannot open window: {error:#}");
                 cx.quit();
@@ -331,6 +333,20 @@ struct KeaView {
     _filter_change: Subscription,
     _focus_lost: Subscription,
     _memory_changed: Subscription,
+}
+
+struct KeaRoot {
+    view: Entity<KeaView>,
+}
+
+impl Render for KeaRoot {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        div()
+            .size_full()
+            .child(self.view.clone())
+            .children(dialog_layer)
+    }
 }
 
 impl KeaView {
@@ -522,6 +538,87 @@ impl KeaView {
             Ok(())
         });
         self.result(result, cx);
+    }
+
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        settings_window::open(cx.entity(), window, cx);
+    }
+
+    fn apply_setting_change(
+        &mut self,
+        change: settings_window::SettingsChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use settings_window::SettingsChange;
+
+        let previous = self.settings.clone();
+        match change {
+            SettingsChange::Appearance(value) => self.settings.appearance = value,
+            SettingsChange::FontSize(value) => self.settings.font_size = value,
+            SettingsChange::PostSubmitFocus(value) => self.settings.post_submit_focus = value,
+            SettingsChange::LineNumbers(value) => self.settings.line_numbers = value,
+            SettingsChange::SoftWrap(value) => self.settings.soft_wrap = value,
+            SettingsChange::OutputWrap(value) => self.settings.output_wrap = value,
+            SettingsChange::SyntaxHighlighting(value) => self.settings.syntax_highlighting = value,
+            SettingsChange::ShowBlocks(value) => self.settings.show_blocks = value,
+            SettingsChange::PersistHistory(value) => self.settings.persist_history = value,
+            SettingsChange::HistoryPersistence(value) => self.settings.history_persistence = value,
+            SettingsChange::ShiftMouseSelectsLocally(value) => {
+                self.settings.shift_mouse_selects_locally = value
+            }
+            SettingsChange::AnimateLogo(value) => self.settings.animate_logo = value,
+        }
+
+        let path = match self.settings.save() {
+            Ok(path) => path,
+            Err(error) => {
+                self.settings = previous;
+                self.notice = Some(format!("Settings were not changed: {error}."));
+                cx.notify();
+                return;
+            }
+        };
+
+        match change {
+            SettingsChange::Appearance(_) | SettingsChange::FontSize(_) => {
+                apply_appearance(&self.settings, window, cx);
+                self.logo_warmed_frames = 0;
+            }
+            SettingsChange::LineNumbers(_)
+            | SettingsChange::SoftWrap(_)
+            | SettingsChange::SyntaxHighlighting(_) => {
+                command_editor::apply_settings(&self.editor, self.shell, &self.settings, window, cx)
+            }
+            SettingsChange::OutputWrap(_) => {
+                self.document_ui
+                    .set_output_wrap(self.settings.output_wrap, window, cx);
+            }
+            SettingsChange::ShowBlocks(value) => {
+                self.show_blocks = value;
+                self.document_ui.page_start = None;
+            }
+            SettingsChange::AnimateLogo(false) => {
+                self.composer_logo_active = false;
+                self.composer_logo_again = false;
+                self.composer_logo_deadline = None;
+            }
+            _ => {}
+        }
+        self.notice = Some(
+            if matches!(
+                change,
+                SettingsChange::PersistHistory(_) | SettingsChange::HistoryPersistence(_)
+            ) {
+                format!(
+                "Settings saved to {}. Draft-history persistence changes take effect on the next launch.",
+                path.display()
+            )
+            } else {
+                format!("Settings saved to {}.", path.display())
+            },
+        );
+        cx.notify();
     }
 
     fn pump_session(&mut self, cx: &mut Context<Self>) -> bool {
@@ -2147,6 +2244,14 @@ impl Render for KeaView {
                 cx,
             ))
             .child(div().flex_1())
+            .child(
+                Button::new("settings")
+                    .icon(IconName::Settings)
+                    .tooltip("Open settings")
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
+            )
             .child(save_control);
         if self.session.is_history() {
             toolbar = toolbar

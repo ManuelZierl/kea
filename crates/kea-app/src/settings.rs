@@ -1,6 +1,10 @@
 //! Application-owned settings. Missing values inherit platform/component defaults.
 use anyhow::{Context as _, Result};
-use std::{env, fs};
+use std::{
+    env, fs,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Appearance {
@@ -20,7 +24,7 @@ pub enum PostSubmitFocus {
     Editor,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub appearance: Appearance,
     pub font_family: Option<String>,
@@ -62,11 +66,14 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn load() -> (Self, Option<String>) {
-        let path = env::var_os("KEA_SETTINGS").map(Into::into).or_else(|| {
+    pub fn path() -> Option<PathBuf> {
+        env::var_os("KEA_SETTINGS").map(Into::into).or_else(|| {
             crate::keybindings::config_path().map(|path| path.with_file_name("settings.conf"))
-        });
-        let Some(path) = path else {
+        })
+    }
+
+    pub fn load() -> (Self, Option<String>) {
+        let Some(path) = Self::path() else {
             return (Self::default(), None);
         };
         match fs::read_to_string(&path) {
@@ -156,6 +163,90 @@ impl Settings {
         }
         Ok(settings)
     }
+
+    /// Persist a complete settings snapshot through a sibling temporary file so
+    /// an interrupted write cannot truncate the previous configuration.
+    pub fn save(&self) -> Result<PathBuf> {
+        let path = Self::path().context("the settings directory is unavailable on this system")?;
+        self.save_to(&path)?;
+        Ok(path)
+    }
+
+    fn save_to(&self, path: &Path) -> Result<()> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create settings directory {}", parent.display()))?;
+
+        let mut temporary = tempfile::Builder::new()
+            .prefix(".settings-")
+            .tempfile_in(parent)
+            .with_context(|| format!("cannot create a temporary file in {}", parent.display()))?;
+        temporary
+            .write_all(self.to_config().as_bytes())
+            .context("cannot write settings")?;
+        temporary
+            .as_file()
+            .sync_all()
+            .context("cannot flush settings")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            temporary
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))
+                .context("cannot protect settings permissions")?;
+        }
+        temporary
+            .persist(path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("cannot replace {}", path.display()))?;
+        Ok(())
+    }
+
+    fn to_config(&self) -> String {
+        let appearance = match self.appearance {
+            Appearance::System => "system",
+            Appearance::Light => "light",
+            Appearance::Dark => "dark",
+        };
+        let post_submit_focus = match self.post_submit_focus {
+            PostSubmitFocus::Terminal => "terminal",
+            PostSubmitFocus::Editor => "editor",
+        };
+        let font_family = self.font_family.as_deref().unwrap_or("system");
+        let font_size = self
+            .font_size
+            .map(|size| size.to_string())
+            .unwrap_or_else(|| "system".into());
+        format!(
+            "# Kea settings. Changes made in the app are written here.\n\
+theme = {appearance}\n\
+post_submit_focus = {post_submit_focus}\n\
+persist_history = {}\n\
+history_persistence = {}\n\
+shift_mouse_selects_locally = {}\n\
+animate_logo = {}\n\
+show_blocks = {}\n\
+font_family = {font_family}\n\
+font_size = {font_size}\n\
+syntax_highlighting = {}\n\
+line_numbers = {}\n\
+soft_wrap = {}\n\
+output_wrap = {}\n",
+            self.persist_history,
+            self.history_persistence,
+            self.shift_mouse_selects_locally,
+            self.animate_logo,
+            self.show_blocks,
+            self.syntax_highlighting,
+            self.line_numbers,
+            self.soft_wrap,
+            self.output_wrap,
+        )
+    }
 }
 
 fn boolean(value: &str) -> Result<bool> {
@@ -211,6 +302,48 @@ mod tests {
             "typo = true",
         ] {
             assert!(Settings::parse(text).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("nested/settings.conf");
+        let settings = Settings {
+            appearance: Appearance::Dark,
+            font_family: Some("Kea Mono".into()),
+            font_size: Some(17.5),
+            line_numbers: true,
+            soft_wrap: false,
+            output_wrap: false,
+            syntax_highlighting: false,
+            show_blocks: true,
+            post_submit_focus: PostSubmitFocus::Terminal,
+            persist_history: true,
+            history_persistence: true,
+            shift_mouse_selects_locally: false,
+            animate_logo: false,
+        };
+
+        settings.save_to(&path).unwrap();
+        assert_eq!(
+            Settings::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
+            settings
+        );
+
+        let replacement = Settings::default();
+        replacement.save_to(&path).unwrap();
+        assert_eq!(
+            Settings::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
+            replacement
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
     }
 }

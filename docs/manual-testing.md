@@ -58,7 +58,9 @@ not look like a new failure.
    files via `KEA_SETTINGS` and `KEA_KEYBINDINGS` rather than overwriting your
    everyday configuration. An empty file selects the built-in defaults.
 4. Start with `post_submit_focus = editor`, `shift_mouse_selects_locally = true`,
-   and `persist_history = false`. Restart after configuration changes.
+   and `persist_history = false`. Settings-dialog presentation/input-policy changes
+   apply immediately; restart after external file/keybinding edits or a
+   draft-history persistence change.
 5. Identify the **upper terminal**, **lower composer**, and the terminal's
    **Select text / Stop selecting** button. A Kea selection should have the
    terminal header's **Local selection** feedback; a TUI's highlight alone does
@@ -282,6 +284,9 @@ is not a substitute for candidate navigation, cancellation and commitment.
 - [ ] With `run_shell = enter` and `newline = shift-enter` in a separate test
   keybindings file, restart and verify both physical chords in the composer.
   Then focus the upper terminal: plain Enter must still be child input.
+- [ ] Fill the composer with enough lines to scroll, move away from a distinctive
+  line, then use Ctrl/Cmd+F. Typing its text and navigating previous/next should
+  reveal the active match without moving the draft caret or changing Undo.
 
 Include your usual OS shortcuts, Fn layer and keyboard layout. Record conflicts
 instead of inferring physical-key support from a keybinding label.
@@ -311,6 +316,9 @@ reason if submission is refused.
   selection endpoints, caret positioning, clipboard text and IME candidates.
 - [ ] Change the OS appearance or increase the configured font size, then test
   contrast, wrapping and clipping. Judge the terminal grid and editor separately.
+- [ ] Open Settings from the toolbar, switch between System/Light/Dark, close and
+  reopen Kea, and verify the saved choice. With System selected, change the OS
+  appearance and verify Kea follows it without reopening Settings.
 - [ ] Work for 10–15 minutes with realistic output, scrollback and focus switches.
   Watch for UI stalls, reading-position jumps, lost selections and stale notices.
 

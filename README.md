@@ -51,6 +51,7 @@ There is no hidden Document/PTY mode. Focus changes which surface receives input
 | Paste clipboard into live terminal | Ctrl+Shift+V (Cmd+V on macOS) |
 | Select terminal text from composer/chrome | F4 |
 | Previous submitted draft | Ctrl+Up |
+| Search submitted input and saved memories | Ctrl+R |
 | Next submitted draft / restore scratch | Ctrl+Down |
 | Show/hide optional command blocks | Ctrl+Shift+Space |
 
@@ -88,6 +89,12 @@ Entering history preserves the current unsubmitted scratch draft. Navigating for
 Recall is in-memory by default. `persist_history = true` opts into a plaintext
 `draft-history.txt` file across restarts, separately from saved terminal sessions.
 See [draft-history persistence and its current limits](docs/session-persistence.md#submitted-draft-history).
+
+Ctrl+R opens searchable history and named memories from the composer. Enter inserts
+the selected text without executing it; Escape preserves the draft. Search history
+has a separate `history_persistence = false` opt-in, configurable in Settings and
+effective on the next launch. Explicit named saves persist independently. See
+[reverse search](docs/reverse-search.md) for scope, privacy and retention limits.
 
 ## Terminal/TUI compatibility
 
@@ -172,6 +179,14 @@ Configuration directories:
 
 `KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files.
 
+Use the Settings button in the main toolbar to change appearance, composer and
+workflow preferences. Choices are saved automatically to `settings.conf`; theme,
+text presentation and input-policy changes apply without replacing the current
+draft. Submitted-draft persistence changes take effect on the next launch because
+the history file is an explicit plaintext opt-in. The default **System** theme
+continues to follow operating-system light/dark changes; **Light** and **Dark**
+are fixed overrides.
+
 Example `keybindings.conf`:
 
 ```text
@@ -197,6 +212,7 @@ Example `settings.conf`:
 theme = system
 post_submit_focus = editor
 persist_history = false
+history_persistence = false
 shift_mouse_selects_locally = true
 animate_logo = true
 show_blocks = false
@@ -249,6 +265,10 @@ cargo run --locked --release -- --demo
 ```
 
 On Windows, `kea.exe` uses the GUI subsystem and does not intentionally allocate a companion console window. Development builds remain unsigned.
+
+Version tags named exactly `v<workspace-version>` publish unsigned Linux, macOS
+and Windows archives through GitHub Actions after the cross-platform CI and Linux
+desktop smoke test pass. The tagged commit must be reachable from `main`.
 
 ## Architecture
 
