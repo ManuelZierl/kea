@@ -123,3 +123,36 @@ fn save_failure_is_visible_and_preserves_edited_input(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn shortcut_capture_waits_for_release_and_escape_preserves_text(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let empty = cx.new(|_| Empty);
+        Root::new(empty, window, cx)
+    });
+    window
+        .update(cx, |_, window, cx| {
+            let keymap = Keymap::parse("").unwrap();
+            let editor = cx.new(|cx| KeybindingEditor::from_keymap(&keymap, None, window, cx));
+            editor.update(cx, |this, cx| {
+                this.begin_recording(0, window, cx);
+                this.record_key(&gpui::Keystroke::parse("alt-l").unwrap(), window, cx);
+                assert_eq!(this.rows[0].input.read(cx).value().as_ref(), "alt-l");
+                assert!(this.capture_focus.is_focused(window));
+                assert!(this.capture_release.is_some());
+                this.record_key(&gpui::Keystroke::parse("enter").unwrap(), window, cx);
+                assert_eq!(this.rows[0].input.read(cx).value().as_ref(), "alt-l");
+                assert!(!this.error); // No save to the intentionally unavailable path.
+                this.finish_capture("l", window, cx);
+                assert!(this.capture_release.is_none());
+                this.begin_recording(0, window, cx);
+                this.record_key(&gpui::Keystroke::parse("escape").unwrap(), window, cx);
+                assert_eq!(this.rows[0].input.read(cx).value().as_ref(), "alt-l");
+                assert!(this.status.contains("cancelled"));
+                this.finish_capture("escape", window, cx);
+                assert!(this.capture_release.is_none());
+            });
+        })
+        .unwrap();
+}

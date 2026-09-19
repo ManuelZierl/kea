@@ -21,6 +21,7 @@ pub(super) struct KeybindingEditor {
     _subscriptions: Vec<Subscription>,
     capture_focus: FocusHandle,
     recording: Option<usize>,
+    capture_release: Option<(usize, String)>,
 }
 
 impl KeybindingEditor {
@@ -47,6 +48,7 @@ impl KeybindingEditor {
         })];
         subscriptions.push(cx.on_blur(&capture_focus, window, |this, _, cx| {
             this.recording = None;
+            this.capture_release = None;
             cx.notify();
         }));
         let rows = keymap.settings_entries().into_iter().map(|(name, label, value)| {
@@ -67,13 +69,14 @@ impl KeybindingEditor {
             BindingRow { name, label, input }
         }).collect();
         Self {
-            rows, path, _subscriptions: subscriptions, capture_focus, recording: None,
+            rows, path, _subscriptions: subscriptions, capture_focus, recording: None, capture_release: None,
             status: "Keybindings shown are for the next launch. Save changes explicitly; restart Kea to activate them.".into(),
             error: false,
         }
     }
 
     fn begin_recording(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.capture_release = None;
         self.recording = Some(index);
         window.focus(&self.capture_focus);
         self.status = "Press the shortcut. Escape cancels recording. No shortcut is executed while recording.".into();
@@ -83,6 +86,10 @@ impl KeybindingEditor {
 
     fn record_key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
         if !self.capture_focus.is_focused(window) {
+            return;
+        }
+        if self.capture_release.is_some() {
+            cx.stop_propagation();
             return;
         }
         let Some(index) = self.recording else {
@@ -118,7 +125,25 @@ impl KeybindingEditor {
                 }
             }
         }
-        input.update(cx, |input, cx| input.focus(window, cx));
+        // Keep the capture owner until key-up: a held Enter must not save the
+        // form and a repeated chord must not execute a live shortcut.
+        self.capture_release = Some((index, key.key.to_string()));
+        cx.notify();
+    }
+
+    fn finish_capture(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.capture_focus.is_focused(window)
+            || self
+                .capture_release
+                .as_ref()
+                .is_none_or(|(_, held)| held != key)
+        {
+            return;
+        }
+        let (index, _) = self.capture_release.take().unwrap();
+        self.rows[index]
+            .input
+            .update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
 
@@ -157,7 +182,10 @@ impl KeybindingEditor {
 
 impl Render for KeybindingEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().track_focus(&self.capture_focus).w_full().min_w_0().flex().flex_col().gap_3()
+        div().track_focus(&self.capture_focus)
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+                this.finish_capture(&event.keystroke.key, window, cx);
+            })).w_full().min_w_0().flex().flex_col().gap_3()
             .child(div().text_sm().child("Switch terminal ⇄ composer is the one Kea shortcut reserved from the child. Focus terminal is an optional composer-only alternative. Remap or set the switch to none if your terminal app needs that key."))
             .child(div().text_sm().text_color(cx.theme().muted_foreground)
                 .child("Type shortcut names (ctrl-l, alt-up, f10) separated by commas, or none. Alternatively choose Record and press the combination. Recording never executes shortcuts. Press Enter in a text field or choose Save keybindings."))

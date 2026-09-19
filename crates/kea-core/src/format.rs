@@ -66,7 +66,7 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
     let mut header = [0; 12];
     input.read_exact(&mut header)?;
     let version = header[3];
-    if &header[..3] != b"KEA" || !matches!(version, 1 | 2) || &header[4..8] != &MAGIC[4..] {
+    if &header[..3] != b"KEA" || !matches!(version, 1 | 2) || header[4..8] != MAGIC[4..] {
         return Err(invalid("not a supported Kea v1/v2 recording"));
     }
     let initial = Size::new(

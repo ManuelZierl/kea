@@ -151,3 +151,41 @@ fn hooks_report_scoped_readiness_and_native_boundaries_without_authored_eval() {
         assert!(!source.contains("eval "));
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn powershell_hooks_preserve_prompt_and_native_status_without_wrapping_input() {
+    use std::process::Command;
+    // Windows PowerShell is present on supported Windows runners. This exercises
+    // the real hook, not a fake parser; graphical PSReadLine acceptance is separate.
+    let setup =
+        String::from_utf8(ShellFlavor::PowerShell.integration(&["powershell.exe".into()])).unwrap();
+    let script = format!(
+        "function global:prompt {{ 'CUSTOM-PROMPT> ' }}\n{setup}\ncmd /c exit 7\nprompt\n[Console]::WriteLine('NATIVE-STATUS:'+$global:LASTEXITCODE)\nWrite-Output 'AUTHORED-OUTPUT'\nprompt\n"
+    );
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .expect("run Windows PowerShell hook test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("CUSTOM-PROMPT>"), "{stdout}");
+    assert!(stdout.contains("NATIVE-STATUS:7"), "{stdout}");
+    assert!(stdout.contains("native-done;local;1"), "{stdout}");
+    assert!(stdout.contains("native-done;local;0"), "{stdout}");
+    assert!(stdout.contains("AUTHORED-OUTPUT"), "{stdout}");
+    assert!(
+        stdout.contains("779;kea;input;1;local;powershell;ready"),
+        "{stdout}"
+    );
+}
