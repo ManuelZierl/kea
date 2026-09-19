@@ -1,10 +1,10 @@
-use super::*;
-use kea_core::Size;
-use std::time::Instant;
-
 #[cfg(unix)]
 #[test]
 fn live_capture_continues_during_rewind_and_blocks_input() {
+    use super::*;
+    use kea_core::Size;
+    use std::time::Instant;
+
     let mut s = Session::spawn(
         &[
             "sh".into(),

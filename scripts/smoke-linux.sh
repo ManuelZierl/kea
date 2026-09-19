@@ -2,6 +2,13 @@
 set -Eeuo pipefail
 mkdir -p smoke-artifacts
 exec > >(tee -a smoke-artifacts/acceptance.log) 2>&1
+# Fixed click positions require the same UI font as the fixture. Without Ubuntu,
+# GPUI falls back to wider fonts and wrapped dialog text moves fields downward.
+if [[ "$(fc-match -f '%{family}' Ubuntu)" != Ubuntu ]]; then
+  echo 'The Linux smoke fixture requires the Ubuntu font (install fonts-ubuntu).' >&2
+  exit 1
+fi
+trap 'printf "Smoke assertion failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 export XDG_RUNTIME_DIR="$(mktemp -d)"
 chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"

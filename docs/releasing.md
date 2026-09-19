@@ -47,7 +47,7 @@ Use the checks in the
 On Ubuntu, install the source-build dependencies plus:
 
 ```sh
-sudo apt-get install -y xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
+sudo apt-get install -y xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11 fonts-ubuntu
 ```
 
 After `cargo build --locked -p kea-app`, run the same isolated graphical test as CI:
@@ -62,7 +62,9 @@ env -u WAYLAND_DISPLAY -u DISPLAY \
   dbus-run-session -- bash scripts/smoke-linux.sh
 ```
 
-The script writes diagnostic output to the ignored `smoke-artifacts/` directory.
+The coordinate-based fixture requires Ubuntu font metrics; the script checks
+that prerequisite instead of clicking fields laid out with a different fallback
+font. It writes diagnostic output to the ignored `smoke-artifacts/` directory.
 Use the [manual checklist](manual-testing.md) for real keyboard, clipboard, IME,
 accessibility and shell/TUI acceptance on release platforms.
 

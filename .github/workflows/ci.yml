@@ -65,7 +65,8 @@ jobs:
         with:
           key: desktop-linux
           cache-on-failure: true
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
+      # The coordinate-based smoke fixture uses GPUI's Ubuntu UI font metrics.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11 fonts-ubuntu
       - run: cargo test --locked -p kea-app
       - run: bash scripts/test-reverse-search-core.sh
       - run: cargo build --locked -p kea-app

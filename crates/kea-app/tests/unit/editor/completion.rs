@@ -131,18 +131,23 @@ fn completion_hunt_tilde_filename_remains_literal_in_shell() {
         Some(ShellFlavor::Posix),
     );
     let candidate = candidates.iter().find(|c| c.label == "Path: ~").unwrap();
-    // Evaluate only this synthetic candidate, never user data.
-    let output = std::process::Command::new("/bin/sh")
-        .args(["-c", &format!("printf '%s' {}", candidate.replacement)])
-        .env("HOME", root.path())
-        .current_dir(root.path())
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert_eq!(
-        output.stdout, b"~",
-        "completion changed the filename through tilde expansion"
-    );
+    assert_eq!(candidate.replacement, "'~'");
+    // Evaluate only this synthetic candidate on hosts with a POSIX shell.
+    // The completion assertion above still runs on Windows.
+    #[cfg(unix)]
+    {
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", &format!("printf '%s' {}", candidate.replacement)])
+            .env("HOME", root.path())
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout, b"~",
+            "completion changed the filename through tilde expansion"
+        );
+    }
 }
 
 #[test]

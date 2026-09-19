@@ -111,14 +111,16 @@ fn persisted_entries_survive_a_restart_bounded_and_owner_only() {
 
 #[test]
 fn missing_history_file_loads_empty_and_failed_saves_keep_memory() {
-    let root = std::env::temp_dir().join(format!("kea-history-missing-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let path = root.join("no-such-dir").join("draft-history.txt");
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("no-such-dir").join("draft-history.txt");
     assert!(load_history_file(&path).unwrap().is_empty());
 
-    // Point persistence at an unwritable location: recall must keep working.
+    // A regular file cannot be a parent directory on any supported OS.
+    // Unlike /proc or permission bits, this also fails on Windows and as root.
+    let blocker = root.path().join("not-a-directory");
+    std::fs::write(&blocker, b"preserve me").unwrap();
     let mut history = DraftHistory::default();
-    history.set_persisted_entries("/proc/kea-history-test/draft-history.txt".into(), vec![]);
+    history.set_persisted_entries(blocker.join("draft-history.txt"), vec![]);
     history.record("kept".into());
     let warning = history.take_persistence_warning().unwrap();
     assert!(warning.contains("persistence stopped"));
@@ -126,7 +128,7 @@ fn missing_history_file_loads_empty_and_failed_saves_keep_memory() {
     assert_eq!(history.previous(""), Some("kept".into()));
     history.record("also kept".into());
     assert!(history.take_persistence_warning().is_none());
-    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(std::fs::read(&blocker).unwrap(), b"preserve me");
 }
 
 #[test]
