@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 mkdir -p smoke-artifacts
 exec > >(tee -a smoke-artifacts/acceptance.log) 2>&1
 # Fixed click positions require the same UI font as the fixture. Without Ubuntu,
@@ -432,9 +433,8 @@ import -window "$window" smoke-artifacts/terminal-editor-focus.png
 put_clipboard $'message one\nmessage two'
 key ctrl+v ctrl+shift+Return
 python3 - <<'PY'
-from pathlib import Path
-actual = Path('smoke-artifacts/keys.bin').read_bytes()
-assert actual.endswith(b'\x1b[200~message one\nmessage two\x1b[201~\r'), actual
+from scripts.smoke_assert import assert_output_suffix
+assert_output_suffix('smoke-artifacts/keys.bin', b'\x1b[200~message one\nmessage two\x1b[201~\r')
 PY
 
 # Composer-first default: successful submission leaves the fresh editor ready without
@@ -448,17 +448,8 @@ assert_clipboard scratch
 key ctrl+shift+l
 xdotool type --clearmodifiers --delay 10 'x'
 python3 - <<'PY'
-from pathlib import Path
-import time
-# Typing is asynchronous across X11 -> GPUI -> PTY -> the fixture file.
-# Wait for the observable result without sending the character a second time.
-deadline = time.monotonic() + 3
-while True:
-    actual = Path('smoke-artifacts/keys.bin').read_bytes()
-    if actual.endswith(b'\r' + b'x') or time.monotonic() >= deadline:
-        break
-    time.sleep(.05)
-assert actual.endswith(b'\r' + b'x'), actual
+from scripts.smoke_assert import assert_output_suffix
+assert_output_suffix('smoke-artifacts/keys.bin', b'\rx')
 PY
 key ctrl+l
 
@@ -515,9 +506,8 @@ xdotool type --clearmodifiers --delay 10 'policy'
 key ctrl+shift+Return
 xdotool type --clearmodifiers --delay 10 'z'
 python3 - <<'PY'
-from pathlib import Path
-actual = Path('smoke-artifacts/terminal-focus-policy.bin').read_bytes()
-assert actual.endswith(b'\x1b[200~policy\x1b[201~\rz'), actual
+from scripts.smoke_assert import assert_output_suffix
+assert_output_suffix('smoke-artifacts/terminal-focus-policy.bin', b'\x1b[200~policy\x1b[201~\rz')
 PY
 cleanup_app
 
@@ -545,9 +535,8 @@ key Left Escape
 }
 key Escape
 python3 - <<'PY'
-from pathlib import Path
-actual = Path('smoke-artifacts/selection.bin').read_bytes()
-assert actual.endswith(b'\x1b'), actual
+from scripts.smoke_assert import assert_output_suffix
+assert_output_suffix('smoke-artifacts/selection.bin', b'\x1b')
 PY
 # Once local selection is active, printable input exits local ownership and is
 # forwarded exactly once rather than being consumed by the selection handler.
