@@ -38,8 +38,7 @@ There is no hidden Document/PTY mode. Focus changes which surface receives input
 | Action | Default |
 | --- | --- |
 | Newline in composer | Enter |
-| Run draft in integrated shell | Ctrl+Enter |
-| Send draft to current terminal application | Ctrl+Shift+Enter |
+| Submit draft to the active terminal receiver | Ctrl+Enter |
 | Composer completion | Tab |
 | Terminal ⇄ composer (single switch key) | Ctrl+L / Cmd+L |
 | Composer → terminal (explicit alternative) | Ctrl+Shift+L / Cmd+Shift+L |
@@ -61,23 +60,39 @@ After a successful submission, Kea defaults to a fresh focused composer so the u
 
 `focus_editor` (Ctrl/Cmd+L) is the deliberate host escape that remains available while the terminal owns input, and the same chord returns from the composer to the terminal. Other Kea semantic shortcuts stay out of the TUI's way. Users whose child application needs the default Ctrl/Cmd+L binding can remap or unbind it. Plain Ctrl+V remains ordinary child input (0x16); clipboard paste into the live terminal uses Ctrl+Shift+V (Cmd+V on macOS) or the terminal Paste button.
 
-## Run in shell vs Send to app
+## Submit to the terminal
 
-These are separate actions, not modes.
+Ctrl+Enter sends the authored draft through the terminal paste path and then
+sends Enter. No per-command shell wrapper is injected. At a reported empty,
+ready text-input prompt, submission is immediate. Otherwise the first press
+shows a warning without sending anything. Release it, then press Enter or
+Ctrl+Enter to confirm that draft; another key cancels and continues editing.
+Draft, focus and input-context changes cancel confirmation. Holding the first
+chord cannot confirm it through key-repeat.
 
-**Run in shell** evaluates the draft in the integrated local shell. It is available only after that shell explicitly reports a fresh prompt. Kea never guesses readiness from `$`, `>`, cursor position or idle time.
+Local shells, integrated remote/nested shells, and cooperating applications use
+the same readiness contract. SSH is not a special case. Without integration,
+Ctrl+Enter still works using confirmation. Kea does not infer readiness from
+process names, prompt text, cursor position or idle time. It never interrupts the
+child or clears its existing input automatically. A confirmed raw send may append
+to an existing line; it does not guarantee that an unknown program treats text
+as a message rather than commands.
 
-**Send to app** sends the exact draft literally to whichever application currently owns stdin and then sends Enter. It never injects a shell wrapper. Multiline Send requires bracketed-paste support; otherwise Kea refuses instead of risking line-by-line execution.
+The old `run_shell` and `send_application` configuration names are compatibility
+aliases for this same guarded behavior; Ctrl+Shift+Enter is no longer a separate
+workflow or a bypass. Multiline submission requires negotiated bracketed paste;
+otherwise the draft is preserved instead of risking line-by-line execution.
 
-A successful submission creates a fresh editor draft and fresh undo history. Undo edits text; it does not pretend to reverse process side effects.
-
-Shell instrumentation is observational. Kea records command boundaries/status for optional metadata without changing the exit status that the next shell command sees.
+A successful submission creates a fresh draft and fresh undo history. Undo edits
+text, not process side effects. Observational shell hooks provide optional block
+boundaries without wrapping authored commands. See the full
+[active-input contract](active-input.md), including its compatibility limits.
 
 ## Submitted-draft history
 
 Commands and prompts written in Kea are authored work, even when they were sent to OpenCode or another arbitrary TUI rather than executed as a shell command.
 
-Kea therefore retains the exact text of successful **Run in shell** and **Send to app** submissions independently of optional command blocks. Ctrl+Up / Ctrl+Down browse this history only while the composer owns focus.
+Kea therefore retains the exact text of successful **Submit** operations independently of optional command blocks. Ctrl+Up / Ctrl+Down browse this history only while the composer owns focus.
 
 Entering history preserves the current unsubmitted scratch draft. Navigating forward past the newest submission restores that scratch draft exactly. Recall edits the composer only: it never sends bytes or re-executes anything.
 
@@ -119,27 +134,34 @@ See [terminal compatibility gate](terminal-compatibility-alpha.md).
 
 For supported interactive local shells, Kea installs a small prompt hook that preserves the user's prompt/profile and explicitly reports cwd/readiness plus the effective PATH.
 
-For bash the hook additionally keeps Kea's own driver lines out of shell
-history (`HISTIGNORE` extension plus self-removal of the installer line), so
-`history`/up-arrow never show `__kea_` wrapper text. Run-in-shell commands
-therefore do not appear in bash history either; Kea's own Ctrl+Up draft recall
-is unaffected. Other shells do not have this exclusion yet.
+Bash uses PS0/PROMPT_COMMAND; zsh uses preexec/precmd. Authored commands use the
+normal line editor and native history. Bash removes the one-time installer from
+history. PowerShell hooks run after the profile at startup, rather than typing
+implementation code into PSReadLine. Shells without execution hooks may remain
+untracked without blocking terminal input.
 
-This tracks `cd` whether it was submitted from the composer or typed directly into the terminal. While OpenCode, SSH, Vim or another foreground application owns stdin, the UI labels the shell directory as last reported rather than fabricating a remote/internal cwd.
+This tracks `cd` whether entered in the composer or directly in the terminal.
+While a TUI owns input, the displayed shell directory is last reported. An
+explicit integration inside a nested or remote shell can report its own input
+context. Export/install instructions are in [Active input](active-input.md).
+Kea never automatically installs remote code or treats a remote cwd as local.
 
-Supported shell integration currently covers interactive `sh`, Bash, dash, zsh, ksh/mksh, `pwsh` and Windows PowerShell. Noninteractive script/`-c`/`-Command` launches are not injected.
+Supported shell detection covers interactive `sh`, Bash, dash, zsh, ksh/mksh,
+`pwsh` and Windows PowerShell. Explicit noninteractive script/`-c`/`-Command`
+launches are not injected.
 
-Completion has two paths:
+Terminal Tab goes unchanged to the child. Composer Tab uses a configured
+cooperating provider or clearly labelled local history/PATH/cwd suggestions at
+a confirmed original local-shell prompt. The provider transport is implemented,
+but native Bash/PowerShell/OpenCode provider servers are not bundled. A prompt
+hook alone does not expose native completion. Unintegrated remote/TUI receivers
+keep native Tab with terminal focus; Kea does not invent their suggestions.
 
-- **Terminal Tab** goes unchanged to the child, keeping Bash/PowerShell/OpenCode/REPL completion authoritative.
-- **Composer Tab** safely suggests retained shell-command prefixes, executables from the shell's effective PATH and files/directories relative to the shell-reported cwd. It never evaluates the draft to discover suggestions.
-
-Use Up/Down to select a highlighted suggestion, Enter/Tab to accept, or Escape
-to dismiss. Acceptance only edits the draft, including with Enter-to-run bindings.
-After typing ASCII in the terminal and deleting it exactly with Backspace,
-completion remains available from last-reported shell context. **Prompt
-unconfirmed** means Run still needs a fresh shell marker; its existing empty-line
-recovery obtains that marker before executing.
+With the composer menu open, Left/Right or Tab/Shift+Tab cycle candidates;
+Up/Down navigate visual rows; Enter accepts without execution; Escape dismisses.
+Ctrl+Enter submits the actual draft rather than an unaccepted highlighted item.
+Typing, cursor changes, blur and context changes invalidate results. Forwarded
+terminal input invalidates readiness; no hidden Ctrl+C recovery is performed.
 
 ## Session persistence
 
@@ -165,7 +187,7 @@ See [session persistence](session-persistence.md).
 
 ## History and replay
 
-Raw terminal output, resize and lifecycle events form the canonical session history. Optional shell blocks are derived metadata on top.
+Raw terminal output, resize, lifecycle and separate authored-submission metadata form the canonical v2 session history. Optional blocks are observations on top. Existing v1 recordings remain readable; older Kea versions cannot read v2. See the [recording format](recording-format.md).
 
 History uses a separate silent emulator while the live process continues receiving output. A historical view cannot send input or mutate process state. Returning Live changes only the view; it never rolls the process back.
 
@@ -173,7 +195,7 @@ Backward seeking currently replays from the beginning. Efficient checkpoints, co
 
 ## Optional command blocks
 
-Command blocks are an observer, not the execution model. They are hidden by default. When shell start/done markers are available, blocks can derive command source, output, timing, exit status and starting directory.
+Command blocks are an observer, not the execution model. They are hidden by default. When scoped shell start/done markers match submitted-input metadata, blocks can retain command source, output, timing, status and starting directory. The observer is flat; nested commands can remain untracked while an outer block is active. PowerShell reports success/failure rather than exact native exit codes.
 
 Block parsing or retention failure must never gate command execution. When shown, blocks provide read-only selectable output, collapse/expand, filtering, bounded paging, Copy block and Edit as new.
 
@@ -202,12 +224,14 @@ alternative (`focus_terminal`). Changes are validated together when you choose
 inside any shortcut field saves too. Invalid assignments
 leave the previous file and your edits intact. The tab saves a complete
 `keybindings.conf` snapshot; closing Settings discards unsaved keybinding edits.
+Type shortcut names directly, or choose **Record** and press the combination.
+Recording isolates that chord from terminal input and live shortcuts. Escape
+cancels; a held chord stays captured until release. Save is still explicit.
 
 Example `keybindings.conf`:
 
 ```text
 run_shell = ctrl-enter
-send_application = ctrl-shift-enter
 focus_editor = ctrl-l
 focus_terminal = ctrl-shift-l
 select_terminal_text = f4
