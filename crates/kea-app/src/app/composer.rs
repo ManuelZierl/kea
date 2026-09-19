@@ -84,7 +84,10 @@ impl KeaView {
             self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
             self.observe_composer(cx);
             self.dismiss_completion();
-            window.focus(&self.focus);
+            match self.settings.post_submit_focus {
+                kea_app::config::settings::PostSubmitFocus::Editor => self.focus_editor(window, cx),
+                kea_app::config::settings::PostSubmitFocus::Terminal => window.focus(&self.focus),
+            }
             self.document_ui.page_start = None;
             self.document_ui.dirty = true;
         }
@@ -354,7 +357,9 @@ impl KeaView {
         self.completion_text.clear();
         self.completion_cursor = 0;
         if self.notice.as_deref().is_some_and(|notice| {
-            notice.starts_with("Choose a completion") || notice.starts_with("No local completion")
+            notice.starts_with("Local suggestions")
+                || notice.starts_with("Provider:")
+                || notice.starts_with("No completion")
         }) {
             self.notice = None;
         }
@@ -420,13 +425,13 @@ impl KeaView {
         let editor = self.editor.clone();
         let enabled = self.session.input_allowed();
         let directory = self
-            .document
-            .prompt_ready()
+            .input_context
+            .shell_ready()
             .then(|| self.document.directory().map(ToOwned::to_owned))
             .flatten();
-        let kind = match (self.document.prompt_ready(), self.shell) {
-            (true, Some(ShellFlavor::Posix)) => InputKind::Posix,
-            (true, Some(ShellFlavor::PowerShell)) => InputKind::PowerShell,
+        let kind = match (self.input_context.shell_ready(), self.input_context.kind()) {
+            (true, kea_app::terminal::context::ReceiverKind::Posix) => InputKind::Posix,
+            (true, kea_app::terminal::context::ReceiverKind::PowerShell) => InputKind::PowerShell,
             _ => InputKind::Application,
         };
         self.reverse_search.update(cx, |search, cx| {

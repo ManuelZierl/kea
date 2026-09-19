@@ -26,7 +26,7 @@ Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatche
 
 `copy` copies only the focused selection. An empty selection leaves the clipboard unchanged. `copy_document` explicitly exports the retained command history or visible terminal screen. Each block has its own Copy block action. Terminal selection-copy uses the visible Alacritty viewport and never silently substitutes the entire screen.
 
-Run in shell and Send to app apply only to the focused command editor, not a block, filter, embedded find field or terminal. Run in shell additionally requires an explicit prompt-ready report; Send to app never wraps its text in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
+Submit applies only to the focused command editor, not a block, filter, embedded find field or terminal. Explicit ready input submits immediately; other states require confirmation. Submission never wraps the draft in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
 
 A successful submission replaces the draft editor with a fresh entity and fresh undo history. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
 
@@ -72,8 +72,10 @@ replace `keybindings.conf`; errors preserve both the prior file and edited value
 Saved shortcuts require restart so previously installed GPUI bindings cannot
 remain active accidentally. The dialog owns one viewport-bounded scroll area,
 with tab-scoped scroll state through the vendored `Dialog::content_id` extension.
-Shortcut names are typed as text; pressing a chord runs the live shortcut and
-does not record it into a field.
+Shortcut names can be typed as text. Each row also has an explicit Record action:
+the captured chord is isolated from live actions and terminal input, Escape
+cancels, and modifiers alone do not finish recording. Captured values still
+require Save; conflict validation applies to the complete map.
 
 Focus actions target the workspace's terminal/composer directly, never a remembered
 arbitrary settings/search field. `focus_terminal` is a composer-context binding;

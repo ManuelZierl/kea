@@ -165,7 +165,11 @@ impl KeaView {
         )
         .map_err(anyhow::Error::msg)
         .and_then(|bytes| self.session.send(bytes));
-        if result.is_err() {
+        if result.is_ok() {
+            self.input_context.invalidate();
+            self.pending_run = None;
+            self.dismiss_completion();
+        } else {
             self.result(result, cx);
         }
         cx.stop_propagation();
@@ -250,8 +254,14 @@ impl KeaView {
         )
         .map_err(anyhow::Error::msg)?;
         let result = self.session.send(bytes);
-        if input_effects && result.is_ok() {
-            self.note_forwarded_terminal_input();
+        if result.is_ok() {
+            if input_effects {
+                self.note_forwarded_terminal_input();
+            } else {
+                self.input_context.invalidate();
+                self.pending_run = None;
+                self.dismiss_completion();
+            }
         }
         if result.is_err() {
             cx.notify();

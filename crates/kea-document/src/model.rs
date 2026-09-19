@@ -181,10 +181,10 @@ impl Document {
         for piece in self.scanner.push(bytes) {
             let piece = match piece {
                 Piece::Marker(Marker::NativeStart(context)) => {
-                    if !self
+                    if self
                         .submitted
                         .as_ref()
-                        .is_some_and(|(_, owner, _, _)| *owner == context)
+                        .is_none_or(|(_, owner, _, _)| *owner != context)
                     {
                         continue;
                     }

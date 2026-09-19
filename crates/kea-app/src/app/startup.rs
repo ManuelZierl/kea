@@ -114,6 +114,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     // shell. Unlike typing bootstrap source, this cannot leak through PSReadLine
     // redraws or pollute the interactive history.
     if shell == Some(ShellFlavor::PowerShell) {
+        if command.is_empty() {
+            command.push(std::env::var_os("SHELL").context("PowerShell executable unavailable")?);
+        }
         let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
         if !command
             .iter()

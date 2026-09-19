@@ -16,7 +16,7 @@ Compact chrome provides focus, optional blocks, explicit copy, Save session and
 History actions. Detailed replay controls appear only in History. The status
 bar identifies cwd, notices and persistence state.
 
-The daily loop is compose → Run or Send → keep composing while output streams →
+The daily loop is compose → Submit → keep composing while output streams →
 focus the terminal when the child needs input → return to the composer → recall,
 edit and submit previous authored text. Users should be able to complete that
 loop without a mouse or understanding PTY/event internals.
@@ -38,87 +38,93 @@ When the live terminal is focused, Kea masks semantic accelerators including use
 
 “Pass all keys to the TUI” has a protocol boundary: terminal programs receive encoded bytes/sequences, not raw physical keyboard events. Classic terminal protocols intentionally collapse some combinations (for example Tab and Ctrl+I); the OS/window manager may reserve others; newer distinctions require extended keyboard protocols. Beyond the documented host escape and local text commands, Kea preserves every distinction exposed by the platform + negotiated terminal protocol.
 
-## Explicit submission actions
+## One submission action
 
-The editor has independent actions, not modes:
+**Submit** (`run_shell`, default Ctrl+Enter) sends the authored draft, using the
+receiver's bracketed-paste mode when supported, followed by Enter. It never
+constructs a shell program around the draft. `send_application` and its legacy
+Ctrl+Shift+Enter binding are aliases for the same policy, not a bypass.
 
-- **Run in shell** (`run_shell`, default Ctrl+Enter) executes the draft in an integrated local shell. It requires that shell to have explicitly reported an idle prompt.
-- **Send to app** (`send_application`, default Ctrl+Shift+Enter) sends the draft literally to the current stdin owner and then Enter. It never adds a shell wrapper.
-- **Newline** is editor-native Enter by default. It can be explicitly rebound, for example `newline = shift-enter`.
-- **Complete** (`complete`, default Tab) edits the draft only; it never executes it.
+An explicit ready input report permits immediate submission. Otherwise the first
+press only arms a visible confirmation. Release the first chord, then press Enter
+or Ctrl+Enter to send that exact draft to that same context. Another key cancels
+and continues normal editing. Changes to the draft, focus, or reported input
+context cancel confirmation. No Ctrl+C is generated automatically; Interrupt is
+an independent action. The Submit button follows the same confirmation policy.
 
-Terminal/chat-style editor policy is supported without changing the architecture:
+Readiness is live session state, independent of optional command blocks. Local,
+nested and remote shell integrations use the same protocol. An unintegrated SSH
+session, REPL or TUI uses the guarded raw-input fallback. Kea does not claim to
+know that an unknown program is safe to receive text. Confirmation grants intent,
+not an atomic delivery guarantee; sends are not automatically retried.
+
+Enter remains editor-native newline by default. Terminal/chat-style configuration:
 
 ```text
 run_shell = enter
 newline = shift-enter
 ```
 
-A successful Run/Send creates a fresh draft and keeps the composer focused by
-default (`post_submit_focus = editor`). Set `post_submit_focus = terminal` for
-immediate child interaction instead. Undo never changes a completed execution
-or reverses process side effects. Historical/replay views reject child input,
-but the composer stays editable so text can be prepared; Run/Send refuse there
-until back Live.
+Enter accepts an active completion without submitting. Ctrl+Enter submits the
+actual draft, not an unaccepted highlighted candidate. A successful submission
+creates a fresh draft. Undo never changes an execution or reverses its effects.
+History and ended sessions reject input while preserving the draft. Multiline
+input requires negotiated bracketed paste, rather than executing lines through
+an unknown line editor.
 
-Direct terminal input invalidates Run readiness until another explicit prompt report arrives. Kea may automate recovery only when it observed plain ASCII insertion followed by the exact number of ordinary Backspaces: Ctrl+Enter sends Ctrl+C, waits for a new prompt marker, revalidates the unchanged focused draft, and then uses the normal Run path. It does not restore readiness from that local observation or apply this recovery to arbitrary controls, pastes, Unicode editing, commands or TUIs.
+## Observational shell integration and blocks
 
-## Blocks are fail-open observers
+Shell hooks report prompt readiness, cwd/PATH and, where supported, native
+execution start/done. Authored commands use the shell's ordinary line editor,
+command execution and history; no eval/Invoke-Expression wrapper is submitted.
+The one-time POSIX hook installation is fail-open; PowerShell hooks are installed
+through its startup command, after the user's profile.
 
-`Run in shell` does **not** create a queued block before sending. Kea sends the shell driver line first. If the shell subsequently emits valid start/done markers, `kea-document` may derive a block.
+After a successful shell-ready submission, Kea retains a typed authored-input
+metadata event. Only a matching scoped native-start marker creates a block;
+matching done finishes it. Missing hooks or exhausted retention degrade to
+untracked execution. Nested shell reports must not finish an outer command.
+Ordinary terminal keystrokes are not recorded as authored submissions. Directly
+typed terminal commands remain in raw output, but do not acquire composer blocks.
 
-Therefore block-retention exhaustion, parsing failure or a missing marker cannot prevent the command from running and cannot leave execution waiting on a block. At worst, optional structure is incomplete. Raw terminal history remains the canonical compatibility substrate.
+Kea currently has a flat block observer, not a nested command tree. If an outer
+command remains tracked (for example a composed SSH launch), inner commands may
+execute without separate blocks. This never disables Submit or completion.
+PowerShell hooks report success/failure (0/1), not every native exit-code value.
 
-## Current directory
+## Directory and completion
 
-Integrated interactive local shells receive a prompt hook. The hook preserves existing Bash `PROMPT_COMMAND`, zsh `precmd_functions`, PowerShell profile/prompt behavior, etc., and emits an explicit cwd report every time the local shell reaches its prompt.
+Shell cwd is current only at a reported ready shell prompt, otherwise last
+reported. Prompt text is never parsed. Local filesystem suggestions use cwd/PATH
+only when the original local shell reports ready. Remote directory strings are
+never interpreted on the host filesystem.
 
-Consequences:
+Terminal Tab remains the active application's native completion. Composer Tab
+uses a configured cooperating provider, or explicitly labelled local suggestions
+at a local prompt. No provider means no remote/TUI composer completion; switch
+focus for native Tab. The provider transport does not itself implement Bash,
+PowerShell, or OpenCode's completion machinery. See [Active input](active-input.md)
+for configuration, protocol, limits and installation in nested shells.
 
-- `cd` through **Run in shell** updates cwd.
-- `cd` typed directly in the terminal updates cwd on the next prompt.
-- Ctrl+C / an interrupted command updates readiness again when the prompt returns.
-- prompt strings are never scraped and `$`/`>` are never treated as readiness signals.
+Completion work runs off the UI thread, one request at a time. A result must
+match the current draft, UTF-8 cursor, input context generation and focus. It is
+applied as an ordinary undoable replacement. IME composition takes precedence.
 
-While the integrated local shell is idle, the UI says **Current shell directory**. While a TUI, SSH session or other foreground program owns stdin, the shell is not at its prompt, so the UI says **Shell directory (last reported)**. Kea does not claim to know the internal cwd of a remote or arbitrary child application without integration from that application.
+With the menu open, Tab/Shift+Tab and Left/Right cycle candidates. Up/Down use
+measured visual rows rather than an assumed grid width. Enter accepts without
+execution; Escape dismisses. Editing, cursor changes and blur invalidate results.
 
-Noninteractive `-c`, `-Command` and script launches do not receive prompt hooks.
+## Recording and trust
 
-## Autocomplete
+New recordings use v2: raw terminal output, resizes and lifecycle retain their
+order and exact bytes; authored shell submissions are separate metadata events.
+Both v1 and v2 are readable. Earlier releases cannot read v2. Terminal replay
+ignores submission events; the block observer may use them to reconstruct blocks.
 
-There are two complementary completion paths.
-
-### Terminal completion
-
-Tab with terminal focus goes unchanged to the child. Bash programmable completion, PowerShell completers, OpenCode/REPL/Vim behavior and user profile configuration remain authoritative. Kea does not replace this path.
-
-### Editor completion
-
-When the integrated local shell is idle, its prompt hook also reports the effective `PATH`. Editor Tab uses that together with the reported cwd to suggest:
-
-- retained command-history prefixes;
-- executable names from the shell's effective PATH;
-- local files/directories relative to the shell cwd.
-
-Completion runs off the UI thread, has bounded directory/PATH scanning, validates that the draft/cursor did not change before applying a result, and performs an ordinary undoable text replacement. It never evaluates draft shell code. Complex quoting, substitutions/globs, flag/argument-specific programmable completion, remote completion and application-specific completion intentionally fall back to the application's native terminal Tab rather than an approximate parser.
-
-With suggestions open, Up/Down selects a visibly highlighted candidate, Enter or
-Tab accepts it, and Escape dismisses the list. Enter accepts rather than executes
-even with `run_shell = enter`. Mouse selection remains available. Editing,
-moving the cursor or leaving the composer invalidates the list; IME composition
-keeps ownership of its keys. Only one completion worker runs at a time.
-
-After the narrow ASCII type/backspace-to-empty sequence described above,
-completion can still use **last-reported** local cwd/PATH. This does not restore
-Run readiness: the UI says **Prompt unconfirmed**, and Run uses the existing
-Ctrl+C/fresh-marker recovery. Other uncertain terminal input still requires a
-new explicit prompt report for local shell completion context.
-
-## Shell metadata
-
-Recorded document metadata uses bounded OSC 777 markers for prompt/cwd and command start/done boundaries. Effective PATH is live host completion context and uses a separate OSC 778 marker; it is not necessary to reconstruct command blocks from a recording.
-
-Markers are interoperability metadata, not authenticated provenance. Untrusted terminal output can forge them, so they must never become an authorization/security boundary.
+Markers are interoperability, not authentication. Terminal programs can forge
+metadata. Provider endpoints and credentials must be explicitly configured
+locally; terminal output never installs a provider or supplies a network address.
+Input and output can contain secrets; persisted history/recordings are plaintext.
 
 ## Viewport and scrolling
 

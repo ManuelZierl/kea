@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.0.1-alpha.1 — prepared, not yet published
+## Unreleased
+
+- Unify composer submission under Ctrl+Enter with exact-draft/context confirmation
+  for unknown input; retain Ctrl+Shift+Enter as a guarded compatibility alias.
+- Replace authored-command eval wrappers with observational shell hooks. Install
+  PowerShell hooks at startup rather than typing implementation code into its editor.
+- Add scoped active-input reports, explicit nested-shell integration export and
+  bounded opt-in structured completion providers. Native terminal Tab is unchanged.
+- Add horizontal/visual-row completion navigation and stale-context rejection.
+- Focus clicked input fields explicitly and add isolated shortcut recording.
+- Write recording format v2 with separate submission metadata; keep v1 reading.
+  Older Kea releases cannot read newly written v2 recordings.
+
+## 0.0.1-alpha.1 — 2026-09-19
 
 First early-alpha release of Kea, a terminal workspace with a multiline editor
 for authored input.

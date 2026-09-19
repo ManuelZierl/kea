@@ -115,7 +115,7 @@ impl KeaView {
                                     this.completion_index = 0;
                                     this.completion_scroll.scroll_to_item(0);
                                     this.notice = Some(if this.candidates.is_empty() {
-                                        "No local completion matches. Terminal Tab still uses the running application's native completion."
+                                        "No completion matches from this source. Native terminal Tab remains available."
                                             .into()
                                     } else {
                                         format!("{} · Left/Right or Tab/Shift+Tab cycle · Up/Down change row · Enter accepts · Escape dismisses.", this.completion_source)
