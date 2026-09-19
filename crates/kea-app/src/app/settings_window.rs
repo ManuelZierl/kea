@@ -6,6 +6,13 @@ use gpui_component::{
 };
 use kea_app::config::settings::{Appearance, PostSubmitFocus, Settings};
 
+mod keybindings;
+
+struct DialogState {
+    show_keybindings: bool,
+    keybindings: Entity<keybindings::KeybindingEditor>,
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum SettingsChange {
     Appearance(Appearance),
@@ -26,40 +33,97 @@ pub(super) fn open(view: Entity<KeaView>, window: &mut Window, cx: &mut App) {
     if window.has_active_dialog(cx) {
         return;
     }
+    let keybindings = cx.new(|cx| keybindings::KeybindingEditor::new(window, cx));
+    let state = cx.new(|_| DialogState {
+        show_keybindings: false,
+        keybindings,
+    });
     window.open_dialog(cx, move |dialog, window, cx| {
-        build_dialog(dialog, &view, window, cx)
+        build_dialog(dialog, &view, &state, window, cx)
     });
 }
 
 fn build_dialog(
     dialog: Dialog,
     view: &Entity<KeaView>,
+    state: &Entity<DialogState>,
     window: &mut Window,
     cx: &mut App,
 ) -> Dialog {
     let settings = view.read(cx).settings.clone();
     let viewport = window.viewport_size();
     let width = px((f32::from(viewport.width) - 32.).clamp(320., 720.));
-    let content_height = px((f32::from(viewport.height) - 150.).max(260.));
     let path = Settings::path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "Settings path unavailable".into());
 
-    dialog
-        .title(div().font_weight(FontWeight::BOLD).child("Settings"))
+    let show_keybindings = state.read(cx).show_keybindings;
+    let general_state = state.clone();
+    let keybindings_state = state.clone();
+    let dialog = dialog
+        .title(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(div().font_weight(FontWeight::BOLD).child("Settings"))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            Button::new("general-settings")
+                                .label("General")
+                                .small()
+                                .selected(!show_keybindings)
+                                .on_click(move |_, window, cx| {
+                                    general_state
+                                        .update(cx, |state, _| state.show_keybindings = false);
+                                    window.refresh();
+                                }),
+                        )
+                        .child(
+                            Button::new("keybinding-settings")
+                                .label("Keybindings")
+                                .small()
+                                .selected(show_keybindings)
+                                .on_click(move |_, window, cx| {
+                                    keybindings_state
+                                        .update(cx, |state, _| state.show_keybindings = true);
+                                    window.refresh();
+                                }),
+                        ),
+                ),
+        )
         .w(width)
         .max_w(px(720.))
-        .child(
+        .content_id(if show_keybindings {
+            "settings-keybindings"
+        } else {
+            "settings-general"
+        })
+        // Dialog owns scrolling. Bound the whole dialog, including title and
+        // padding, rather than letting a second scroll area escape its bottom.
+        // The component's entrance animation adds 30px to margin_top.
+        .margin_top(px(0.))
+        .h((viewport.height - px(64.)).max(px(200.)))
+        .overflow_hidden()
+        .overlay_closable(false);
+    if show_keybindings {
+        return dialog.child(state.read(cx).keybindings.clone());
+    }
+    dialog.child(
             div()
-                .id("settings-scroll")
-                .max_h(content_height)
-                .overflow_y_scroll()
-                .p_4()
+                .w_full()
+                .min_w_0()
+                .pb_4()
                 .flex()
                 .flex_col()
                 .gap_4()
                 .child(
                     div()
+                        .w_full()
+                        .min_w_0()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child("Changes are saved automatically and applied without replacing the current draft."),
@@ -256,7 +320,7 @@ fn build_dialog(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("Saved to {path}. Font-family and keybinding overrides remain available in the configuration files.")),
+                        .child(format!("Saved to {path}. Font-family overrides remain available in settings.conf. Use the Keybindings tab for shortcuts.")),
                 ),
         )
 }

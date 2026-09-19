@@ -124,6 +124,12 @@ See [terminal compatibility gate](docs/terminal-compatibility-alpha.md).
 
 For supported interactive local shells, Kea installs a small prompt hook that preserves the user's prompt/profile and explicitly reports cwd/readiness plus the effective PATH.
 
+For bash the hook additionally keeps Kea's own driver lines out of shell
+history (`HISTIGNORE` extension plus self-removal of the installer line), so
+`history`/up-arrow never show `__kea_` wrapper text. Run-in-shell commands
+therefore do not appear in bash history either; Kea's own Ctrl+Up draft recall
+is unaffected. Other shells do not have this exclusion yet.
+
 This tracks `cd` whether it was submitted from the composer or typed directly into the terminal. While OpenCode, SSH, Vim or another foreground application owns stdin, the UI labels the shell directory as last reported rather than fabricating a remote/internal cwd.
 
 Supported shell integration currently covers interactive `sh`, Bash, dash, zsh, ksh/mksh, `pwsh` and Windows PowerShell. Noninteractive script/`-c`/`-Command` launches are not injected.
@@ -132,6 +138,13 @@ Completion has two paths:
 
 - **Terminal Tab** goes unchanged to the child, keeping Bash/PowerShell/OpenCode/REPL completion authoritative.
 - **Composer Tab** safely suggests retained shell-command prefixes, executables from the shell's effective PATH and files/directories relative to the shell-reported cwd. It never evaluates the draft to discover suggestions.
+
+Use Up/Down to select a highlighted suggestion, Enter/Tab to accept, or Escape
+to dismiss. Acceptance only edits the draft, including with Enter-to-run bindings.
+After typing ASCII in the terminal and deleting it exactly with Backspace,
+completion remains available from last-reported shell context. **Prompt
+unconfirmed** means Run still needs a fresh shell marker; its existing empty-line
+recovery obtains that marker before executing.
 
 ## Session persistence
 
@@ -186,6 +199,14 @@ draft. Submitted-draft persistence changes take effect on the next launch becaus
 the history file is an explicit plaintext opt-in. The default **System** theme
 continues to follow operating-system light/dark changes; **Light** and **Dark**
 are fixed overrides.
+
+The **Keybindings** tab edits every configurable shortcut, including **Switch
+terminal ⇄ composer** (`focus_editor`) and the composer-only **Focus terminal**
+alternative (`focus_terminal`). Changes are validated together when you choose
+**Save keybindings**, then take effect after restarting Kea. Pressing Enter
+inside any shortcut field saves too. Invalid assignments
+leave the previous file and your edits intact. The tab saves a complete
+`keybindings.conf` snapshot; closing Settings discards unsaved keybinding edits.
 
 Example `keybindings.conf`:
 

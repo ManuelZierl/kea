@@ -79,6 +79,7 @@ pub fn suggest(
                 token,
                 token_start..cursor,
                 path,
+                directory,
                 shell,
                 &mut results,
                 &mut seen,
@@ -113,6 +114,7 @@ fn complete_commands(
     token: &str,
     range: Range<usize>,
     shell_path: &str,
+    reported_cwd: Option<&Path>,
     shell: Option<ShellFlavor>,
     results: &mut Vec<Candidate>,
     seen: &mut BTreeSet<String>,
@@ -120,7 +122,19 @@ fn complete_commands(
     let mut candidates = BTreeSet::new();
     let path = OsString::from(shell_path);
     let mut inspected = 0usize;
-    for directory in std::env::split_paths(&path).take(MAX_PATH_DIRS) {
+    for path_entry in std::env::split_paths(&path).take(MAX_PATH_DIRS) {
+        let directory = if path_entry.is_absolute() {
+            path_entry
+        } else {
+            let Some(cwd) = reported_cwd else {
+                continue;
+            };
+            if path_entry.as_os_str().is_empty() {
+                cwd.to_path_buf()
+            } else {
+                cwd.join(path_entry)
+            }
+        };
         let Ok(entries) = std::fs::read_dir(directory) else {
             continue;
         };
@@ -128,12 +142,6 @@ fn complete_commands(
             inspected += 1;
             if inspected > MAX_PATH_ENTRIES {
                 break;
-            }
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if !file_type.is_file() {
-                continue;
             }
             let Some(name) = executable_name(&entry.path()) else {
                 continue;
@@ -163,10 +171,14 @@ fn complete_commands(
 
 fn executable_name(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?.to_string();
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(path).ok()?.permissions().mode();
+        let mode = metadata.permissions().mode();
         (mode & 0o111 != 0).then_some(name)
     }
     #[cfg(windows)]
@@ -264,9 +276,11 @@ fn complete_paths(
 }
 
 fn shell_quote(value: &str, shell: Option<ShellFlavor>) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_alphanumeric() || "._-/:~".contains(ch) || (cfg!(windows) && ch == '\\'))
+    let leading_tilde_is_literal = value.starts_with('~') && !value.starts_with("~/");
+    if !leading_tilde_is_literal
+        && value.chars().all(|ch| {
+            ch.is_alphanumeric() || "._-/:~".contains(ch) || (cfg!(windows) && ch == '\\')
+        })
     {
         return value.to_owned();
     }

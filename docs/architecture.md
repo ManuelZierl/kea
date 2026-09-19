@@ -80,6 +80,12 @@ The integration preserves user shell behavior where possible:
 
 Prompt hooks update cwd and PATH after commands typed either through Kea or directly in the terminal. While a foreground TUI/remote program is active, the local shell metadata is explicitly treated as **last reported**.
 
+For bash the hook also excludes Kea driver lines from shell history (appended
+`HISTIGNORE` patterns plus self-removal of the installer line), so Run-in-shell
+wrappers never appear in `history`/up-arrow; the clean command inside the
+wrapper is skipped with it, while Kea's own submitted-draft recall is
+unaffected. Other shells have no equivalent exclusion yet.
+
 Shell driver input for **Run in shell** transports multiline drafts as one physical PTY line. User newline bytes are encoded as data and reconstructed inside the shell, avoiding interactive line-editor splitting before the start marker executes. Before the start marker, the driver prints a control-safe presentation of the original draft at the terminal's measured prompt column; private transport text remains hidden.
 
 The hidden-input echo filter fails open: if exact cosmetic suppression becomes unsafe, real output wins over hiding wrapper text.
@@ -103,6 +109,14 @@ Editor Tab uses bounded local completion on a worker thread. When an integrated 
 - filesystem entries relative to the shell-reported cwd.
 
 Candidates are discarded if text/cursor changed and are applied as ordinary undoable editor replacements. Kea never evaluates draft shell code for completion. Complex syntax intentionally falls back to native terminal completion instead of speculative parsing.
+
+The popup captures component navigation/acceptance actions only while its focused
+draft snapshot is current and not composing. Blur invalidates pending results.
+An invalidated worker receiver is retained until drained, bounding scans to one
+in flight. Relative/empty PATH entries use reported cwd; executable symlinks follow
+target metadata. Completion may reuse last-reported cwd/PATH after the narrow
+ASCII insertion/exact-backspace recovery sequence, without restoring prompt-ready
+state or relaxing the Run marker guard.
 
 ## Layout and optional blocks
 

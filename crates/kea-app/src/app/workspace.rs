@@ -34,11 +34,21 @@ impl KeaView {
         let memory_changed = cx.observe(&reverse_search, |_, _, cx| cx.notify());
         let terminal_composition = cx.new(|cx| InputState::new(window, cx));
         let document_ui = document_view::DocumentUi::new(window, cx);
-        let composer_change = cx.subscribe(&editor, |this, _, event: &edit::InputEvent, cx| {
-            if matches!(event, edit::InputEvent::Change) {
-                this.note_composer_typed(cx);
-            }
-        });
+        let composer_change =
+            cx.subscribe(
+                &editor,
+                |this, _, event: &edit::InputEvent, cx| match event {
+                    edit::InputEvent::Change => {
+                        this.dismiss_completion();
+                        this.note_composer_typed(cx);
+                    }
+                    edit::InputEvent::Blur => {
+                        this.dismiss_completion();
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            );
         let filter_change = cx.subscribe(
             &document_ui.filter,
             |this, _, event: &edit::InputEvent, cx| {
@@ -51,6 +61,7 @@ impl KeaView {
         );
         let focus_lost = cx.on_blur(&focus, window, |this, _, cx| {
             this.session.terminal_selection_focus_lost();
+            this.dismiss_completion();
             cx.notify();
         });
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
@@ -65,19 +76,30 @@ impl KeaView {
                     this.update(cx, |this, cx| {
                         let completion = this.completion_rx.as_ref().map(|rx| rx.try_recv());
                         match completion {
-                            Some(Ok((text, cursor, candidates))) => {
+                            Some(Ok((generation, text, cursor, candidates))) => {
+                                let request_live = generation == this.completion_generation
+                                    && !this.completion_invalidated;
                                 this.completion_rx = None;
-                                if this.editor.read(cx).value().as_ref() == text
+                                this.completion_invalidated = false;
+                                let composing = this.editor.update(cx, |state, cx| {
+                                    state.marked_text_range(window, cx).is_some()
+                                });
+                                if request_live
+                                    && !composing
+                                    && this.editor.focus_handle(cx).is_focused(window)
+                                    && this.editor.read(cx).value().as_ref() == text
                                     && this.editor.read(cx).cursor() == cursor
                                 {
                                     this.completion_text = text;
                                     this.completion_cursor = cursor;
                                     this.candidates = candidates;
+                                    this.completion_index = 0;
+                                    this.completion_scroll.scroll_to_item(0);
                                     this.notice = Some(if this.candidates.is_empty() {
                                         "No local completion matches. Terminal Tab still uses the running application's native completion."
                                             .into()
                                     } else {
-                                        "Choose a completion, or press Tab again to accept the first. Nothing is executed."
+                                        "Choose a completion · Up/Down move · Enter/Tab accept · Escape dismisses. Nothing is executed."
                                             .into()
                                     });
                                     cx.notify();
@@ -140,7 +162,11 @@ impl KeaView {
             pending_run: None,
             terminal_composition,
             completion_rx: None,
+            completion_generation: 0,
+            completion_invalidated: false,
             candidates: Vec::new(),
+            completion_index: 0,
+            completion_scroll: ScrollHandle::new(),
             completion_text: String::new(),
             completion_cursor: 0,
             editor,
@@ -200,11 +226,21 @@ impl KeaView {
 
     pub(super) fn observe_composer(&mut self, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
-        self._composer_change = cx.subscribe(&editor, |this, _, event: &edit::InputEvent, cx| {
-            if matches!(event, edit::InputEvent::Change) {
-                this.note_composer_typed(cx);
-            }
-        });
+        self._composer_change =
+            cx.subscribe(
+                &editor,
+                |this, _, event: &edit::InputEvent, cx| match event {
+                    edit::InputEvent::Change => {
+                        this.dismiss_completion();
+                        this.note_composer_typed(cx);
+                    }
+                    edit::InputEvent::Blur => {
+                        this.dismiss_completion();
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            );
     }
 
     fn note_composer_typed(&mut self, cx: &mut Context<Self>) {

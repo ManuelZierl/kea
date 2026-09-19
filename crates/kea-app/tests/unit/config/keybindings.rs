@@ -5,6 +5,137 @@ fn key(spec: &str) -> Keystroke {
 }
 
 #[test]
+fn explicit_default_focus_terminal_does_not_change_effective_keymap() {
+    for platform in [Platform::Other, Platform::Mac] {
+        let defaults = Keymap::defaults_for(platform);
+        let value = defaults.focus_terminal[0].specification();
+        let explicit =
+            Keymap::parse_overrides(platform, &format!("focus_terminal = {value}")).unwrap();
+        assert_eq!(defaults, explicit);
+    }
+}
+
+#[test]
+fn one_way_terminal_focus_binding_is_composer_only_without_focus_history() {
+    let keymap = Keymap::parse("focus_terminal = alt-t").unwrap();
+    let map = gpui::Keymap::new(keymap.gpui_bindings());
+    for (names, expected) in [
+        (vec!["Kea", "KeaCommand", "Input"], true),
+        (vec!["Kea", "KeaTerminal"], false),
+        (vec!["Dialog", "Input"], false),
+    ] {
+        let context = names
+            .iter()
+            .map(|s| gpui::KeyContext::parse(s).unwrap())
+            .collect::<Vec<_>>();
+        let bindings = map.bindings_for_input(&[key("alt-t")], &context).0;
+        assert_eq!(
+            bindings.iter().any(|binding| binding
+                .action()
+                .as_any()
+                .downcast_ref::<Invoke>()
+                .is_some_and(|invoke| invoke.action == Action::FocusEditor)),
+            expected,
+            "{names:?}"
+        );
+    }
+}
+
+#[test]
+fn settings_snapshot_round_trips_all_bindings_and_unbound_actions() {
+    for platform in [Platform::Other, Platform::Mac] {
+        let original = Keymap::parse_overrides(platform,
+            "focus_editor = alt-l\nfocus_terminal = alt-l\nrun_shell = alt-enter, alt-f12\nundo = none\nprevious_draft = alt-up\nnext_draft = alt-down").unwrap();
+        assert_eq!(original.settings_entries().len(), 27);
+        assert_eq!(
+            Keymap::parse_overrides(platform, &original.to_config()).unwrap(),
+            original
+        );
+    }
+}
+
+#[test]
+fn saved_keybindings_replace_atomically_and_failure_preserves_destination() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("nested/keybindings.conf");
+    let original = Keymap::parse("focus_editor = alt-l").unwrap();
+    original.save_to(&path).unwrap();
+    assert_eq!(
+        Keymap::parse(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+        original
+    );
+    let changed = Keymap::parse("focus_editor = alt-f12\nundo = none").unwrap();
+    changed.save_to(&path).unwrap();
+    assert_eq!(
+        Keymap::parse(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+        changed
+    );
+    let destination = root.path().join("blocked");
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::write(destination.join("keep"), b"original").unwrap();
+    assert!(changed.save_to(&destination).is_err());
+    assert_eq!(
+        std::fs::read(destination.join("keep")).unwrap(),
+        b"original"
+    );
+}
+
+#[test]
+fn hunt_custom_actions_are_masked_only_in_live_terminal() {
+    let keymap = Keymap::parse_overrides(
+        Platform::Other,
+        "run_shell = alt-enter\ncopy = alt-c\ntoggle_blocks = alt-space\nfocus_editor = alt-l",
+    )
+    .unwrap();
+    let map = gpui::Keymap::new(keymap.gpui_bindings());
+    let terminal = ["Kea", "KeaTerminal"].map(|s| gpui::KeyContext::parse(s).unwrap());
+    let composer = ["Kea", "KeaCommand", "Input"].map(|s| gpui::KeyContext::parse(s).unwrap());
+    for spec in ["alt-enter", "alt-c", "alt-space"] {
+        assert!(
+            map.bindings_for_input(&[key(spec)], &terminal).0.is_empty(),
+            "captured {spec}"
+        );
+        assert!(
+            !map.bindings_for_input(&[key(spec)], &composer).0.is_empty(),
+            "lost {spec}"
+        );
+    }
+    assert!(!map
+        .bindings_for_input(&[key("alt-l")], &terminal)
+        .0
+        .is_empty());
+}
+
+#[test]
+fn hunt_focus_escape_can_reuse_a_remapped_default_shortcut() {
+    for platform in [Platform::Other, Platform::Mac] {
+        let keymap =
+            Keymap::parse_overrides(platform, "focus_editor = ctrl-r\nreverse_search = alt-r")
+                .unwrap();
+        assert_eq!(keymap.action_for(&key("ctrl-r")), Some(Action::FocusEditor));
+        let map = gpui::Keymap::new(keymap.gpui_bindings());
+        for names in [
+            vec!["Kea", "KeaCommand", "Input"],
+            vec!["Kea", "KeaTerminal"],
+        ] {
+            let context = names
+                .iter()
+                .map(|s| gpui::KeyContext::parse(s).unwrap())
+                .collect::<Vec<_>>();
+            let bindings = map.bindings_for_input(&[key("ctrl-r")], &context).0;
+            assert!(
+                bindings.iter().any(|b| b
+                    .action()
+                    .as_any()
+                    .downcast_ref::<Invoke>()
+                    .is_some_and(|a| a.action == Action::FocusEditor)),
+                "accepted focus escape is unavailable in {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn default_config_files_are_created_but_never_overwritten() {
     let root = std::env::temp_dir().join(format!("kea-config-test-{}", std::process::id()));
     let path = root.join("nested").join("kea").join("keybindings.conf");

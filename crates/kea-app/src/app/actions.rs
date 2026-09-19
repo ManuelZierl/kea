@@ -189,9 +189,7 @@ impl KeaView {
                 if terminal_focused {
                     self.focus_editor(window, cx);
                 } else if self.editor.focus_handle(cx).is_focused(window) {
-                    if !command_editor::focus_last_external(window, cx) {
-                        window.focus(&self.focus);
-                    }
+                    window.focus(&self.focus);
                 } else {
                     self.focus_editor(window, cx);
                 }
@@ -208,9 +206,17 @@ impl KeaView {
                 }
                 self.result(result, cx);
             }
-            Action::RunShell => self.run_shell(window, cx),
+            Action::RunShell => {
+                if !self.accept_completion(window, cx) {
+                    self.run_shell(window, cx);
+                }
+            }
             Action::SendApplication => self.send_editor(window, cx),
-            Action::Newline => self.insert_newline(window, cx),
+            Action::Newline => {
+                if !self.accept_completion(window, cx) {
+                    self.insert_newline(window, cx);
+                }
+            }
             Action::Complete => self.complete_editor(window, cx),
             Action::ReverseSearch => {
                 if self.editor.focus_handle(cx).is_focused(window) {

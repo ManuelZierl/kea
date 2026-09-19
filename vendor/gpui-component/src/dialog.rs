@@ -2,9 +2,9 @@ use std::{rc::Rc, time::Duration};
 
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, Bounds, BoxShadow, ClickEvent, Div, Edges,
-    FocusHandle, Hsla, InteractiveElement, IntoElement, KeyBinding, MouseButton, ParentElement,
-    Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Window, anchored, div, hsla,
-    point, prelude::FluentBuilder, px, relative,
+    ElementId, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyBinding, MouseButton,
+    ParentElement, Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    anchored, div, hsla, point, prelude::FluentBuilder, px, relative,
 };
 use rust_i18n::t;
 
@@ -82,6 +82,7 @@ pub struct Dialog {
     title: Option<AnyElement>,
     footer: Option<FooterFn>,
     content: Div,
+    content_id: ElementId,
     width: Pixels,
     max_width: Option<Pixels>,
     margin_top: Option<Pixels>,
@@ -118,6 +119,7 @@ impl Dialog {
             title: None,
             footer: None,
             content: v_flex(),
+            content_id: "dialog-content".into(),
             margin_top: None,
             width: px(480.),
             max_width: None,
@@ -137,6 +139,12 @@ impl Dialog {
     /// Sets the title of the dialog.
     pub fn title(mut self, title: impl IntoElement) -> Self {
         self.title = Some(title.into_any_element());
+        self
+    }
+
+    /// Scope retained content/scroll state to a page when a dialog has tabs.
+    pub fn content_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.content_id = id.into();
         self
     }
 
@@ -505,14 +513,20 @@ impl RenderOnce for Dialog {
                                     })
                             }))
                             .child(
-                                div().w_full().flex_1().overflow_hidden().child(
-                                    v_flex()
-                                        .id("contents")
-                                        .pl(paddings.left)
-                                        .pr(paddings.right)
-                                        .overflow_y_scrollbar()
-                                        .child(self.content),
-                                ),
+                                div()
+                                    .id(self.content_id)
+                                    .w_full()
+                                    .min_h_0()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .child(
+                                        v_flex()
+                                            .id("contents")
+                                            .pl(paddings.left)
+                                            .pr(paddings.right)
+                                            .overflow_y_scrollbar()
+                                            .child(self.content),
+                                    ),
                             )
                             .when_some(self.footer, |this, footer| {
                                 this.child(

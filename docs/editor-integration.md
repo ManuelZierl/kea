@@ -60,6 +60,22 @@ animate_logo = true
 
 Set `KEA_SETTINGS` or `KEA_KEYBINDINGS` for explicit file locations. Invalid files produce a warning and fall back to defaults. The Settings dialog atomically replaces `settings.conf` with a validated complete snapshot and applies presentation/input-policy changes without recreating the draft. Draft-history persistence changes are intentionally restart-scoped. External file edits and keybinding changes are loaded at startup. Do not add a separate Kea preference for every OS preference. Expose overrides only where the host owns policy or where a specific override is useful.
 
+Settings has separate General and Keybindings tabs. Keybinding fields use retained
+component inputs, validate the complete map on explicit Save (or Enter in any
+shortcut field), and atomically
+replace `keybindings.conf`; errors preserve both the prior file and edited values.
+Saved shortcuts require restart so previously installed GPUI bindings cannot
+remain active accidentally. The dialog owns one viewport-bounded scroll area,
+with tab-scoped scroll state through the vendored `Dialog::content_id` extension.
+Shortcut names are typed as text; pressing a chord runs the live shortcut and
+does not record it into a field.
+
+Focus actions target the workspace's terminal/composer directly, never a remembered
+arbitrary settings/search field. `focus_terminal` is a composer-context binding;
+it does not depend on having previously typed into the terminal. Default terminal
+shortcut masks are installed before the active focus escape, so an explicitly
+reassigned default chord cannot mask the switch.
+
 ## Validation and scope
 
 The host tests the component's composition/replacement API and Kea's execution guard, UTF-16 ranges, default/overridden/unbound shortcut resolution, and settings validation. The Linux graphical smoke test exercises typing, selection-only copy, cut, undo/redo, multiline Unicode paste, explicit execution, fresh draft history, read-only output and existing replay behavior.
@@ -74,3 +90,10 @@ control accessibility require the manual checks in
 ## Zed integration
 
 `kea-core` and `kea-document` remain free of GPUI/editor/OS dependencies. The standalone host uses GPUI Component; a Zed host should use Zed's editor, text services and action system instead. Do not transplant the standalone UI or copy GPL Zed code into Kea's MIT crates.
+
+The standalone composer is single-caret: the vendored input owns one selection
+range and has no alt-drag multicursor/column editing. Zed-style multicursor
+parity is explicitly a Zed-host property (it arrives with Zed's editor), not a
+standalone feature; implementing a second editor engine in Kea is out of scope.
+Terminal Alt-drag block selection is a separate, implemented terminal-surface
+feature (see terminal-text-selection.md), not composer multicursor.

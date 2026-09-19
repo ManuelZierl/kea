@@ -187,7 +187,7 @@ impl KeaView {
                 state.replace_text_in_range(None, "\n", window, cx);
             }
         });
-        self.candidates.clear();
+        self.dismiss_completion();
         cx.notify();
     }
 
@@ -196,26 +196,26 @@ impl KeaView {
             return;
         };
         let cursor = self.editor.read(cx).cursor();
+        if self.accept_completion(window, cx) {
+            return;
+        }
+        if !self.candidates.is_empty() {
+            self.dismiss_completion();
+        }
         let line_prefix = text[..cursor].rsplit('\n').next().unwrap_or("");
         if line_prefix.trim().is_empty() {
             window.dispatch_action(Box::new(edit::Indent), cx);
             return;
         }
-        if !self.candidates.is_empty()
-            && text == self.completion_text
-            && cursor == self.completion_cursor
-        {
-            self.apply_completion(0, window, cx);
-            return;
-        }
         if self.completion_rx.is_some() {
             return;
         }
-        let metadata_current = self.document.prompt_ready();
-        let directory = metadata_current
+        let completion_context =
+            self.document.prompt_ready() || self.prompt_line.can_recover_empty_line();
+        let directory = completion_context
             .then(|| self.document.directory().map(PathBuf::from))
             .flatten();
-        let shell_path = metadata_current
+        let shell_path = completion_context
             .then(|| self.shell_metadata.path().map(ToOwned::to_owned))
             .flatten();
         let history = self
@@ -231,8 +231,10 @@ impl KeaView {
             .collect::<Vec<_>>();
         let shell = self.shell;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.completion_generation = self.completion_generation.wrapping_add(1);
+        let generation = self.completion_generation;
+        self.completion_invalidated = false;
         self.completion_rx = Some(rx);
-        self.candidates.clear();
         std::thread::spawn(move || {
             let candidates = completion::suggest(
                 &text,
@@ -242,7 +244,7 @@ impl KeaView {
                 &history,
                 shell,
             );
-            let _ = tx.send((text, cursor, candidates));
+            let _ = tx.send((generation, text, cursor, candidates));
         });
     }
 
@@ -255,8 +257,7 @@ impl KeaView {
         let Some(candidate) = self.candidates.get(index).cloned() else {
             return;
         };
-        let valid = self.editor.read(cx).value().as_ref() == self.completion_text
-            && self.editor.read(cx).cursor() == self.completion_cursor;
+        let valid = self.completion_is_current(window, cx);
         if valid {
             let range = self.completion_text[..candidate.range.start]
                 .encode_utf16()
@@ -271,15 +272,75 @@ impl KeaView {
                 state.focus(window, cx);
             });
         }
-        self.candidates.clear();
-        self.notice = None;
+        self.dismiss_completion();
         cx.notify();
+    }
+
+    pub(super) fn completion_is_current(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.candidates.is_empty() || !self.editor.focus_handle(cx).is_focused(window) {
+            return false;
+        }
+        let expected_text = self.completion_text.clone();
+        let expected_cursor = self.completion_cursor;
+        self.editor.update(cx, |state, cx| {
+            state.value().as_ref() == expected_text
+                && state.cursor() == expected_cursor
+                && state.marked_text_range(window, cx).is_none()
+        })
+    }
+
+    pub(super) fn dismiss_completion(&mut self) {
+        if self.completion_rx.is_some() {
+            self.completion_invalidated = true;
+        }
+        self.candidates.clear();
+        self.completion_index = 0;
+        self.completion_scroll.scroll_to_item(0);
+        self.completion_text.clear();
+        self.completion_cursor = 0;
+        if self.notice.as_deref().is_some_and(|notice| {
+            notice.starts_with("Choose a completion") || notice.starts_with("No local completion")
+        }) {
+            self.notice = None;
+        }
+    }
+
+    pub(super) fn accept_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.completion_is_current(window, cx) {
+            return false;
+        }
+        let index = self.completion_index;
+        self.apply_completion(index, window, cx);
+        true
+    }
+
+    pub(super) fn move_completion(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.completion_is_current(window, cx) {
+            return false;
+        }
+        self.completion_index =
+            next_completion_index(self.completion_index, self.candidates.len(), forward);
+        self.completion_scroll.scroll_to_item(self.completion_index);
+        cx.notify();
+        true
     }
 
     pub(super) fn open_reverse_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_run = None;
-        self.completion_rx = None;
-        self.candidates.clear();
+        self.dismiss_completion();
         let editor = self.editor.clone();
         let enabled = self.session.input_allowed();
         let directory = self
@@ -306,3 +367,20 @@ impl KeaView {
         cx.notify();
     }
 }
+
+fn next_completion_index(current: usize, len: usize, forward: bool) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if forward {
+        (current + 1) % len
+    } else if current == 0 {
+        len - 1
+    } else {
+        current - 1
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/composer.rs"]
+mod tests;

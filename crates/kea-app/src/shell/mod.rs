@@ -40,6 +40,13 @@ impl ShellFlavor {
     }
 
     /// Install a prompt hook without replacing the user's profile or normal prompt.
+    ///
+    /// For bash the hook additionally keeps Kea's own driver lines out of the
+    /// interactive shell history: later `__kea_entry_*` wrapper lines are
+    /// skipped via an appended `HISTIGNORE` pattern (any pre-existing patterns
+    /// are preserved), and the installer line itself removes its own history
+    /// entry. Run-in-shell commands therefore stay out of `history`/up-arrow;
+    /// Kea's own submitted-draft recall (Ctrl+Up) is unaffected.
     pub fn integration(self, command: &[OsString]) -> Vec<u8> {
         match self {
             Self::PowerShell => {
@@ -60,7 +67,7 @@ impl ShellFlavor {
                 let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
                 let hook = match name {
                     "bash" => {
-                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi"#
+                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi; HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}__kea_entry_*:__kea_prompt*"; history -d $HISTCMD 2>/dev/null"#
                     }
                     "zsh" => "precmd_functions+=(__kea_prompt)",
                     _ => "PS1='$(__kea_prompt)'\"${PS1:-$ }\"",

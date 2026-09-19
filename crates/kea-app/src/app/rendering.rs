@@ -1,7 +1,7 @@
 use super::*;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    input::Input,
+    input::{self as edit, Input},
     resizable::{h_resizable, resizable_panel, v_resizable},
     ActiveTheme, Disableable as _, IconName, Selectable as _, Sizable as _, Theme, ThemeMode,
     TitleBar,
@@ -282,8 +282,20 @@ impl Render for KeaView {
                 .child(terminal_panel)
         };
 
-        let mut completions = div().flex().flex_wrap().gap_1();
-        if self.editor.read(cx).value().as_ref() == self.completion_text {
+        if !self.candidates.is_empty() && !self.completion_is_current(window, cx) {
+            self.dismiss_completion();
+        }
+        let completion_visible = !self.candidates.is_empty();
+
+        let mut completions = div()
+            .id("completion-list")
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .max_h(px(100.))
+            .track_scroll(&self.completion_scroll)
+            .overflow_y_scroll();
+        if completion_visible {
             for (index, candidate) in self.candidates.iter().enumerate() {
                 let label: String = candidate.label.chars().take(100).collect();
                 completions = completions.child(
@@ -293,6 +305,13 @@ impl Render for KeaView {
                         .border_1()
                         .border_color(cx.theme().border)
                         .rounded_sm()
+                        .when(index == self.completion_index, |item| {
+                            item.bg(cx.theme().primary)
+                                .text_color(cx.theme().primary_foreground)
+                        })
+                        .when(index != self.completion_index, |item| {
+                            item.hover(|item| item.bg(cx.theme().accent.opacity(0.35)))
+                        })
                         .cursor_pointer()
                         .child(label)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -331,7 +350,14 @@ impl Render for KeaView {
             } else if self.document.prompt_ready() {
                 "Shell ready".into()
             } else if self.shell.is_some() {
-                "Shell busy · Send to app remains available".into()
+                if self.prompt_line.can_recover_empty_line() {
+                    let run_shortcut = self.keymap.label_or(Action::RunShell, "Run");
+                    format!(
+                        "Prompt unconfirmed · Run ({run_shortcut}) can recover an empty shell line; Send to app remains available"
+                    )
+                } else {
+                    "Prompt unconfirmed · Send to app remains available".into()
+                }
             } else {
                 "Terminal application owns input".into()
             }
@@ -366,7 +392,7 @@ impl Render for KeaView {
         } else if self.document.prompt_ready() {
             "Ready"
         } else {
-            "Busy"
+            "Prompt unconfirmed"
         };
         let command_panel = div()
             .id("command-editor")
@@ -406,16 +432,17 @@ impl Render for KeaView {
                         )
                     })
                     .child(div().flex_1().min_w_0())
-                    .child(self.control(
-                        "run-draft",
-                        if compact_chrome {
-                            "Run".into()
-                        } else {
-                            action_label(&self.keymap, "Run", Action::RunShell)
-                        },
-                        Action::RunShell,
-                        cx,
-                    ))
+                    .child(
+                        button(
+                            "run-draft",
+                            if compact_chrome {
+                                "Run".into()
+                            } else {
+                                action_label(&self.keymap, "Run", Action::RunShell)
+                            },
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.run_shell(window, cx))),
+                    )
                     .child(self.control(
                         "send-draft",
                         if compact_chrome {
@@ -455,13 +482,7 @@ impl Render for KeaView {
                             .bordered(false),
                     ),
             )
-            .child(
-                div()
-                    .id("completion-list")
-                    .max_h(px(100.))
-                    .overflow_y_scroll()
-                    .child(completions),
-            );
+            .child(completions);
         let session_split = div().flex_1().min_h_0().child(
             v_resizable("terminal-command-split")
                 .child(resizable_panel().child(output))
@@ -795,6 +816,28 @@ impl Render for KeaView {
             .flex()
             .flex_col()
             .key_context("Kea")
+            .capture_action(cx.listener(|this, _: &edit::Enter, window, cx| {
+                if this.accept_completion(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &edit::MoveUp, window, cx| {
+                if this.move_completion(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &edit::MoveDown, window, cx| {
+                if this.move_completion(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &edit::Escape, window, cx| {
+                if this.completion_is_current(window, cx) {
+                    this.dismiss_completion();
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(Self::invoke))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)

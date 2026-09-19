@@ -42,6 +42,8 @@ struct PendingRun {
     editor: Entity<InputState>,
 }
 
+type CompletionResult = (u64, String, usize, Vec<completion::Candidate>);
+
 #[derive(Clone)]
 struct TerminalFontMetrics {
     font: Font,
@@ -69,8 +71,12 @@ struct KeaView {
     prompt_line: PromptLineTracker,
     pending_run: Option<PendingRun>,
     terminal_composition: Entity<InputState>,
-    completion_rx: Option<Receiver<(String, usize, Vec<completion::Candidate>)>>,
+    completion_rx: Option<Receiver<CompletionResult>>,
+    completion_generation: u64,
+    completion_invalidated: bool,
     candidates: Vec<completion::Candidate>,
+    completion_index: usize,
+    completion_scroll: ScrollHandle,
     completion_text: String,
     completion_cursor: usize,
     editor: Entity<InputState>,

@@ -2,7 +2,12 @@
 use anyhow::{Context as _, Result};
 use gpui::{KeyBinding, Keystroke, NoAction};
 use serde::Deserialize;
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env, fs,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize)]
 pub enum Action {
@@ -107,6 +112,35 @@ impl Action {
             .into_iter()
             .find(|action| action.config_name() == canonical)
     }
+
+    fn settings_label(self) -> &'static str {
+        match self {
+            Self::Copy => "Copy selection",
+            Self::Cut => "Cut selection",
+            Self::Paste => "Paste",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::SelectAll => "Select all",
+            Self::Find => "Find in editor",
+            Self::CopyDocument => "Copy history / visible terminal",
+            Self::FocusEditor => "Switch terminal ⇄ composer",
+            Self::Interrupt => "Interrupt child from composer",
+            Self::RunShell => "Run in shell",
+            Self::SendApplication => "Send to app",
+            Self::Newline => "Insert newline (Enter is editor-native)",
+            Self::Complete => "Complete draft",
+            Self::ReverseSearch => "Search submitted input",
+            Self::ToggleBlocks => "Toggle command blocks",
+            Self::PreviousEvent => "Previous history event",
+            Self::NextEvent => "Next history event",
+            Self::BackFiveSeconds => "Back five seconds",
+            Self::ForwardFiveSeconds => "Forward five seconds",
+            Self::PlayPause => "Play / pause history",
+            Self::GoLive => "Return to live",
+            Self::Quit => "Quit Kea",
+            Self::SelectTerminalText => "Select terminal text",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -187,6 +221,7 @@ impl Platform {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keymap {
     bindings: HashMap<Action, Vec<Shortcut>>,
     previous_draft: Vec<Shortcut>,
@@ -195,6 +230,98 @@ pub struct Keymap {
 }
 
 impl Keymap {
+    pub fn path() -> Option<PathBuf> {
+        config_path()
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        Self::parse_overrides(Platform::current(), text)
+    }
+
+    /// Complete, stable settings rows, including composer-only bindings.
+    pub fn settings_entries(&self) -> Vec<(&'static str, &'static str, String)> {
+        let format = |shortcuts: &[Shortcut]| {
+            if shortcuts.is_empty() {
+                "none".to_string()
+            } else {
+                shortcuts
+                    .iter()
+                    .map(Shortcut::specification)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        };
+        let mut entries = vec![
+            (
+                "focus_editor",
+                Action::FocusEditor.settings_label(),
+                format(&self.bindings[&Action::FocusEditor]),
+            ),
+            (
+                "focus_terminal",
+                "Focus terminal (from composer only)",
+                format(&self.focus_terminal),
+            ),
+            (
+                "previous_draft",
+                "Previous submitted draft",
+                format(&self.previous_draft),
+            ),
+            (
+                "next_draft",
+                "Next draft / restore scratch",
+                format(&self.next_draft),
+            ),
+        ];
+        entries.extend(
+            Action::ALL
+                .into_iter()
+                .filter(|a| *a != Action::FocusEditor)
+                .map(|action| {
+                    (
+                        action.config_name(),
+                        action.settings_label(),
+                        format(&self.bindings[&action]),
+                    )
+                }),
+        );
+        entries
+    }
+
+    pub fn to_config(&self) -> String {
+        let mut text = String::from("# Kea keybindings. Restart Kea to activate changes.\n");
+        for (name, _, shortcuts) in self.settings_entries() {
+            text.push_str(&format!("{name} = {shortcuts}\n"));
+        }
+        text
+    }
+
+    /// Atomically replace a complete validated snapshot; a failed write preserves
+    /// the previous file. Installing bindings remains a startup operation.
+    pub fn save_to(&self, path: &Path) -> Result<()> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+        let mut temporary = tempfile::Builder::new()
+            .prefix(".keybindings-")
+            .tempfile_in(parent)?;
+        temporary
+            .write_all(self.to_config().as_bytes())
+            .context("cannot write keybindings")?;
+        temporary
+            .as_file()
+            .sync_all()
+            .context("cannot flush keybindings")?;
+        temporary
+            .persist(path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("cannot replace {}", path.display()))?;
+        Ok(())
+    }
+
     pub fn load() -> (Self, Option<String>) {
         let Some(path) = config_path() else {
             return (Self::defaults_for(Platform::current()), None);
@@ -403,19 +530,8 @@ impl Keymap {
         cx.bind_keys(self.gpui_bindings());
         let previous = self.previous_draft.clone();
         let next = self.next_draft.clone();
-        let focus_terminal = self.focus_terminal.clone();
         let subscription = cx.intercept_keystrokes(move |event, window, cx| {
-            // When a real terminal/TUI owns input, remember that exact focus handle but
-            // do not reserve any extra child key. The explicit focus_terminal shortcut
-            // acts only when the Kea command editor owns focus.
-            crate::editor::command::remember_external_focus(window, cx);
             let shortcut = Shortcut::from_keystroke(&event.keystroke);
-            if focus_terminal.contains(&shortcut)
-                && crate::editor::command::focus_last_external(window, cx)
-            {
-                cx.stop_propagation();
-                return;
-            }
             let direction = if previous.contains(&shortcut) {
                 Some(crate::editor::command::HistoryDirection::Previous)
             } else if next.contains(&shortcut) {
@@ -463,6 +579,22 @@ impl Keymap {
                 ));
             }
         }
+        // Install masks before active bindings: the configured focus escape must
+        // win even when it reuses a default shortcut belonging to another action.
+        for keymap in [&defaults, self] {
+            for (action, shortcuts) in &keymap.bindings {
+                if *action == Action::FocusEditor {
+                    continue;
+                }
+                for shortcut in shortcuts {
+                    result.push(KeyBinding::new(
+                        &shortcut.specification(),
+                        NoAction,
+                        Some("KeaTerminal"),
+                    ));
+                }
+            }
+        }
         for action in Action::ALL {
             let contexts: &[&str] = match action {
                 Action::RunShell | Action::SendApplication | Action::Newline | Action::Complete => {
@@ -487,19 +619,16 @@ impl Keymap {
                 }
             }
         }
-        for keymap in [&defaults, self] {
-            for (action, shortcuts) in &keymap.bindings {
-                if *action == Action::FocusEditor {
-                    continue;
-                }
-                for shortcut in shortcuts {
-                    result.push(KeyBinding::new(
-                        &shortcut.specification(),
-                        NoAction,
-                        Some("KeaTerminal"),
-                    ));
-                }
-            }
+        // In composer focus the switch action always targets the owned terminal.
+        // The explicit one-way alternative is not an accelerator in child focus.
+        for shortcut in &self.focus_terminal {
+            result.push(KeyBinding::new(
+                &shortcut.specification(),
+                Invoke {
+                    action: Action::FocusEditor,
+                },
+                Some("KeaCommand > Input"),
+            ));
         }
         result
     }

@@ -97,6 +97,18 @@ When the integrated local shell is idle, its prompt hook also reports the effect
 
 Completion runs off the UI thread, has bounded directory/PATH scanning, validates that the draft/cursor did not change before applying a result, and performs an ordinary undoable text replacement. It never evaluates draft shell code. Complex quoting, substitutions/globs, flag/argument-specific programmable completion, remote completion and application-specific completion intentionally fall back to the application's native terminal Tab rather than an approximate parser.
 
+With suggestions open, Up/Down selects a visibly highlighted candidate, Enter or
+Tab accepts it, and Escape dismisses the list. Enter accepts rather than executes
+even with `run_shell = enter`. Mouse selection remains available. Editing,
+moving the cursor or leaving the composer invalidates the list; IME composition
+keeps ownership of its keys. Only one completion worker runs at a time.
+
+After the narrow ASCII type/backspace-to-empty sequence described above,
+completion can still use **last-reported** local cwd/PATH. This does not restore
+Run readiness: the UI says **Prompt unconfirmed**, and Run uses the existing
+Ctrl+C/fresh-marker recovery. Other uncertain terminal input still requires a
+new explicit prompt report for local shell completion context.
+
 ## Shell metadata
 
 Recorded document metadata uses bounded OSC 777 markers for prompt/cwd and command start/done boundaries. Effective PATH is live host completion context and uses a separate OSC 778 marker; it is not necessary to reconstruct command blocks from a recording.

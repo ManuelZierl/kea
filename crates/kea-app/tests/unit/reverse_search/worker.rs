@@ -109,7 +109,7 @@ fn deleting_grouped_ephemeral_records_keeps_search_and_refresh_empty() {
     ));
     assert!(state.library.entries().is_empty());
     assert!(state.ephemeral.is_empty());
-    assert!(matches!(state.handle(Request::Refresh), None));
+    assert!(state.handle(Request::Refresh).is_none());
     match state.handle(Request::Search {
         generation: 2,
         query: "grouped".into(),

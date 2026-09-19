@@ -65,6 +65,37 @@ clipboard >smoke-artifacts/latest.txt
 grep -q 'Ready. The error has disappeared' smoke-artifacts/latest.txt
 cleanup_app
 
+# A focus escape must switch both ways without reaching the child. An explicit
+# default focus_terminal line must not change behavior. Reusing a formerly
+# default action's chord must work too (old terminal NoAction masks broke this).
+focus_case=0
+for overrides in '' 'focus_terminal = ctrl-shift-l' $'focus_editor = ctrl-r\nreverse_search = alt-r'; do
+  focus_case=$((focus_case+1))
+  printf '%s\n' "$overrides" > "$KEA_KEYBINDINGS"
+  switch=ctrl+l
+  [[ "$focus_case" -ne 3 ]] || switch=ctrl+r
+  ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py "smoke-artifacts/focus-switch-$focus_case.bin" >smoke-artifacts/focus-switch.log 2>&1 & kea_pid=$!
+  wait_window smoke-artifacts/focus-switch.log
+  key "$switch"
+  xdotool type --clearmodifiers 'focus-draft'
+  key "$switch"
+  xdotool type --clearmodifiers 't'
+  # This composer-only alternative belongs to the child when terminal-focused.
+  key ctrl+shift+l
+  key "$switch"
+  key ctrl+a ctrl+c
+  assert_clipboard focus-draft
+  python3 - "$focus_case" <<'PY'
+import sys
+from pathlib import Path
+actual = Path(f'smoke-artifacts/focus-switch-{sys.argv[1]}.bin').read_bytes()
+assert actual == b't\x0c', actual
+PY
+  cleanup_app
+done
+: > "$KEA_KEYBINDINGS"
+echo 'Default, explicit-default and remapped bidirectional focus switch passed without child leakage.'
+
 # Settings must render above the workspace, save through the app-owned path, and
 # leave the current editor entity/draft intact while presentation changes live.
 printf 'theme = dark\n' > "$KEA_SETTINGS"
@@ -74,13 +105,164 @@ focus_editor
 xdotool type --clearmodifiers --delay 10 'settings-draft'
 xdotool mousemove --window "$window" "$((WIDTH-214))" 51 click 1
 sleep .5
-xdotool mousemove --window "$window" "$((WIDTH/2+217))" 332 click 1
+xdotool mousemove --window "$window" "$((WIDTH/2+232))" 274 click 1
 sleep .5
 grep -q '^theme = light$' "$KEA_SETTINGS"
 import -window "$window" smoke-artifacts/settings-light.png
+# Keybindings use the component editor, save a validated snapshot, and remain
+# restart-scoped. Closing/reopening must show saved values without losing draft.
+xdotool mousemove --window "$window" "$((WIDTH/2-200))" 95 click 1
+sleep .3
+xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
+key ctrl+a
+xdotool type --clearmodifiers 'alt-l'
+xdotool mousemove --window "$window" "$((WIDTH/2))" 311 click 1
+sleep .3
+grep -q '^focus_editor = alt-l$' "$KEA_KEYBINDINGS"
+import -window "$window" smoke-artifacts/keybindings-saved.png
 key Escape
 import -window "$window" smoke-artifacts/settings-draft-preserved.png
+focus_editor
+key ctrl+a ctrl+c
+assert_clipboard settings-draft
+# An already-running app retains its current keymap until restart.
+key ctrl+l
+xdotool type --clearmodifiers 't'
+key ctrl+l
+key ctrl+a ctrl+c
+assert_clipboard settings-draft
+python3 - <<'PY'
+from pathlib import Path
+assert Path('smoke-artifacts/settings-ui.bin').read_bytes() == b't'
+PY
+xdotool mousemove --window "$window" "$((WIDTH-214))" 51 click 1
+sleep .3
+xdotool mousemove --window "$window" "$((WIDTH/2-200))" 95 click 1
+sleep .3
+xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
+key ctrl+a ctrl+c
+assert_clipboard alt-l
+xdotool windowsize --sync "$window" 760 500
+sleep .3
+xdotool mousemove --window "$window" 650 360 click --repeat 100 --delay 5 5
+import -window "$window" smoke-artifacts/keybindings-small-bottom.png
+xdotool mousemove --window "$window" 80 95 click 1
+sleep .3
+xdotool mousemove --window "$window" 650 360 click --repeat 100 --delay 5 5
+import -window "$window" smoke-artifacts/settings-small-bottom.png
+# Inspect these screenshots for clipping/overflow; they are visual evidence,
+# not an assertion that a particular theme's background has a fixed color.
 cleanup_app
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/settings-restarted.bin >smoke-artifacts/settings-restarted.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/settings-restarted.log
+key alt+l
+xdotool type --clearmodifiers 'restarted-draft'
+key alt+l
+xdotool type --clearmodifiers 't'
+key alt+l ctrl+a ctrl+c
+assert_clipboard restarted-draft
+python3 - <<'PY'
+from pathlib import Path
+assert Path('smoke-artifacts/settings-restarted.bin').read_bytes() == b't'
+PY
+cleanup_app
+: > "$KEA_KEYBINDINGS"
+echo 'Keybinding settings save/reopen/restart and preserved draft passed; small-dialog screenshots captured.'
+
+# U2: real shell metadata, terminal type/delete recovery context, and actual
+# composer popup dispatch. Clipboard assertions observe the editor's real value.
+mkdir -p "$XDG_RUNTIME_DIR/completion"
+touch "$XDG_RUNTIME_DIR/completion/cab" "$XDG_RUNTIME_DIR/completion/café"
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+HISTFILE="$XDG_RUNTIME_DIR/bash-history" ./target/debug/kea --terminal-focus -- bash --noprofile --norc >smoke-artifacts/completion-ui.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/completion-ui.log
+xdotool type --clearmodifiers "cd '$XDG_RUNTIME_DIR/completion'"
+key Return
+sleep .5
+xdotool type --clearmodifiers 'abc'
+key BackSpace BackSpace BackSpace ctrl+l
+put_clipboard 'echo 😀 ca suffix'
+key ctrl+v Home
+xdotool key --clearmodifiers --repeat 9 --delay 60 Right
+key Tab
+sleep .5
+import -window "$window" smoke-artifacts/completion-keyboard.png
+# cab is first, café second. Down must select second, not move the caret.
+key Down Return ctrl+a ctrl+c
+assert_clipboard 'echo 😀 café suffix'
+key ctrl+z ctrl+a ctrl+c
+assert_clipboard 'echo 😀 ca suffix'
+key End
+xdotool key --clearmodifiers --repeat 7 --delay 60 Left
+key Tab
+sleep .5
+key Down Up Tab ctrl+a ctrl+c
+assert_clipboard 'echo 😀 cab suffix'
+# Escape cancels; a later Return belongs to the editor and inserts a newline.
+key ctrl+a
+put_clipboard 'echo ca'
+key ctrl+v Tab
+sleep .5
+key Escape Return
+xdotool type --clearmodifiers 'after'
+key ctrl+a ctrl+c
+assert_clipboard $'echo ca\nafter'
+# Text and cursor changes invalidate candidates, as does a focus round trip.
+key ctrl+a
+put_clipboard 'echo ca'
+key ctrl+v Tab
+sleep .5
+key Left Return
+xdotool type --clearmodifiers 'x'
+key ctrl+a ctrl+c
+assert_clipboard $'echo c\nxa'
+key ctrl+a
+put_clipboard 'echo ca'
+key ctrl+v Tab
+sleep .5
+key ctrl+l ctrl+l Return
+xdotool type --clearmodifiers 'x'
+key ctrl+a ctrl+c
+assert_clipboard $'echo ca\nx'
+# Mouse choice remains available, without moving editor focus out of the popup.
+key ctrl+a
+put_clipboard 'echo ca'
+key ctrl+v Tab
+sleep .5
+xdotool mousemove --window "$window" 150 "$((HEIGHT-44))" click 1
+key ctrl+a ctrl+c
+assert_clipboard 'echo café'
+# Long candidates wrap beyond the popup viewport: keyboard selection must scroll.
+for n in $(seq -w 1 12); do
+  touch "$XDG_RUNTIME_DIR/completion/long_${n}_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"
+done
+key ctrl+a
+put_clipboard 'echo long_'
+key ctrl+v Tab
+sleep .5
+key Up
+import -window "$window" smoke-artifacts/completion-scroll-last.png
+key Return ctrl+a ctrl+c
+assert_clipboard 'echo long_12_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz'
+cleanup_app
+echo 'U2 keyboard completion, Unicode replacement/undo, terminal type-delete context, Escape and stale cursor/focus passed.'
+
+# A configured Enter-to-run policy must accept an open completion first.
+printf 'run_shell = enter\nnewline = shift-enter\n' > "$KEA_KEYBINDINGS"
+HISTFILE="$XDG_RUNTIME_DIR/bash-history" ./target/debug/kea --terminal-focus -- bash --noprofile --norc >smoke-artifacts/completion-enter.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/completion-enter.log
+xdotool type --clearmodifiers "cd '$XDG_RUNTIME_DIR/completion'"
+key Return
+sleep .5
+key ctrl+l
+put_clipboard 'echo ca'
+key ctrl+v Tab
+sleep .5
+key Down Return ctrl+a ctrl+c
+assert_clipboard 'echo café'
+cleanup_app
+: > "$KEA_KEYBINDINGS"
+echo 'Completion mouse selection, scrolling and configured Enter-to-run acceptance passed.'
 
 # Ctrl-R recalls into the draft without sending another byte to the child.
 printf 'theme = dark\n' > "$KEA_SETTINGS"
