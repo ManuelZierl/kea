@@ -54,6 +54,32 @@ clipboard() { timeout 3s xclip -selection clipboard -t UTF8_STRING -o; }
 put_clipboard() { printf '%s' "$1" | xclip -selection clipboard; sleep .15; }
 assert_clipboard() { local actual; actual=$(clipboard); [[ "$actual" == "$1" ]] || { printf 'Expected <%s>; got <%s>\n' "$1" "$actual"; exit 1; }; }
 focus_editor() { xdotool mousemove --window "$window" 120 "$((HEIGHT-170))" click 1; sleep .2; }
+# A dialog can start painting later on software-rendered/loaded runners. Wait
+# for its header to change and finish animating before targeting its contents.
+# The crop excludes the terminal and editor carets, which blink independently.
+settings_header_frame() {
+  import -silent -window "$window" -crop "720x100+$((WIDTH/2-360))+30" -depth 8 rgb:- | sha256sum
+}
+settings_transition() {
+  local before previous current stable=0
+  before=$(settings_header_frame)
+  previous=$before
+  xdotool mousemove --window "$window" "$1" "$2" click 1
+  for _ in $(seq 1 50); do
+    sleep .1
+    kill -0 "$kea_pid"
+    current=$(settings_header_frame)
+    if [[ "$current" != "$before" && "$current" == "$previous" ]]; then
+      stable=$((stable+1))
+      if [[ "$stable" -ge 3 ]]; then return; fi
+    else
+      stable=0
+    fi
+    previous=$current
+  done
+  echo 'Settings header did not change and settle within the bounded wait.' >&2
+  return 1
+}
 
 # A read-only recording has no child; chrome shortcuts can be used here.
 ./target/debug/kea --demo >smoke-artifacts/demo.log 2>&1 & kea_pid=$!
@@ -110,16 +136,14 @@ printf 'theme = dark\n' > "$KEA_SETTINGS"
 wait_window smoke-artifacts/settings-ui.log
 focus_editor
 xdotool type --clearmodifiers --delay 10 'settings-draft'
-xdotool mousemove --window "$window" "$((WIDTH-214))" 51 click 1
-sleep .5
+settings_transition "$((WIDTH-214))" 51
 xdotool mousemove --window "$window" "$((WIDTH/2+232))" 274 click 1
 sleep .5
 grep -q '^theme = light$' "$KEA_SETTINGS"
 import -window "$window" smoke-artifacts/settings-light.png
 # Keybindings use the component editor, save a validated snapshot, and remain
 # restart-scoped. Closing/reopening must show saved values without losing draft.
-xdotool mousemove --window "$window" "$((WIDTH/2-200))" 95 click 1
-sleep .3
+settings_transition "$((WIDTH/2-200))" 95
 xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
 key ctrl+a
 xdotool type --clearmodifiers 'alt-l'
@@ -142,10 +166,8 @@ python3 - <<'PY'
 from pathlib import Path
 assert Path('smoke-artifacts/settings-ui.bin').read_bytes() == b't'
 PY
-xdotool mousemove --window "$window" "$((WIDTH-214))" 51 click 1
-sleep .3
-xdotool mousemove --window "$window" "$((WIDTH/2-200))" 95 click 1
-sleep .3
+settings_transition "$((WIDTH-214))" 51
+settings_transition "$((WIDTH/2-200))" 95
 xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
 key ctrl+a ctrl+c
 assert_clipboard alt-l
