@@ -125,8 +125,8 @@ impl Action {
             Self::CopyDocument => "Copy history / visible terminal",
             Self::FocusEditor => "Switch terminal ⇄ composer",
             Self::Interrupt => "Interrupt child from composer",
-            Self::RunShell => "Run in shell",
-            Self::SendApplication => "Send to app",
+            Self::RunShell => "Submit to terminal",
+            Self::SendApplication => "Submit to terminal (legacy alias)",
             Self::Newline => "Insert newline (Enter is editor-native)",
             Self::Complete => "Complete draft",
             Self::ReverseSearch => "Search submitted input",
@@ -230,6 +230,12 @@ pub struct Keymap {
 }
 
 impl Keymap {
+    /// Normalize a captured physical shortcut using the same parser as config.
+    pub fn captured_shortcut(key: &Keystroke) -> Result<String> {
+        let text = Shortcut::from_keystroke(key).specification();
+        Shortcut::parse(&text).map(|shortcut| shortcut.specification())
+    }
+
     pub fn path() -> Option<PathBuf> {
         config_path()
     }

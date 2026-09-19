@@ -68,6 +68,8 @@ pub struct Document {
     scanner: MarkerScanner,
     directory: Option<String>,
     prompt_ready: bool,
+    submitted: Option<(u64, String, String, u64)>,
+    active_context: Option<String>,
 }
 
 impl Document {
@@ -89,9 +91,22 @@ impl Document {
                     document.abort_in_flight(event.at);
                 }
                 Kind::Resize(_) => {}
+                Kind::Submitted { id, context, input } => {
+                    document.note_submission(*id, context, input, event.at);
+                }
             }
         }
         document
+    }
+
+    /// Associate an accepted authored draft with the next explicit native start.
+    /// No block exists before that marker, and missing metadata never gates input.
+    pub fn note_submission(&mut self, id: u64, context: &str, input: &str, at: u64) {
+        self.submitted = None;
+        if self.active.is_none() && validate_input(input).is_ok() && self.can_retain_block(input) {
+            self.next_id = self.next_id.max(id.saturating_add(1));
+            self.submitted = Some((id, context.to_owned(), input.to_owned(), at));
+        }
     }
 
     pub fn blocks(&self) -> &[CommandBlock] {
@@ -164,7 +179,39 @@ impl Document {
     pub fn ingest_output(&mut self, at: u64, bytes: &[u8]) -> bool {
         let mut changed = false;
         for piece in self.scanner.push(bytes) {
+            let piece = match piece {
+                Piece::Marker(Marker::NativeStart(context)) => {
+                    if !self
+                        .submitted
+                        .as_ref()
+                        .is_some_and(|(_, owner, _, _)| *owner == context)
+                    {
+                        continue;
+                    }
+                    let Some((id, _, input, submitted_at)) = self.submitted.take() else {
+                        continue;
+                    };
+                    // Retain the authored submission time without adding a queued
+                    // execution dependency. queue_local is used only after start.
+                    if self.queue_local(id, input.clone(), submitted_at).is_err() {
+                        continue;
+                    }
+                    self.active_context = Some(context);
+                    Piece::Marker(Marker::Start(id, input))
+                }
+                Piece::Marker(Marker::NativeDone(context, status)) => {
+                    if self.active_context.as_ref() != Some(&context) {
+                        continue;
+                    }
+                    let Some(id) = self.active else {
+                        continue;
+                    };
+                    Piece::Marker(Marker::Done(id, status))
+                }
+                piece => piece,
+            };
             match piece {
+                Piece::Marker(Marker::NativeStart(_) | Marker::NativeDone(_, _)) => unreachable!(),
                 Piece::Data(data) => {
                     if let Some(id) = self.active {
                         if let Some(index) = self.blocks.iter().position(|block| block.id == id) {
@@ -179,7 +226,12 @@ impl Document {
                     }
                 }
                 Piece::Marker(Marker::Prompt(directory)) => {
-                    self.abort_in_flight(at);
+                    // Legacy prompt metadata carries no identity. A nested prompt
+                    // must not finish an outer native execution block.
+                    if self.active_context.is_none() {
+                        self.abort_in_flight(at);
+                    }
+                    self.submitted = None;
                     self.directory = (!directory.is_empty()).then_some(directory);
                     self.prompt_ready = true;
                     changed = true;
@@ -235,6 +287,7 @@ impl Document {
                             }
                         }
                         self.active = None;
+                        self.active_context = None;
                     }
                 }
             }
@@ -252,6 +305,8 @@ impl Document {
             }
         }
         self.active = None;
+        self.submitted = None;
+        self.active_context = None;
         changed
     }
 

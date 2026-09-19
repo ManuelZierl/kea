@@ -16,7 +16,7 @@ pub fn replay(recording: &Recording, end: usize, into: &mut impl Projection) -> 
         match &event.kind {
             crate::Kind::Output(bytes) => into.output(bytes),
             crate::Kind::Resize(size) => into.resize(*size),
-            crate::Kind::Exit(_) => (),
+            crate::Kind::Exit(_) | crate::Kind::Submitted { .. } => (),
         }
     }
     Ok(())

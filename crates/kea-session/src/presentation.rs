@@ -69,6 +69,7 @@ pub(crate) enum PresentationEvent {
     Output(Vec<u8>),
     Resize(Size),
     Exit(Vec<u8>),
+    Submitted,
 }
 
 /// One presentation event per canonical event. Output payloads may be empty;
@@ -110,6 +111,7 @@ impl Presentation {
                         engine.resize(*presentation);
                     }
                     (Kind::Exit(_), PresentationEvent::Exit(bytes)) => engine.output(bytes),
+                    (Kind::Submitted { .. }, PresentationEvent::Submitted) => {}
                     _ => anyhow::bail!("presentation event does not match canonical history"),
                 }
             }
@@ -122,7 +124,7 @@ fn apply_kind(engine: &mut Engine, kind: &Kind) {
     match kind {
         Kind::Output(bytes) => engine.output(bytes),
         Kind::Resize(size) => engine.resize(*size),
-        Kind::Exit(_) => {}
+        Kind::Exit(_) | Kind::Submitted { .. } => {}
     }
 }
 

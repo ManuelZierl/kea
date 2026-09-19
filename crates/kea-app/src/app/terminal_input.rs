@@ -106,6 +106,7 @@ impl EntityInputHandler for KeaView {
                 self.pending_run = None;
                 self.prompt_line.note_text(&text);
                 self.document.note_terminal_input();
+                self.input_context.invalidate();
             }
             self.result(result, cx);
         }

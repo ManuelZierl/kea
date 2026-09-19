@@ -298,9 +298,30 @@ impl Render for KeaView {
         if completion_visible {
             for (index, candidate) in self.candidates.iter().enumerate() {
                 let label: String = candidate.label.chars().take(100).collect();
+                let weak = cx.entity().downgrade();
+                let generation = self.completion_generation;
                 completions = completions.child(
                     div()
                         .id(("completion", index))
+                        .relative()
+                        .child(
+                            canvas(
+                                move |bounds, _, cx| {
+                                    let _ = weak.update(cx, |this, _| {
+                                        if this.completion_generation == generation {
+                                            if let Some(slot) =
+                                                this.completion_bounds.get_mut(index)
+                                            {
+                                                *slot = Some(bounds);
+                                            }
+                                        }
+                                    });
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
                         .px_2()
                         .border_1()
                         .border_color(cx.theme().border)
@@ -347,30 +368,16 @@ impl Render for KeaView {
                 } else {
                     format!("Read-only history; the live process continues. The composer stays editable. Return live ({shortcut}) to run or send.")
                 }
-            } else if self.document.prompt_ready() {
-                "Shell ready".into()
-            } else if self.shell.is_some() {
-                if self.prompt_line.can_recover_empty_line() {
-                    let run_shortcut = self.keymap.label_or(Action::RunShell, "Run");
-                    format!(
-                        "Prompt unconfirmed · Run ({run_shortcut}) can recover an empty shell line; Send to app remains available"
-                    )
-                } else {
-                    "Prompt unconfirmed · Send to app remains available".into()
-                }
+            } else if self.input_context.ready() {
+                format!("Input ready · {}", self.input_context.id())
             } else {
-                "Terminal application owns input".into()
+                "Input unconfirmed · Submit asks before sending".into()
             }
         });
-        let directory = match (
-            self.shell,
-            self.document.directory(),
-            self.document.prompt_ready(),
-        ) {
-            (None, _, _) => "Shell directory: unavailable for this program".into(),
-            (_, Some(path), true) => format!("Current shell directory: {path}"),
-            (_, Some(path), false) => format!("Shell directory (last reported): {path}"),
-            _ => "Shell directory: waiting for shell integration".into(),
+        let directory = match (self.document.directory(), self.input_context.shell_ready()) {
+            (Some(path), true) => format!("Current shell directory: {path}"),
+            (Some(path), false) => format!("Shell directory (last reported): {path}"),
+            _ => "Shell directory: not reported".into(),
         };
         let persistence_status = if self.session.persistence_active() {
             let name = self
@@ -387,12 +394,10 @@ impl Render for KeaView {
         };
         let shell_state = if self.session.is_history() {
             "History"
-        } else if self.shell.is_none() {
-            "App input"
-        } else if self.document.prompt_ready() {
+        } else if self.input_context.ready() {
             "Ready"
         } else {
-            "Prompt unconfirmed"
+            "Input unconfirmed"
         };
         let command_panel = div()
             .id("command-editor")
@@ -436,23 +441,13 @@ impl Render for KeaView {
                         button(
                             "run-draft",
                             if compact_chrome {
-                                "Run".into()
+                                "Submit".into()
                             } else {
-                                action_label(&self.keymap, "Run", Action::RunShell)
+                                action_label(&self.keymap, "Submit", Action::RunShell)
                             },
                         )
-                        .on_click(cx.listener(|this, _, window, cx| this.run_shell(window, cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.submit_button(window, cx))),
                     )
-                    .child(self.control(
-                        "send-draft",
-                        if compact_chrome {
-                            "Send".into()
-                        } else {
-                            action_label(&self.keymap, "Send", Action::SendApplication)
-                        },
-                        Action::SendApplication,
-                        cx,
-                    ))
                     .child(
                         button(
                             "reverse-search",
@@ -463,6 +458,11 @@ impl Render for KeaView {
                         })),
                     ),
             )
+            .when(self.pending_run.is_some(), |panel| panel.child(
+                div().id("submit-confirmation").px_2().py_1().text_sm()
+                    .text_color(cx.theme().danger)
+                    .child("No text sent. Input state is unconfirmed or nonempty. Enter again (or Submit) sends; any other key cancels.")
+            ))
             .child(self.reverse_search.clone())
             .child(
                 div()
@@ -821,13 +821,24 @@ impl Render for KeaView {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|this, _: &edit::MoveUp, window, cx| {
+            .on_key_up(cx.listener(Self::composer_key_up))
+            .capture_action(cx.listener(|this, _: &edit::MoveLeft, window, cx| {
                 if this.move_completion(false, window, cx) {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|this, _: &edit::MoveDown, window, cx| {
+            .capture_action(cx.listener(|this, _: &edit::MoveRight, window, cx| {
                 if this.move_completion(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &edit::MoveUp, window, cx| {
+                if this.move_completion_row(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &edit::MoveDown, window, cx| {
+                if this.move_completion_row(true, window, cx) {
                     cx.stop_propagation();
                 }
             }))

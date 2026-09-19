@@ -67,3 +67,17 @@ fn completion_replaces_utf16_range_and_retains_invalidated_worker(cx: &mut TestA
     });
     window.update(cx, |_, _, _| {}).unwrap();
 }
+
+#[test]
+fn completion_rows_follow_geometry_not_an_assumed_grid_width() {
+    let points = vec![
+        Some((10., 5.)),
+        Some((90., 5.)),
+        Some((15., 25.)),
+        Some((95., 25.)),
+        Some((30., 45.)),
+    ];
+    assert_eq!(super::vertical_completion_index(1, &points, true), 3);
+    assert_eq!(super::vertical_completion_index(3, &points, false), 1);
+    assert_eq!(super::vertical_completion_index(0, &points, true), 2);
+}

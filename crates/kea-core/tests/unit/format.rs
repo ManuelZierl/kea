@@ -58,3 +58,67 @@ fn rejects_large_frames_before_allocation() {
 fn checksum_matches_standard_vector() {
     assert_eq!(checksum(b"123456789"), 0xcbf43926);
 }
+
+#[test]
+fn v2_submission_round_trips_without_rewriting_output_and_reads_v1() {
+    let mut r = recording();
+    r.append(
+        1,
+        Kind::Submitted {
+            id: 9,
+            context: "remote-1".into(),
+            input: "printf 'ä😀'\nprintf ok".into(),
+        },
+    )
+    .unwrap();
+    r.append(2, Kind::Output(vec![0xff, 0, 27])).unwrap();
+    let mut bytes = Vec::new();
+    r.write_to(&mut bytes).unwrap();
+    assert_eq!(bytes[3], 2);
+    assert_eq!(
+        read_from(bytes.as_slice()).unwrap().recording.events(),
+        r.events()
+    );
+    bytes[3] = 1;
+    assert!(
+        read_from(bytes.as_slice()).is_err(),
+        "v1 must not accept unknown v2 frames"
+    );
+    let mut old = recording();
+    old.append(1, Kind::Output(b"legacy".to_vec())).unwrap();
+    let mut bytes = Vec::new();
+    old.write_to(&mut bytes).unwrap();
+    bytes[3] = 1;
+    assert_eq!(
+        read_from(bytes.as_slice()).unwrap().recording.events(),
+        old.events()
+    );
+}
+
+#[test]
+fn submission_metadata_is_bounded_and_never_replayed_as_input_or_output() {
+    let mut r = recording();
+    for context in ["", "contains;delimiter", "bad\ncontext"] {
+        assert!(r
+            .append(
+                1,
+                Kind::Submitted {
+                    id: 1,
+                    context: context.into(),
+                    input: "ls".into()
+                }
+            )
+            .is_err());
+    }
+    assert!(r
+        .append(
+            1,
+            Kind::Submitted {
+                id: 1,
+                context: "local".into(),
+                input: "x".repeat(65537)
+            }
+        )
+        .is_err());
+    assert!(r.events().is_empty());
+}

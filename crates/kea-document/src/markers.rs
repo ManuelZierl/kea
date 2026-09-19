@@ -10,6 +10,8 @@ pub(crate) enum Marker {
     Done(u64, i32),
     Directory(String),
     Prompt(String),
+    NativeStart(String),
+    NativeDone(String, i32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,6 +81,17 @@ fn parse_marker(raw: &[u8]) -> Option<Marker> {
                 Marker::Directory(directory)
             })
         }
+        "native-start" => {
+            let context = parts.next()?;
+            (valid_context(context) && parts.next().is_none())
+                .then(|| Marker::NativeStart(context.into()))
+        }
+        "native-done" => {
+            let context = parts.next()?;
+            let status = parts.next()?.parse().ok()?;
+            (valid_context(context) && parts.next().is_none())
+                .then(|| Marker::NativeDone(context.into(), status))
+        }
         "start" => {
             let id = parts.next()?.parse().ok()?;
             let encoded = parts.next()?;
@@ -95,6 +108,14 @@ fn parse_marker(raw: &[u8]) -> Option<Marker> {
         }
         _ => None,
     }
+}
+
+fn valid_context(context: &str) -> bool {
+    !context.is_empty()
+        && context.len() <= 128
+        && context
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {

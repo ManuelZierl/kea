@@ -141,6 +141,7 @@ impl KeaView {
         self.prompt_line.invalidate();
         self.pending_run = None;
         self.document.note_terminal_input();
+        self.input_context.invalidate();
         self.notice = None;
     }
 
@@ -203,14 +204,11 @@ impl KeaView {
                     self.prompt_line.invalidate();
                     self.pending_run = None;
                     self.document.note_terminal_input();
+                    self.input_context.invalidate();
                 }
                 self.result(result, cx);
             }
-            Action::RunShell => {
-                if !self.accept_completion(window, cx) {
-                    self.run_shell(window, cx);
-                }
-            }
+            Action::RunShell => self.run_shell(window, cx),
             Action::SendApplication => self.send_editor(window, cx),
             Action::Newline => {
                 if !self.accept_completion(window, cx) {
@@ -344,6 +342,7 @@ impl KeaView {
                         self.prompt_line.invalidate();
                     }
                     self.document.note_terminal_input();
+                    self.input_context.invalidate();
                 }
                 self.result(result, cx);
             }

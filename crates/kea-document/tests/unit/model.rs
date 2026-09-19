@@ -87,3 +87,51 @@ fn explicit_directory_reports_are_chunk_independent() {
     d.ingest_output(4, b"\x1b]777;kea;prompt;AA==\x07");
     assert_eq!(d.directory(), Some("/tmp/space ä;dir"));
 }
+
+#[test]
+fn native_blocks_require_scoped_observations_and_survive_replay() {
+    let mut recording = kea_core::Recording::new(kea_core::Size::new(80, 24).unwrap()).unwrap();
+    recording
+        .append(
+            1,
+            Kind::Submitted {
+                id: 12,
+                context: "local".into(),
+                input: "ssh destination".into(),
+            },
+        )
+        .unwrap();
+    let pending = Document::from_recording(&recording);
+    assert!(
+        pending.blocks().is_empty(),
+        "accepted metadata is not a queued block"
+    );
+    recording.append(2, Kind::Output(b"\x1b]777;kea;native-start;local\x07outer output\x1b]777;kea;native-done;remote;0\x07\x1b]777;kea;prompt;L3RtcA==\x07".to_vec())).unwrap();
+    let running = Document::from_recording(&recording);
+    assert_eq!(running.blocks().len(), 1);
+    assert_eq!(
+        running.blocks()[0].status,
+        CommandStatus::Running,
+        "a nested shell's prompt/done cannot finish the outer block"
+    );
+    recording
+        .append(
+            3,
+            Kind::Output(b"\x1b]777;kea;native-done;local;7\x07".to_vec()),
+        )
+        .unwrap();
+    let finished = Document::from_recording(&recording);
+    assert_eq!(finished.blocks()[0].status, CommandStatus::Finished(7));
+    assert_eq!(finished.blocks()[0].input, "ssh destination");
+    assert_eq!(finished.blocks()[0].queued_at, 1);
+}
+
+#[test]
+fn missing_start_discards_pending_metadata_without_creating_stuck_blocks() {
+    let mut doc = Document::new();
+    doc.note_submission(1, "local", "command", 1);
+    doc.ingest_output(2, b"\x1b]777;kea;prompt;L3RtcA==\x07");
+    doc.ingest_output(3, b"\x1b]777;kea;native-start;local\x07");
+    assert!(doc.blocks().is_empty());
+    assert!(!doc.has_in_flight());
+}

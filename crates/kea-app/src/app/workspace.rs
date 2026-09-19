@@ -19,6 +19,12 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (completion_providers, provider_warning) = Providers::load();
+        let notice = provider_warning.or(notice);
+        let weak = cx.entity().downgrade();
+        let composer_keys = cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = weak.update(cx, |this, cx| this.composer_keystroke(event, window, cx));
+        });
         let focus = cx.focus_handle();
         let editor = command_editor::new_draft(shell, &settings, "", window, cx);
         if initial_focus == InitialFocus::Terminal {
@@ -39,10 +45,13 @@ impl KeaView {
                 &editor,
                 |this, _, event: &edit::InputEvent, cx| match event {
                     edit::InputEvent::Change => {
+                        this.pending_run = None;
                         this.dismiss_completion();
                         this.note_composer_typed(cx);
                     }
                     edit::InputEvent::Blur => {
+                        this.composer_enter_down = false;
+                        this.pending_run = None;
                         this.dismiss_completion();
                         cx.notify();
                     }
@@ -78,7 +87,8 @@ impl KeaView {
                         match completion {
                             Some(Ok((generation, text, cursor, candidates))) => {
                                 let request_live = generation == this.completion_generation
-                                    && !this.completion_invalidated;
+                                    && !this.completion_invalidated
+                                    && this.completion_context == this.input_context.generation();
                                 this.completion_rx = None;
                                 this.completion_invalidated = false;
                                 let composing = this.editor.update(cx, |state, cx| {
@@ -90,8 +100,17 @@ impl KeaView {
                                     && this.editor.read(cx).value().as_ref() == text
                                     && this.editor.read(cx).cursor() == cursor
                                 {
+                                    let candidates = match candidates {
+                                        Ok(candidates) => candidates,
+                                        Err(error) => {
+                                            this.notice = Some(format!("Completion failed: {error}. Native terminal Tab remains available."));
+                                            cx.notify();
+                                            return;
+                                        }
+                                    };
                                     this.completion_text = text;
                                     this.completion_cursor = cursor;
+                                    this.completion_bounds = vec![None; candidates.len()];
                                     this.candidates = candidates;
                                     this.completion_index = 0;
                                     this.completion_scroll.scroll_to_item(0);
@@ -99,8 +118,7 @@ impl KeaView {
                                         "No local completion matches. Terminal Tab still uses the running application's native completion."
                                             .into()
                                     } else {
-                                        "Choose a completion · Up/Down move · Enter/Tab accept · Escape dismisses. Nothing is executed."
-                                            .into()
+                                        format!("{} · Left/Right or Tab/Shift+Tab cycle · Up/Down change row · Enter accepts · Escape dismisses.", this.completion_source)
                                     });
                                     cx.notify();
                                 }
@@ -113,12 +131,9 @@ impl KeaView {
                             }
                             _ => {}
                         }
-                        let prompt_arrived = this.pump_session(cx);
+                        this.pump_session(cx);
                         if !this.focus.is_focused(window) {
                             this.session.terminal_selection_focus_lost();
-                        }
-                        if prompt_arrived {
-                            this.complete_pending_run(window, cx);
                         }
                         if this.settings.animate_logo && this.poll_composer_logo() {
                             cx.notify();
@@ -147,6 +162,7 @@ impl KeaView {
             session,
             document,
             shell_metadata: ShellMetadata::default(),
+            input_context: InputContext::default(),
             shell,
             keymap,
             settings,
@@ -160,6 +176,7 @@ impl KeaView {
             timeline_hovered: false,
             prompt_line: PromptLineTracker::default(),
             pending_run: None,
+            composer_enter_down: false,
             terminal_composition,
             completion_rx: None,
             completion_generation: 0,
@@ -169,6 +186,10 @@ impl KeaView {
             completion_scroll: ScrollHandle::new(),
             completion_text: String::new(),
             completion_cursor: 0,
+            completion_context: 0,
+            completion_providers,
+            completion_source: String::new(),
+            completion_bounds: Vec::new(),
             editor,
             reverse_search,
             document_ui,
@@ -182,6 +203,7 @@ impl KeaView {
             composer_logo_deadline: None,
             logo_warmed_frames: 0,
             _composer_change: composer_change,
+            _composer_keys: composer_keys,
             _pump: pump,
             _appearance: appearance,
             _filter_change: filter_change,
@@ -217,6 +239,7 @@ impl KeaView {
     }
 
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_run = None;
         settings_window::open(cx.entity(), window, cx);
     }
 
@@ -231,10 +254,13 @@ impl KeaView {
                 &editor,
                 |this, _, event: &edit::InputEvent, cx| match event {
                     edit::InputEvent::Change => {
+                        this.pending_run = None;
                         this.dismiss_completion();
                         this.note_composer_typed(cx);
                     }
                     edit::InputEvent::Blur => {
+                        this.composer_enter_down = false;
+                        this.pending_run = None;
                         this.dismiss_completion();
                         cx.notify();
                     }
@@ -294,19 +320,29 @@ impl KeaView {
     }
 
     pub(super) fn pump_session(&mut self, cx: &mut Context<Self>) -> bool {
-        let was_prompt_ready = self.document.prompt_ready();
+        let previous_context = self.input_context.generation();
+        let was_prompt_ready = self.input_context.ready();
         let pump = self.session.pump_observed();
         let mut changed = false;
         for event in pump.observed {
             changed |= match event {
                 Observed::Output { at, bytes } => {
-                    let metadata_changed = self.shell_metadata.ingest(&bytes);
-                    metadata_changed || self.document.ingest_output(at, &bytes)
+                    self.shell_metadata.ingest(&bytes);
+                    self.input_context.ingest(&bytes);
+                    self.document.ingest_output(at, &bytes)
                 }
-                Observed::Exit { at, .. } => self.document.abort_in_flight(at),
+                Observed::Exit { at, .. } => {
+                    self.input_context.invalidate();
+                    self.document.abort_in_flight(at)
+                }
             };
         }
-        let prompt_arrived = !was_prompt_ready && self.document.prompt_ready();
+        if previous_context != self.input_context.generation() {
+            self.pending_run = None;
+            self.dismiss_completion();
+            changed = true;
+        }
+        let prompt_arrived = !was_prompt_ready && self.input_context.ready();
         if prompt_arrived {
             self.prompt_line.note_prompt();
         }

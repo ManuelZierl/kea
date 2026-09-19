@@ -1204,6 +1204,8 @@ impl InputState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.focus(window, cx);
+
         // Clear inline completion on any mouse interaction
         self.clear_inline_completion(cx);
 

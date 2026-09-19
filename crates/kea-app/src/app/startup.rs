@@ -9,6 +9,33 @@ pub(super) fn run() -> Result<()> {
     let (mut demo, mut replay, mut record, mut terminal_focus) = (false, None, None, false);
     let mut command: Vec<OsString> = Vec::new();
     while let Some(arg) = args.next() {
+        if arg == "--print-shell-integration" {
+            let name = args
+                .next()
+                .context("--print-shell-integration needs a shell name")?;
+            let context = args
+                .next()
+                .context("--print-shell-integration needs a unique context id")?;
+            let context = context.to_str().context("context id must be UTF-8")?;
+            anyhow::ensure!(
+                context != "local"
+                    && !context.is_empty()
+                    && context.len() <= 128
+                    && context
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+                "use a non-local alphanumeric context id (dash, dot and underscore are allowed)"
+            );
+            anyhow::ensure!(
+                args.next().is_none(),
+                "unexpected shell-integration arguments"
+            );
+            let flavor =
+                ShellFlavor::from_program(&name.to_string_lossy()).context("unsupported shell")?;
+            use std::io::Write as _;
+            std::io::stdout().write_all(&flavor.integration_for(&[name], context))?;
+            return Ok(());
+        }
         if arg == "--" {
             command.extend(args);
             break;
@@ -31,7 +58,10 @@ kea --replay SESSION.kea
 kea --demo
 
 Terminal and editor are visible together; focus decides who receives keyboard input.
-Editor defaults: Enter = new line, Ctrl+Enter = Run in shell, Ctrl+Shift+Enter = send literal text to the current terminal app, Tab = complete.
+Editor defaults: Enter = new line, Ctrl+Enter = Submit to terminal, Tab = complete.
+Unknown or nonempty terminal input requires a second Enter. Other keys cancel.
+Ctrl+Shift+Enter remains a compatibility alias with the same safety policy.
+kea --print-shell-integration bash remote-id prints optional nested/remote integration.
 Ctrl+R in the compose editor opens history and saved memories; Enter inserts, never runs.
 All semantic shortcuts are configurable. Terminal-like editor behavior is possible with:
   run_shell = enter
@@ -80,6 +110,20 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     } else {
         ShellFlavor::detect(&command)
     };
+    // -Command runs after the user's profile; -NoExit keeps the interactive
+    // shell. Unlike typing bootstrap source, this cannot leak through PSReadLine
+    // redraws or pollute the interactive history.
+    if shell == Some(ShellFlavor::PowerShell) {
+        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
+        if !command
+            .iter()
+            .any(|arg| arg.to_string_lossy().eq_ignore_ascii_case("-noexit"))
+        {
+            command.push("-NoExit".into());
+        }
+        command.push("-Command".into());
+        command.push(script.into());
+    }
     let mut session = if demo {
         Session::demo()?
     } else if let Some(path) = replay {
@@ -95,8 +139,8 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
     };
 
-    if let Some(shell) = shell {
-        session.send_hidden(shell.integration(&command))?;
+    if shell == Some(ShellFlavor::Posix) {
+        session.send_hidden(ShellFlavor::Posix.integration(&command))?;
     }
     let document = Document::from_recording(session.recording());
     let initial_focus = if demo || terminal_focus || shell.is_none() {
@@ -133,7 +177,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     };
     if !demo && !replay_requested && shell.is_none() {
         warnings.push(
-            "No integrated local shell detected. Terminal input and Send to app remain available; Run in shell and shell cwd completion are unavailable."
+            "No integrated shell detected. Submit remains available with confirmation; native terminal input and Tab are unchanged."
                 .into(),
         );
     }

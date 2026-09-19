@@ -221,6 +221,29 @@ cleanup_app
 : > "$KEA_KEYBINDINGS"
 echo 'Keybinding settings save/reopen/restart and preserved draft passed; small-dialog screenshots captured.'
 
+# Unified submission: unknown receivers require explicit confirmation. A held
+# first chord must not send, and cancelling input must remain in the draft.
+printf 'theme = dark\n' > "$KEA_SETTINGS"
+./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/submit-guard.bin >smoke-artifacts/submit-guard.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/submit-guard.log
+focus_editor
+xdotool type --clearmodifiers --delay 10 'guarded'
+xdotool keydown Control_L keydown Return
+sleep .8
+[[ ! -s smoke-artifacts/submit-guard.bin ]] || { echo 'Held submission bypassed confirmation'; exit 1; }
+xdotool keyup Return keyup Control_L
+sleep .2
+xdotool type --clearmodifiers 'x'
+key ctrl+a ctrl+c
+assert_clipboard guardedx
+[[ ! -s smoke-artifacts/submit-guard.bin ]] || { echo 'Cancelling key reached the terminal'; exit 1; }
+key End ctrl+Return Return
+python3 - <<'CHECK'
+from scripts.smoke_assert import assert_output_suffix
+assert_output_suffix('smoke-artifacts/submit-guard.bin', b'\x1b[200~guardedx\x1b[201~\r')
+CHECK
+cleanup_app
+
 # U2: real shell metadata, terminal type/delete recovery context, and actual
 # composer popup dispatch. Clipboard assertions observe the editor's real value.
 mkdir -p "$XDG_RUNTIME_DIR/completion"
@@ -232,15 +255,17 @@ xdotool type --clearmodifiers "cd '$XDG_RUNTIME_DIR/completion'"
 key Return
 sleep .5
 xdotool type --clearmodifiers 'abc'
-key BackSpace BackSpace BackSpace ctrl+l
+key BackSpace BackSpace BackSpace ctrl+c
+sleep .3
+key ctrl+l
 put_clipboard 'echo 😀 ca suffix'
 key ctrl+v Home
 xdotool key --clearmodifiers --repeat 9 --delay 60 Right
 key Tab
 sleep .5
 import -window "$window" smoke-artifacts/completion-keyboard.png
-# cab is first, café second. Down must select second, not move the caret.
-key Down Return ctrl+a ctrl+c
+# cab is first, café second. Right navigates the horizontal menu, not the caret.
+key Right Return ctrl+a ctrl+c
 assert_clipboard 'echo 😀 café suffix'
 key ctrl+z ctrl+a ctrl+c
 assert_clipboard 'echo 😀 ca suffix'
@@ -248,7 +273,7 @@ key End
 xdotool key --clearmodifiers --repeat 7 --delay 60 Left
 key Tab
 sleep .5
-key Down Up Tab ctrl+a ctrl+c
+key Right Left Return ctrl+a ctrl+c
 assert_clipboard 'echo 😀 cab suffix'
 # Escape cancels; a later Return belongs to the editor and inserts a newline.
 key ctrl+a
@@ -264,7 +289,7 @@ key ctrl+a
 put_clipboard 'echo ca'
 key ctrl+v Tab
 sleep .5
-key Left Return
+key Escape Left Return
 xdotool type --clearmodifiers 'x'
 key ctrl+a ctrl+c
 assert_clipboard $'echo c\nxa'
@@ -297,7 +322,7 @@ import -window "$window" smoke-artifacts/completion-scroll-last.png
 key Return ctrl+a ctrl+c
 assert_clipboard 'echo long_12_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz'
 cleanup_app
-echo 'U2 keyboard completion, Unicode replacement/undo, terminal type-delete context, Escape and stale cursor/focus passed.'
+echo 'U2 keyboard completion, Unicode replacement/undo, explicit prompt recovery, Escape and stale cursor/focus passed.'
 
 # A configured Enter-to-run policy must accept an open completion first.
 printf 'run_shell = enter\nnewline = shift-enter\n' > "$KEA_KEYBINDINGS"
@@ -310,7 +335,7 @@ key ctrl+l
 put_clipboard 'echo ca'
 key ctrl+v Tab
 sleep .5
-key Down Return ctrl+a ctrl+c
+key Right Return ctrl+a ctrl+c
 assert_clipboard 'echo café'
 cleanup_app
 : > "$KEA_KEYBINDINGS"
@@ -323,7 +348,7 @@ wait_window smoke-artifacts/reverse-search.log
 key ctrl+r
 focus_editor
 xdotool type --clearmodifiers --delay 10 'reverse-search-probe'
-key ctrl+shift+Return
+key ctrl+shift+Return Return
 sleep .3
 key ctrl+r
 sleep .5
@@ -431,7 +456,7 @@ sleep .3
 focus_editor
 import -window "$window" smoke-artifacts/terminal-editor-focus.png
 put_clipboard $'message one\nmessage two'
-key ctrl+v ctrl+shift+Return
+key ctrl+v ctrl+shift+Return Return
 python3 - <<'PY'
 from scripts.smoke_assert import assert_output_suffix
 assert_output_suffix('smoke-artifacts/keys.bin', b'\x1b[200~message one\nmessage two\x1b[201~\r')
@@ -503,7 +528,7 @@ printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
 wait_window smoke-artifacts/terminal-policy.log
 focus_editor
 xdotool type --clearmodifiers --delay 10 'policy'
-key ctrl+shift+Return
+key ctrl+shift+Return Return
 xdotool type --clearmodifiers --delay 10 'z'
 python3 - <<'PY'
 from scripts.smoke_assert import assert_output_suffix
