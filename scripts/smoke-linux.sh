@@ -35,7 +35,15 @@ wait_window() {
   done
   echo 'No Kea window'; exit 1
 }
-key() { xdotool key --clearmodifiers "$@"; sleep .15; }
+key() {
+  # Let each chord finish dispatching before the next one. xdotool's default
+  # 12ms between batched chords can overtake a focus/selection frame on CI.
+  local chord
+  for chord in "$@"; do
+    xdotool key --clearmodifiers --delay 50 "$chord"
+    sleep .15
+  done
+}
 fkey() {
   local code
   case "$1" in
@@ -52,8 +60,22 @@ fkey() {
 }
 clipboard() { timeout 3s xclip -selection clipboard -t UTF8_STRING -o; }
 put_clipboard() { printf '%s' "$1" | xclip -selection clipboard; sleep .15; }
-assert_clipboard() { local actual; actual=$(clipboard); [[ "$actual" == "$1" ]] || { printf 'Expected <%s>; got <%s>\n' "$1" "$actual"; exit 1; }; }
-focus_editor() { xdotool mousemove --window "$window" 120 "$((HEIGHT-170))" click 1; sleep .2; }
+assert_clipboard() {
+  local actual='(clipboard unavailable)'
+  # Copy/selection ownership is asynchronous. Observe the result without
+  # replaying input, and still fail if the exact expected text never arrives.
+  for _ in $(seq 1 30); do
+    if actual=$(timeout .5s xclip -selection clipboard -t UTF8_STRING -o 2>/dev/null) && [[ "$actual" == "$1" ]]; then
+      return
+    fi
+    sleep .1
+  done
+  printf 'Expected <%s>; got <%s>\n' "$1" "$actual"
+  exit 1
+}
+# The Composer button stays in the toolbar across resize; a bottom-relative
+# canvas click can land in the terminal when the composer hits its minimum size.
+focus_editor() { xdotool mousemove --window "$window" 130 51 click 1; sleep .2; }
 # A dialog can start painting later on software-rendered/loaded runners. Wait
 # for its header to change and finish animating before targeting its contents.
 # The crop excludes the terminal and editor carets, which blink independently.
@@ -392,6 +414,8 @@ eval "$(xdotool getwindowgeometry --shell "$window")"
 focus_editor
 xdotool type --clearmodifiers --delay 10 'layout probe'
 key ctrl+Return
+key ctrl+a ctrl+c
+assert_clipboard 'layout probe'
 import -window "$window" smoke-artifacts/narrow-layout.png
 export STATUS_OVERFLOW_MEAN="$(convert smoke-artifacts/narrow-layout.png -crop "${WIDTH}x40+0+$((HEIGHT-68))" -colorspace gray -threshold 30% -format '%[fx:mean]' info:)"
 python3 - <<'PY'
@@ -425,7 +449,15 @@ key ctrl+shift+l
 xdotool type --clearmodifiers --delay 10 'x'
 python3 - <<'PY'
 from pathlib import Path
-actual = Path('smoke-artifacts/keys.bin').read_bytes()
+import time
+# Typing is asynchronous across X11 -> GPUI -> PTY -> the fixture file.
+# Wait for the observable result without sending the character a second time.
+deadline = time.monotonic() + 3
+while True:
+    actual = Path('smoke-artifacts/keys.bin').read_bytes()
+    if actual.endswith(b'\r' + b'x') or time.monotonic() >= deadline:
+        break
+    time.sleep(.05)
 assert actual.endswith(b'\r' + b'x'), actual
 PY
 key ctrl+l
