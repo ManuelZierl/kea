@@ -1,4 +1,9 @@
-# Terminal text interaction and local selection - specification
+---
+title: Terminal selection
+nav_order: 4
+---
+
+# Terminal text interaction and local selection
 
 Status: implemented with automated coverage (2026-09-17). Real IME,
 assistive-technology, and cross-platform application acceptance remain separate

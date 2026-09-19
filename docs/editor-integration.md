@@ -1,3 +1,8 @@
+---
+title: Editor integration
+nav_order: 9
+---
+
 # Platform-integrated editing
 
 

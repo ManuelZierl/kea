@@ -1,3 +1,8 @@
+---
+title: Recording format
+nav_order: 11
+---
+
 # Recording format v1
 
 All integers are little-endian. Output is opaque bytes, not necessarily UTF-8.

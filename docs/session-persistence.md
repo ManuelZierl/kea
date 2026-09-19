@@ -1,3 +1,8 @@
+---
+title: Session persistence
+nav_order: 5
+---
+
 # Session persistence
 
 Kea sessions start **Temporary**. Terminal output can contain secrets, so persistence is never silently enabled just because Kea is running.

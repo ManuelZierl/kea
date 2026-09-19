@@ -1,5 +1,10 @@
 # Working on Kea
 
+Contributor setup and checks live in [CONTRIBUTING.md](CONTRIBUTING.md).
+Target `develop` for ordinary pull requests; `main` holds release-ready work.
+Release tags must match the workspace version and point to a commit on `main`.
+See [docs/releasing.md](docs/releasing.md) for publication and Pages setup.
+
 Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-integration.md before changing the design.
 
 ## Product and host invariants

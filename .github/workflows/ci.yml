@@ -1,9 +1,15 @@
 name: CI
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   engine:
@@ -38,7 +44,8 @@ jobs:
           archive="kea-${GITHUB_REF_NAME}-macos-${architecture}.tar.gz"
           mkdir -p dist/package
           cp target/release/kea dist/package/kea
-          tar -czf "dist/${archive}" -C dist/package kea
+          cp LICENSE README.md CHANGELOG.md dist/package/
+          tar -czf "dist/${archive}" -C dist/package .
           rm -rf dist/package
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
@@ -60,6 +67,7 @@ jobs:
           cache-on-failure: true
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11
       - run: cargo test --locked -p kea-app
+      - run: bash scripts/test-reverse-search-core.sh
       - run: cargo build --locked -p kea-app
       - name: Build Linux release binary
         if: startsWith(github.ref, 'refs/tags/v')
@@ -83,7 +91,8 @@ jobs:
           archive="kea-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
           mkdir -p dist/package
           cp target/release/kea dist/package/kea
-          tar -czf "dist/${archive}" -C dist/package kea
+          cp LICENSE README.md CHANGELOG.md dist/package/
+          tar -czf "dist/${archive}" -C dist/package .
           rm -rf dist/package
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
@@ -121,8 +130,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path dist/package | Out-Null
           Copy-Item target/release/kea.exe dist/package/kea.exe
+          Copy-Item LICENSE,README.md,CHANGELOG.md dist/package/
           $archive = "dist/kea-$env:GITHUB_REF_NAME-windows-x86_64.zip"
-          Compress-Archive -Path dist/package/kea.exe -DestinationPath $archive
+          Compress-Archive -Path dist/package/* -DestinationPath $archive
           Remove-Item -Recurse -Force dist/package
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
@@ -136,7 +146,7 @@ jobs:
           path: target/release/kea.exe
           if-no-files-found: error
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [engine, desktop-linux, desktop-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -168,13 +178,22 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Create checksums
-        run: sha256sum dist/* > dist/SHA256SUMS
+        working-directory: dist
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          release_flags=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags=(--prerelease --latest=false)
+          fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" "${release_flags[@]}"
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "Kea $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+              --generate-notes --notes-file CHANGELOG.md \
+              --title "Kea $GITHUB_REF_NAME" "${release_flags[@]}"
           fi

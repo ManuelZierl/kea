@@ -1,3 +1,8 @@
+---
+title: Command metadata
+nav_order: 10
+---
+
 # Optional command metadata protocol
 
 Kea's optional command blocks need exact boundaries while retaining a normal PTY

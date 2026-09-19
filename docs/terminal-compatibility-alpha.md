@@ -1,3 +1,8 @@
+---
+title: Compatibility
+nav_order: 7
+---
+
 # Terminal compatibility gate for alpha
 
 Kea should improve input around an existing terminal application without making common terminal interaction unreliable. Alpha is blocked on the compatibility paths below.

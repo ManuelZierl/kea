@@ -1,3 +1,8 @@
+---
+title: Desktop testing
+nav_order: 12
+---
+
 # Human desktop acceptance checklist
 
 Use this on a real desktop with a physical keyboard/mouse, your normal shell
@@ -73,17 +78,19 @@ recorded remappings if different. Do not substitute Ctrl+Shift+C for Copy.
 
 ## 01 — Plain Enter and Tab in the upper terminal
 
-- [x] Click the upper terminal, type `echo KEA_ENTER_ONCE`, and press **Enter**.
+- [ ] Click the upper terminal, type `echo KEA_ENTER_ONCE`, and press **Enter**.
   Expect one result line in addition to the shell's command echo. Ctrl+Enter
   must not be required, and focus must remain in the terminal.
-- [x] Repeat after switching to the composer and back using the keyboard.
-- [x] Start a familiar partial command or filename and press **Tab**. Expect the
+- [ ] Repeat after switching to the composer and back using the keyboard.
+- [ ] Start a familiar partial command or filename and press **Tab**. Expect the
   shell's normal completion behavior, not a focus jump or a swallowed key.
-- [x] Exercise Space, Backspace and arrows on a partially typed command. Compare
+- [ ] Exercise Space, Backspace and arrows on a partially typed command. Compare
   with the same shell/profile in your comparison terminal if behavior differs.
 
-**Failed**: A simple click int the upper terminal the followin happens: The header moves because the text in there changes, with that the terminal moves up and this is then detected always as a drag motion! We must prevent that the upper terminal can move like this!
-It feels weird to me that terminal -> compose = ctrl-l but composer -> terminal = ctrl-shift-l? Shouldnt there be a single switch button? And does the Ctr-l switch not conflict with out always send to terminal first policy?
+- [ ] Click to focus the terminal. Header feedback must not move the terminal
+  under the pointer and turn a click into a selection drag.
+- [ ] Use Ctrl+L / Cmd+L to switch in both directions. This configurable host
+  escape is the deliberate exception to ordinary child-owned terminal input.
 
 ## 02 — Plain Enter in OpenCode or another TUI
 
@@ -98,7 +105,8 @@ It feels weird to me that terminal -> compose = ctrl-l but composer -> terminal 
    behavior depends on the child's bindings and negotiated protocol; do not
    assume every shell distinguishes Enter from Shift+Enter.
 
-**Fail:** Ctrl-V is not send to opencode!
+5. With no Kea selection, verify plain Ctrl+V reaches the child as input. Use
+   Ctrl+Shift+V (Cmd+V on macOS) or the Paste button for clipboard paste.
 
 ## 03 — Copy a Kea selection without interrupting the child
 

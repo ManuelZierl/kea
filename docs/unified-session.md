@@ -1,3 +1,8 @@
+---
+title: Interaction contract
+nav_order: 3
+---
+
 # One session, independent surfaces
 
 Kea has one live terminal session and one persistent editor surface. They coexist. There is no Document/PTY mode and no hidden submission-target state.

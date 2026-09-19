@@ -1,0 +1,21 @@
+title: Kea
+description: A terminal workspace with a real editor for input.
+url: https://manuelzierl.github.io
+baseurl: /kea
+remote_theme: just-the-docs/just-the-docs@v0.10.1
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+search_enabled: true
+heading_anchors: true
+color_scheme: light
+aux_links:
+  GitHub: https://github.com/ManuelZierl/kea
+footer_content: 'Kea is MIT licensed. Contributions are welcome.'
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default

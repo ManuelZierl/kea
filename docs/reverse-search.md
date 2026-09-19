@@ -1,3 +1,8 @@
+---
+title: Reverse search
+nav_order: 6
+---
+
 # Native reverse search
 
 Ctrl-R in the compose editor opens a lightweight history-and-memory popup anchored
