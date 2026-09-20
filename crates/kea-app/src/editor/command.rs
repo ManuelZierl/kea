@@ -190,10 +190,9 @@ pub fn retain_history_interceptor(subscription: Subscription, cx: &mut App) {
     cx.default_global::<DraftRecallGlobal>().interceptor = Some(subscription);
 }
 
-/// Navigate exact text that was successfully submitted through either Run in shell or
-/// Send to app. This acts only on the active Kea command editor; terminal/TUI input is
-/// untouched. Replacing the draft is a normal undoable editor operation and never sends
-/// bytes to the child process.
+/// Navigate exact text that was successfully submitted from the composer. This acts
+/// only on the active Kea command editor; terminal/TUI input is untouched. Replacing
+/// the draft is a normal undoable editor operation and never sends bytes to the child.
 pub fn navigate_submitted_drafts(
     direction: HistoryDirection,
     window: &mut Window,

@@ -66,10 +66,11 @@ read-only output fields do not open reverse search.
 ## History and saved definitions
 
 History observes **successfully submitted compose input**, independently of
-optional command-block retention. Run in shell is labeled with its integrated
-shell dialect and last explicitly reported starting directory. Send to app is
-literal text with unknown application/remote directory. Submission is not a
-claim that execution succeeded; no exit code or duration is fabricated.
+optional command-block retention. A ready integrated-shell submission is labeled
+with its shell dialect and explicitly reported starting directory. Other active
+receivers retain the application kind with no invented remote directory.
+Submission is not a claim that execution succeeded; no exit code or duration is
+fabricated.
 
 Repeated historical input is grouped by exact text and input kind, while retaining
 individual occurrence IDs. Ranking combines fuzzy quality, recency, frequency,
@@ -93,7 +94,7 @@ started before closing the popup does not change focus in a newly opened popup.
 Save draft also works before any execution, and without a matching result. Saving
 is explicit and never executes. Memory names are unique per input kind and scope.
 A memory recalled into another shell remains editable text: there is no automatic
-shell translation or automatic choice between Run and Send.
+shell translation, receiver selection or submission.
 
 ## Persistence and privacy
 
@@ -136,7 +137,7 @@ rather than silently claiming complete history.
 `src/reverse_search/store.rs` handles versioned, length-checked files.
 `src/reverse_search/worker.rs` owns I/O and search on a bounded channel.
 `src/reverse_search/view.rs` is a GPUI component with no PTY or execution capability.
-The host observes successful Run/Send submissions and provides the current editor
+The host observes successful Submit operations and provides the current editor
 and explicitly known directory context. No replay-core dependencies change.
 
 Retention is limited per loaded library to 5,000 records and 16 MiB of accounted
@@ -175,7 +176,7 @@ GPUI dependencies with `bash scripts/test-reverse-search-core.sh`.
 
 Graphical acceptance additionally needs these checks on real builds:
 
-1. Run and Send several multiline drafts; search, move, insert, undo, and cancel
+1. Submit several multiline drafts; search, move, insert, undo, and cancel
    using only the keyboard. Confirm Enter never runs a match.
 2. Repeat with `run_shell = enter` and with a remapped/unbound `reverse_search`.
 3. While Bash/OpenCode/Vim owns the terminal, confirm Ctrl-R still reaches it.

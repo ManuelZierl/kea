@@ -360,13 +360,13 @@ impl Render for KeaView {
                     return "Return live".into();
                 }
                 if narrow_chrome {
-                    return "Read-only history · Return live to run or send.".into();
+                    return "Read-only history · Return live to submit.".into();
                 }
                 let shortcut = self.keymap.label_or(Action::GoLive, "");
                 if shortcut.is_empty() {
-                    "Read-only history; the live process continues. The composer stays editable. Use Return live to run or send.".into()
+                    "Read-only history; the live process continues. The composer stays editable. Use Return live to submit.".into()
                 } else {
-                    format!("Read-only history; the live process continues. The composer stays editable. Return live ({shortcut}) to run or send.")
+                    format!("Read-only history; the live process continues. The composer stays editable. Return live ({shortcut}) to submit.")
                 }
             } else if self.input_context.ready() {
                 format!("Input ready · {}", self.input_context.id())

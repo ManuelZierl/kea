@@ -293,7 +293,7 @@ child mouse reporting is active. It does not change:
 - keyboard routing;
 - copy semantics;
 - replay/history behavior; or
-- editor, Run, or Send behavior.
+- editor or Submit behavior.
 
 Configuration is loaded and validated through the existing settings path.
 Invalid values reject the settings file with the existing visible warning and

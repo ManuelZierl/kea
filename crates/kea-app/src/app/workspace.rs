@@ -333,7 +333,7 @@ impl KeaView {
                 }
                 Observed::Exit { at, .. } => {
                     self.input_context.invalidate();
-                    self.document.abort_in_flight(at)
+                    self.document.finish(at)
                 }
             };
         }

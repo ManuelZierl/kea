@@ -324,7 +324,7 @@ assert_clipboard 'echo long_12_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuv
 cleanup_app
 echo 'U2 keyboard completion, Unicode replacement/undo, explicit prompt recovery, Escape and stale cursor/focus passed.'
 
-# A configured Enter-to-run policy must accept an open completion first.
+# A configured Enter-to-submit policy must accept an open completion first.
 printf 'run_shell = enter\nnewline = shift-enter\n' > "$KEA_KEYBINDINGS"
 HISTFILE="$XDG_RUNTIME_DIR/bash-history" ./target/debug/kea --terminal-focus -- bash --noprofile --norc >smoke-artifacts/completion-enter.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/completion-enter.log
@@ -339,7 +339,7 @@ key Right Return ctrl+a ctrl+c
 assert_clipboard 'echo café'
 cleanup_app
 : > "$KEA_KEYBINDINGS"
-echo 'Completion mouse selection, scrolling and configured Enter-to-run acceptance passed.'
+echo 'Completion mouse selection, scrolling and configured Enter-to-submit acceptance passed.'
 
 # Ctrl-R recalls into the draft without sending another byte to the child.
 printf 'theme = dark\n' > "$KEA_SETTINGS"

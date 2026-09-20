@@ -56,6 +56,10 @@ impl MarkerScanner {
         }
         pieces
     }
+
+    pub(crate) fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
+    }
 }
 
 fn parse_marker(raw: &[u8]) -> Option<Marker> {

@@ -18,7 +18,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 - Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
 - Ordinary editor text/composition arrives through the component/platform input handler, not manual keycode-to-character conversion. Terminal committed IME text also uses the platform text-input bridge.
 - Copy means focused selection. Copy block/view/screen is explicit. Never silently replace selection-copy with whole-document copy.
-- Undo affects only the current draft, never execution or recorded output. Successful Run/Send creates a fresh draft. Edit as new preserves the prior command and never executes automatically.
+- Undo affects only the current draft, never execution or recorded output. Successful Submit creates a fresh draft. Edit as new preserves the prior command and never executes automatically.
 - Read-only output must remain selectable, searchable and copyable. Keep editor entities stable across renders. Live output cannot reset a reading selection or unconditionally scroll to bottom.
 - Follow system appearance by default; use component/platform defaults unless the user explicitly overrides them.
 

@@ -41,7 +41,14 @@ impl ShellFlavor {
     /// Install observational hooks once, preserving user profiles and prompts.
     /// Authored commands never pass through an eval driver.
     pub fn integration(self, command: &[OsString]) -> Vec<u8> {
-        self.integration_for(command, "local")
+        let mut integration = self.integration_for(command, "local");
+        if self == Self::Posix {
+            debug_assert_eq!(integration.last(), Some(&b'\n'));
+            *integration
+                .last_mut()
+                .expect("POSIX integration is not empty") = b'\r';
+        }
+        integration
     }
 
     /// The same protocol is available inside nested/remote shells. The caller
@@ -77,7 +84,7 @@ impl ShellFlavor {
                     }
                     _ => r#"PS1='$(__kea_before_prompt; __kea_prompt)'"${PS1:-$ }""#,
                 };
-                format!("if [ -z \"${{__kea_installed-}}\" ]; then __kea_installed=1; {report}{hook}; fi\r")
+                format!("if [ -z \"${{__kea_installed-}}\" ]; then __kea_installed=1; {report}{hook}; fi\n")
                     .replace("@CONTEXT@", context).into_bytes()
             }
         }

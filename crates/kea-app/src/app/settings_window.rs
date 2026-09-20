@@ -263,10 +263,10 @@ fn build_dialog(
                 ))
                 .child(setting_group(
                     "Workflow and privacy",
-                    "Input ownership stays explicit: Run in shell and Send to app remain separate actions.",
+                    "Submit targets the active receiver; uncertain input requires confirmation.",
                     vec![
                         choice_row(
-                            "After successful Run or Send",
+                            "After successful Submit",
                             "Choose which surface receives the next key.",
                             vec![
                                 choice(

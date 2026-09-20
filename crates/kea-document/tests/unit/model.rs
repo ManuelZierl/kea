@@ -135,3 +135,45 @@ fn missing_start_discards_pending_metadata_without_creating_stuck_blocks() {
     assert!(doc.blocks().is_empty());
     assert!(!doc.has_in_flight());
 }
+
+#[test]
+fn legacy_done_cannot_finish_a_scoped_native_block() {
+    let mut doc = Document::new();
+    doc.note_submission(12, "local", "ssh destination", 1);
+    doc.ingest_output(2, b"\x1b]777;kea;native-start;local\x07before");
+    doc.ingest_output(3, b"\x1b]777;kea;done;12;0\x07after");
+
+    assert_eq!(doc.blocks()[0].status, CommandStatus::Running);
+    assert_eq!(doc.blocks()[0].output(), b"beforeafter");
+
+    doc.ingest_output(4, b"\x1b]777;kea;native-done;local;7\x07");
+    assert_eq!(doc.blocks()[0].status, CommandStatus::Finished(7));
+}
+
+#[test]
+fn session_exit_retains_an_incomplete_marker_as_block_output() {
+    let mut recording = Recording::new(Size::new(80, 24).unwrap()).unwrap();
+    recording
+        .append(
+            1,
+            Kind::Submitted {
+                id: 3,
+                context: "local".into(),
+                input: "command".into(),
+            },
+        )
+        .unwrap();
+    recording
+        .append(
+            2,
+            Kind::Output(
+                b"\x1b]777;kea;native-start;local\x07output\x1b]777;kea;native-start".to_vec(),
+            ),
+        )
+        .unwrap();
+    recording.append(3, Kind::Exit(0)).unwrap();
+
+    let doc = Document::from_recording(&recording);
+    assert_eq!(doc.blocks()[0].output(), b"output\x1b]777;kea;native-start");
+    assert_eq!(doc.blocks()[0].status, CommandStatus::Aborted);
+}

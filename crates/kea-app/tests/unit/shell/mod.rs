@@ -130,7 +130,7 @@ fn native_submission_preserves_entry_status_in_real_bash() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("MARKER:1"),
-        "expected the probe to observe the previous Run status; got:\n{stdout}"
+        "expected the probe to observe the previous command status; got:\n{stdout}"
     );
 }
 
@@ -150,6 +150,46 @@ fn hooks_report_scoped_readiness_and_native_boundaries_without_authored_eval() {
         assert!(!source.contains("Invoke-Expression"));
         assert!(!source.contains("eval "));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn exported_posix_integration_is_sourceable_text() {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    for name in ["bash", "zsh"] {
+        let installed = Command::new(name).arg("--version").output().is_ok();
+        if !installed {
+            continue;
+        }
+        let source = ShellFlavor::Posix.integration_for(&[name.into()], "remote-test");
+        assert_eq!(source.last(), Some(&b'\n'));
+        assert!(!source.contains(&b'\r'));
+
+        let mut child = Command::new(name)
+            .arg("-n")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn shell syntax check");
+        child
+            .stdin
+            .as_mut()
+            .expect("piped shell stdin")
+            .write_all(&source)
+            .expect("write exported integration");
+        let output = child.wait_with_output().expect("reap shell syntax check");
+        assert!(
+            output.status.success(),
+            "{name} rejected exported integration: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let bootstrap = ShellFlavor::Posix.integration(&["bash".into()]);
+    assert_eq!(bootstrap.last(), Some(&b'\r'));
 }
 
 #[cfg(windows)]
