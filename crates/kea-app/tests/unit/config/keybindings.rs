@@ -385,3 +385,19 @@ fn focus_editor_switch_binds_in_terminal_and_composer() {
         );
     }
 }
+
+#[test]
+fn terminal_actions_are_configurable_and_round_trip() {
+    let map = Keymap::parse("new_terminal = alt-t\nclose_terminal = none\n").unwrap();
+    assert_eq!(
+        map.action_for(&Keystroke::parse("alt-t").unwrap()),
+        Some(Action::NewTerminal)
+    );
+    assert_eq!(
+        map.action_for(&Keystroke::parse("ctrl-tab").unwrap()),
+        Some(Action::NextTerminal)
+    );
+    assert_eq!(map.label(Action::CloseTerminal), "unbound");
+    assert_eq!(Keymap::parse(&map.to_config()).unwrap(), map);
+    assert!(Keymap::parse("new_terminal = ctrl-enter").is_err());
+}

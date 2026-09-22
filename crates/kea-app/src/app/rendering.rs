@@ -4,7 +4,6 @@ use gpui_component::{
     input::{self as edit, Input},
     resizable::{h_resizable, resizable_panel, v_resizable},
     ActiveTheme, Disableable as _, IconName, Selectable as _, Sizable as _, Theme, ThemeMode,
-    TitleBar,
 };
 use kea_alacritty::{Screen, TerminalPoint};
 use kea_app::{
@@ -854,7 +853,6 @@ impl Render for KeaView {
             .text_color(cx.theme().foreground)
             .text_size(cx.theme().mono_font_size)
             .font_family(cx.theme().mono_font_family.clone())
-            .child(TitleBar::new().child(div().font_weight(FontWeight::BOLD).child("Kea")))
             .child(workspace)
     }
 }

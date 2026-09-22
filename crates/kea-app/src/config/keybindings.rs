@@ -35,10 +35,16 @@ pub enum Action {
     GoLive,
     Quit,
     SelectTerminalText,
+    NewTerminal,
+    CloseTerminal,
+    NextTerminal,
+    PreviousTerminal,
+    MoveTerminalLeft,
+    MoveTerminalRight,
 }
 
 impl Action {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 30] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -63,6 +69,12 @@ impl Action {
         Self::GoLive,
         Self::Quit,
         Self::SelectTerminalText,
+        Self::NewTerminal,
+        Self::CloseTerminal,
+        Self::NextTerminal,
+        Self::PreviousTerminal,
+        Self::MoveTerminalLeft,
+        Self::MoveTerminalRight,
     ];
 
     fn config_name(self) -> &'static str {
@@ -91,6 +103,12 @@ impl Action {
             Self::GoLive => "go_live",
             Self::Quit => "quit",
             Self::SelectTerminalText => "select_terminal_text",
+            Self::NewTerminal => "new_terminal",
+            Self::CloseTerminal => "close_terminal",
+            Self::NextTerminal => "next_terminal",
+            Self::PreviousTerminal => "previous_terminal",
+            Self::MoveTerminalLeft => "move_terminal_left",
+            Self::MoveTerminalRight => "move_terminal_right",
         }
     }
 
@@ -139,6 +157,12 @@ impl Action {
             Self::GoLive => "Return to live",
             Self::Quit => "Quit Kea",
             Self::SelectTerminalText => "Select terminal text",
+            Self::NewTerminal => "New local terminal",
+            Self::CloseTerminal => "Close current terminal",
+            Self::NextTerminal => "Next terminal",
+            Self::PreviousTerminal => "Previous terminal",
+            Self::MoveTerminalLeft => "Move terminal left",
+            Self::MoveTerminalRight => "Move terminal right",
         }
     }
 }
@@ -429,6 +453,12 @@ impl Keymap {
                 },
             ),
             (Action::SelectTerminalText, "f4"),
+            (Action::NewTerminal, "ctrl-shift-t"),
+            (Action::CloseTerminal, "ctrl-shift-w"),
+            (Action::NextTerminal, "ctrl-tab"),
+            (Action::PreviousTerminal, "ctrl-shift-tab"),
+            (Action::MoveTerminalLeft, "ctrl-shift-pageup"),
+            (Action::MoveTerminalRight, "ctrl-shift-pagedown"),
         ] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
@@ -608,6 +638,12 @@ impl Keymap {
                 }
                 Action::FocusEditor => &["Kea > Input", "KeaChrome", "KeaTerminal"],
                 Action::SelectTerminalText => &["Kea > Input", "KeaChrome"],
+                Action::NewTerminal
+                | Action::CloseTerminal
+                | Action::NextTerminal
+                | Action::PreviousTerminal
+                | Action::MoveTerminalLeft
+                | Action::MoveTerminalRight => &["KeaCommand > Input", "KeaChrome"],
                 Action::ReverseSearch => &[
                     "KeaCommand > Input",
                     "KeaReverseSearch",
@@ -688,6 +724,12 @@ const DEFAULT_KEYBINDINGS_CONF: &str = r#"# Kea keybindings: one `action = short
 # reverse_search = ctrl-r
 # copy_document = f10
 # select_terminal_text = f4
+# new_terminal = ctrl-shift-t
+# close_terminal = ctrl-shift-w
+# next_terminal = ctrl-tab
+# previous_terminal = ctrl-shift-tab
+# move_terminal_left = ctrl-shift-pageup
+# move_terminal_right = ctrl-shift-pagedown
 "#;
 
 /// Starting point for `settings.conf`, kept next to the keybindings file.

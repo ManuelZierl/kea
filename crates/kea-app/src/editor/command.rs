@@ -10,7 +10,7 @@ use gpui_component::{
     highlighter::{LanguageConfig, LanguageRegistry},
     input::InputState,
 };
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HistoryDirection {
@@ -20,6 +20,10 @@ pub enum HistoryDirection {
 
 #[derive(Default)]
 struct DraftRecallGlobal {
+    active_tab: u64,
+    inactive: HashMap<u64, TabRecall>,
+    persisted: DraftHistory,
+    persisted_seed: Vec<String>,
     history: DraftHistory,
     current_editor: Option<Entity<InputState>>,
     submission_candidate: Option<(Entity<InputState>, String)>,
@@ -27,6 +31,51 @@ struct DraftRecallGlobal {
 }
 
 impl Global for DraftRecallGlobal {}
+
+#[derive(Default)]
+struct TabRecall {
+    history: DraftHistory,
+    editor: Option<Entity<InputState>>,
+}
+
+/// Switch the owned recall context without resetting navigation or scratch text.
+/// A failed/armed submission candidate must never cross a tab switch.
+pub fn activate_tab_history(id: u64, cx: &mut App) {
+    let recall = cx.default_global::<DraftRecallGlobal>();
+    if recall.active_tab == id {
+        return;
+    }
+    let old = TabRecall {
+        history: std::mem::take(&mut recall.history),
+        editor: recall.current_editor.take(),
+    };
+    recall.inactive.insert(recall.active_tab, old);
+    let state = recall.inactive.remove(&id).unwrap_or_else(|| {
+        let mut history = DraftHistory::default();
+        for text in &recall.persisted_seed {
+            history.record(text.clone());
+        }
+        TabRecall {
+            history,
+            editor: None,
+        }
+    });
+    recall.history = state.history;
+    recall.current_editor = state.editor;
+    recall.submission_candidate = None;
+    recall.active_tab = id;
+}
+
+/// Release retained editor entities when a terminal closes.
+pub fn forget_tab_history(id: u64, cx: &mut App) {
+    let recall = cx.default_global::<DraftRecallGlobal>();
+    recall.inactive.remove(&id);
+    if recall.active_tab == id {
+        recall.history = DraftHistory::default();
+        recall.current_editor = None;
+        recall.submission_candidate = None;
+    }
+}
 
 pub fn register_languages() {
     let registry = LanguageRegistry::singleton();
@@ -86,9 +135,9 @@ pub fn new_draft(
     };
     let submission_completed = submitted.is_some();
     if let Some(submitted) = submitted {
-        cx.default_global::<DraftRecallGlobal>()
-            .history
-            .record(submitted);
+        let recall = cx.default_global::<DraftRecallGlobal>();
+        recall.history.record(submitted.clone());
+        recall.persisted.record(submitted);
     }
 
     let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
@@ -114,9 +163,18 @@ pub fn new_draft(
     // then make the fresh composer active. No child state is
     // guessed: this is only an explicit focus policy.
     if submission_completed && settings.post_submit_focus == PostSubmitFocus::Editor {
-        let editor = editor.downgrade();
+        let weak = editor.downgrade();
         window.defer(cx, move |window, cx| {
-            let _ = editor.update(cx, |state, cx| state.focus(window, cx));
+            let Some(editor) = weak.upgrade() else {
+                return;
+            };
+            let is_current = cx
+                .try_global::<DraftRecallGlobal>()
+                .and_then(|recall| recall.current_editor.as_ref())
+                == Some(&editor);
+            if is_current {
+                editor.update(cx, |state, cx| state.focus(window, cx));
+            }
         });
     }
 
@@ -172,16 +230,20 @@ pub fn submission_text(
 /// Called once at startup when `persist_history` is enabled; memory stays
 /// authoritative afterwards and every new submission is written through.
 pub fn set_history_persistence(path: PathBuf, entries: Vec<String>, cx: &mut App) {
-    cx.default_global::<DraftRecallGlobal>()
-        .history
-        .set_persisted_entries(path, entries);
+    let recall = cx.default_global::<DraftRecallGlobal>();
+    recall.persisted_seed = entries.clone();
+    recall.history = DraftHistory::default();
+    for entry in &entries {
+        recall.history.record(entry.clone());
+    }
+    recall.persisted.set_persisted_entries(path, entries);
 }
 
 /// Take the first write-through failure for display by the owning workspace.
 /// Recall remains memory-authoritative after persistence stops.
 pub fn take_history_warning(cx: &mut App) -> Option<String> {
     cx.default_global::<DraftRecallGlobal>()
-        .history
+        .persisted
         .take_persistence_warning()
 }
 

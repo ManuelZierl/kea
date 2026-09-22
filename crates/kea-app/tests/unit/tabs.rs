@@ -44,7 +44,10 @@ fn cycling_wraps_but_reordering_stops_at_edges() {
     assert_eq!(tabs.adjacent(false), Some(b));
     assert!(!tabs.move_active(true));
     assert!(tabs.move_active(false));
-    assert_eq!(tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(), vec![a, c, b]);
+    assert_eq!(
+        tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        vec![a, c, b]
+    );
     assert_eq!(tabs.active_id(), Some(c));
 }
 
@@ -64,7 +67,9 @@ fn removing_active_selects_neighbor_without_dropping_other_contexts() {
 #[test]
 fn capacity_failure_returns_ownership_and_does_not_change_selection() {
     let mut tabs = Tabs::default();
-    for n in 0..MAX_TERMINALS { tabs.insert(n).unwrap(); }
+    for n in 0..MAX_TERMINALS {
+        tabs.insert(n).unwrap();
+    }
     let active = tabs.active_id();
     assert!(tabs.is_full());
     assert_eq!(tabs.insert(12345), Err(12345));

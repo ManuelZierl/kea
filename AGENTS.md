@@ -9,7 +9,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 
 ## Product and host invariants
 
-- Kea has one terminal session and a persistent editor visible together. Focus changes input ownership; there is no Document/Direct execution mode and no hidden submission-target state.
+- Each Kea tab owns one terminal session and a persistent editor visible together. Focus changes input ownership; there is no Document/Direct execution mode and no hidden submission-target state.
 - Blocks are optional/fail-open observers. **Never make command execution depend on creating, retaining or completing a block.** Missing structure must degrade to untracked execution, not queued/stuck execution.
 - Composer Submit sends authored text plus Enter to the active receiver, never per-command shell wrappers. `run_shell` and `send_application` are compatibility names for the same guarded action. Explicit ready input submits immediately; all uncertain/nonempty states require confirmation for the exact draft and context generation. Never infer readiness from process names, prompt text, cursor position or idle time, and never implicitly interrupt a child.
 - Editor-native Enter/newline is the default, but submission/newline shortcuts are semantic and configurable. Support terminal/chat policy (`run_shell = enter`, `newline = shift-enter`) without changing execution architecture.
@@ -49,3 +49,5 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 Run cargo fmt, portable tests/Clippy with -D warnings, cargo test -p kea-app --lib, cargo build -p kea-app and the Linux desktop smoke test where dependencies exist. Commit Cargo.lock and use --locked. Preserve real assertions rather than disabling tests to obtain a green build.
 
 Outstanding work includes cross-platform/application acceptance and edge cases for terminal mouse, selection and scrollback; higher extended-keyboard protocol levels; image protocols; actual OS input-service/accessibility acceptance; long-session indexing/checkpoints; and platform packages. Existing terminal support is implemented by Kea's adapters, not automatically provided by the editor dependency.
+
+Multi-terminal ownership: read docs/terminal-tabs.md. Never share a PTY, input context, pending submission, completion result or draft recall cursor across tabs. Global settings and explicit saved memories may be shared.
