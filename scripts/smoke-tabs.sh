@@ -16,8 +16,12 @@ printf 'theme = dark\n' > "$KEA_SETTINGS"
 window=''; pid=''
 cleanup() {
   local status=$?
-  if [[ $status -ne 0 && -n "$window" ]]; then
-    import -window "$window" smoke-artifacts/tabs-failure.png || true
+  if [[ $status -ne 0 ]]; then
+    # Startup can fail before there is a window to capture. Keep evidence from
+    # the display and the owned process instead of an empty artifact/log.
+    timeout 5s import -window "${window:-root}" smoke-artifacts/tabs-failure.png || true
+    tail -n 80 smoke-artifacts/tabs.log >&2 || true
+    if [[ -n "$pid" ]]; then ps -p "$pid" -o pid=,stat=,etime=,comm= >&2 || true; fi
   fi
   if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
   rm -rf "$XDG_RUNTIME_DIR"
@@ -25,13 +29,18 @@ cleanup() {
 trap cleanup EXIT
 trap 'echo "Tab smoke failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/tab-a.bin >smoke-artifacts/tabs.log 2>&1 & pid=$!
-for _ in $(seq 1 100); do
-  kill -0 "$pid"
+# The first software-rendered window can take more than ten seconds on a cold
+# CI runner. Wait for an actual visible window, never a fixed startup sleep.
+for _ in $(seq 1 300); do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo 'Kea exited before its first window became visible.' >&2
+    exit 1
+  fi
   window=$(xdotool search --onlyvisible --name '^Kea$' 2>/dev/null | tail -1 || true)
   [[ -z "$window" ]] || break
   sleep .1
 done
-[[ -n "$window" ]]
+[[ -n "$window" ]] || { echo 'No visible Kea window within the bounded startup wait.' >&2; exit 1; }
 xdotool windowfocus --sync "$window"
 sleep 1
 key() {
