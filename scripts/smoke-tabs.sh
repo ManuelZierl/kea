@@ -2,6 +2,7 @@
 # Exercise the real workspace and child processes, not just a tab collection.
 set -Eeuo pipefail
 export PYTHONDONTWRITEBYTECODE=1
+source scripts/smoke-input.sh
 mkdir -p smoke-artifacts
 exec > >(tee smoke-artifacts/tabs-acceptance.log) 2>&1
 export XDG_RUNTIME_DIR="$(mktemp -d)"
@@ -65,7 +66,7 @@ confirm_close() {
   key ctrl+shift+w
   sleep .3
   # Confirm button in the standard 480px dialog at the 1050x780 fixture size.
-  xdotool mousemove --window "$window" 710 275 click 1
+  smoke_click 710 275
   sleep .4
 }
 key ctrl+l
@@ -109,7 +110,7 @@ sleep .3
 assert_draft draft-B
 # Reorder back and confirm mouse activation retains the original draft.
 key ctrl+shift+Next
-xdotool mousemove --window "$window" 75 51 click 1
+smoke_click 75 51
 sleep .3
 assert_draft draft-A
 python3 - <<'PY'
