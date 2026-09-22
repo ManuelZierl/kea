@@ -1,0 +1,60 @@
+name: History workbench
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - .github/workflows/history-workbench.yml
+permissions:
+  contents: read
+jobs:
+  portable-workspace:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/compressed-rolling-history'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Prepare isolated portable dependency workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kea-portable/crates
+          cp Cargo.toml Cargo.lock /tmp/kea-portable/
+          for crate in kea-core kea-alacritty kea-pty kea-session kea-document; do
+            cp -a "crates/$crate" /tmp/kea-portable/crates/
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('/tmp/kea-portable')
+          p = root / 'Cargo.toml'
+          text = p.read_text().replace(', "crates/kea-app"', '')
+          text = text.replace('default-members = ["crates/kea-app"]', 'default-members = ["crates/kea-session"]')
+          p.write_text(text)
+          p = root / 'crates/kea-session/Cargo.toml'
+          text = p.read_text().replace('[dependencies]', '[dependencies]\nzstd = "=0.13.3"\nbincode = "=1.3.3"\nserde = { version = "1", features = ["derive", "rc"] }\nserde_json = "1"')
+          p.write_text(text)
+          PY
+          cargo fetch --manifest-path /tmp/kea-portable/Cargo.toml
+      - name: Bundle public source and portable test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/history-workbench/source /tmp/history-workbench/toolchain /tmp/history-workbench/cargo
+          git archive HEAD | tar -x -C /tmp/history-workbench/source
+          cp -a /tmp/kea-portable /tmp/history-workbench/portable
+          sysroot="$(rustc --print sysroot)"
+          cp -a "$sysroot/bin" "$sysroot/lib" /tmp/history-workbench/toolchain/
+          cp -a "$HOME/.cargo/registry" /tmp/history-workbench/cargo/
+          # No .git, cargo credentials, runner environment, or repository secrets.
+          tar -C /tmp/history-workbench -czf /tmp/kea-history-workbench.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kea-history-workbench
+          path: /tmp/kea-history-workbench.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
