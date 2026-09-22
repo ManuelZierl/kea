@@ -457,7 +457,10 @@ impl Render for KeaRoot {
             .flex()
             .flex_col()
             .key_context("KeaChrome")
-            .track_focus(&self.focus)
+            // A focusable ancestor would blur the composer on a suggestion's
+            // mouse-down, dismissing its popup before the click can be accepted.
+            // Only the empty workspace needs its own keyboard focus target.
+            .when(self.tabs.is_empty(), |root| root.track_focus(&self.focus))
             .on_action(cx.listener(|this, action: &Invoke, window, cx| {
                 this.invoke_action(action.action, window, cx)
             }))
