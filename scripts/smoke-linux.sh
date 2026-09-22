@@ -74,6 +74,26 @@ assert_clipboard() {
   printf 'Expected <%s>; got <%s>\n' "$1" "$actual"
   exit 1
 }
+# Read back the focused field before proceeding. A fresh sentinel prevents a
+# previous copy from making an unhandled Ctrl+C look like a successful edit.
+assert_selected_field() {
+  put_clipboard kea-settings-field-sentinel
+  key ctrl+a ctrl+c
+  assert_clipboard "$1"
+}
+# Saving follows asynchronous UI dispatch. Observe the exact persisted
+# value within a bounded wait; never retry the click or rewrite the file.
+assert_file_line() {
+  local file="$1" expected="$2"
+  for _ in $(seq 1 30); do
+    kill -0 "$kea_pid" || return 1
+    if [[ -f "$file" ]] && grep -Fqx -- "$expected" "$file"; then return; fi
+    sleep .1
+  done
+  printf 'Expected saved line <%s> in %s; actual contents:\n' "$expected" "$file" >&2
+  if [[ -f "$file" ]]; then cat "$file" >&2; else echo '(file missing)' >&2; fi
+  return 1
+}
 # The Composer button stays in the toolbar across resize; a bottom-relative
 # canvas click can land in the terminal when the composer hits its minimum size.
 focus_editor() { xdotool mousemove --window "$window" 130 85 click 1; sleep .2; }
@@ -161,18 +181,20 @@ focus_editor
 xdotool type --clearmodifiers --delay 10 'settings-draft'
 settings_transition "$((WIDTH-214))" 85
 xdotool mousemove --window "$window" "$((WIDTH/2+232))" 274 click 1
-sleep .5
-grep -q '^theme = light$' "$KEA_SETTINGS"
+assert_file_line "$KEA_SETTINGS" 'theme = light'
 import -window "$window" smoke-artifacts/settings-light.png
 # Keybindings use the component editor, save a validated snapshot, and remain
 # restart-scoped. Closing/reopening must show saved values without losing draft.
 settings_transition "$((WIDTH/2-200))" 95
 xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
-key ctrl+a
-xdotool type --clearmodifiers 'alt-l'
+assert_selected_field ctrl-l
+# Do not race the first input frame or move focus to Save before the
+# component has accepted the complete replacement through real input.
+xdotool type --clearmodifiers --delay 50 'alt-l'
+assert_selected_field alt-l
+import -window "$window" smoke-artifacts/keybindings-edited.png
 xdotool mousemove --window "$window" "$((WIDTH/2))" 311 click 1
-sleep .3
-grep -q '^focus_editor = alt-l$' "$KEA_KEYBINDINGS"
+assert_file_line "$KEA_KEYBINDINGS" 'focus_editor = alt-l'
 import -window "$window" smoke-artifacts/keybindings-saved.png
 key Escape
 import -window "$window" smoke-artifacts/settings-draft-preserved.png
@@ -192,8 +214,7 @@ PY
 settings_transition "$((WIDTH-214))" 85
 settings_transition "$((WIDTH/2-200))" 95
 xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
-key ctrl+a ctrl+c
-assert_clipboard alt-l
+assert_selected_field alt-l
 xdotool windowsize --sync "$window" 760 500
 sleep .3
 xdotool mousemove --window "$window" 650 360 click --repeat 100 --delay 5 5
