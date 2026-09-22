@@ -52,10 +52,30 @@ assert_draft() {
   printf 'Expected draft <%s>, got <%s>\n' "$1" "$actual" >&2
   return 1
 }
+confirm_close() {
+  key ctrl+shift+w
+  sleep .3
+  # Confirm button in the standard 480px dialog at the 1050x780 fixture size.
+  xdotool mousemove --window "$window" 710 275 click 1
+  sleep .4
+}
 key ctrl+l
 xdotool type --clearmodifiers 'draft-A'
 key ctrl+shift+t
 sleep .5
+# Get the new local shell's identity through its own terminal. Never inspect or
+# kill unrelated processes; later verify closing this tab reaps this exact child.
+key ctrl+l
+xdotool type --clearmodifiers "echo \$\$ > '$XDG_RUNTIME_DIR/tab-b.pid'"
+key Return
+for _ in $(seq 1 50); do
+  [[ ! -s "$XDG_RUNTIME_DIR/tab-b.pid" ]] || break
+  sleep .1
+done
+shell_pid=$(cat "$XDG_RUNTIME_DIR/tab-b.pid")
+[[ "$shell_pid" =~ ^[0-9]+$ ]]
+kill -0 "$shell_pid"
+key ctrl+l
 xdotool type --clearmodifiers 'draft-B'
 assert_draft draft-B
 key ctrl+Tab
@@ -89,4 +109,23 @@ actual = Path('smoke-artifacts/tab-a.bin').read_bytes()
 assert actual == b'a', actual
 PY
 import -window "$window" smoke-artifacts/terminal-tabs.png
-echo 'Independent drafts, terminal input, tab cycling/reordering, mouse activation and close cancellation passed.'
+# Confirmed close must dispose the child, not just hide a retained session view.
+key ctrl+Tab
+confirm_close
+assert_draft draft-A
+for _ in $(seq 1 50); do
+  kill -0 "$shell_pid" 2>/dev/null || break
+  sleep .1
+done
+if kill -0 "$shell_pid" 2>/dev/null; then
+  echo 'Closed terminal child is still alive' >&2
+  exit 1
+fi
+# Closing the last terminal leaves usable chrome, including its shortcut focus.
+confirm_close
+key ctrl+shift+t
+sleep .5
+xdotool type --clearmodifiers 'draft-C'
+assert_draft draft-C
+import -window "$window" smoke-artifacts/tabs-reopened.png
+echo 'Independent drafts, child input, cycling/reordering, mouse activation, close cancellation/confirmation, child cleanup and empty-workspace reopening passed.'
