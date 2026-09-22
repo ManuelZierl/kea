@@ -315,3 +315,15 @@ fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn closed_recall_contexts_do_not_accumulate(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        for id in 0..1000 {
+            activate_tab_history(id, cx);
+            forget_tab_history(id, cx);
+        }
+        activate_tab_history(1000, cx);
+        assert!(cx.default_global::<DraftRecallGlobal>().inactive.is_empty());
+    });
+}

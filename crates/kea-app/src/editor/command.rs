@@ -49,7 +49,10 @@ pub fn activate_tab_history(id: u64, cx: &mut App) {
         history: std::mem::take(&mut recall.history),
         editor: recall.current_editor.take(),
     };
-    recall.inactive.insert(recall.active_tab, old);
+    // Do not resurrect an empty context after its terminal was closed.
+    if old.editor.is_some() || old.history.len() != 0 {
+        recall.inactive.insert(recall.active_tab, old);
+    }
     let state = recall.inactive.remove(&id).unwrap_or_else(|| {
         let mut history = DraftHistory::default();
         for text in &recall.persisted_seed {

@@ -76,7 +76,7 @@ assert_clipboard() {
 }
 # The Composer button stays in the toolbar across resize; a bottom-relative
 # canvas click can land in the terminal when the composer hits its minimum size.
-focus_editor() { xdotool mousemove --window "$window" 130 51 click 1; sleep .2; }
+focus_editor() { xdotool mousemove --window "$window" 130 85 click 1; sleep .2; }
 # A dialog can start painting later on software-rendered/loaded runners. Wait
 # for its header to change and finish animating before targeting its contents.
 # The crop excludes the terminal and editor carets, which blink independently.
@@ -159,7 +159,7 @@ printf 'theme = dark\n' > "$KEA_SETTINGS"
 wait_window smoke-artifacts/settings-ui.log
 focus_editor
 xdotool type --clearmodifiers --delay 10 'settings-draft'
-settings_transition "$((WIDTH-214))" 51
+settings_transition "$((WIDTH-214))" 85
 xdotool mousemove --window "$window" "$((WIDTH/2+232))" 274 click 1
 sleep .5
 grep -q '^theme = light$' "$KEA_SETTINGS"
@@ -189,7 +189,7 @@ python3 - <<'PY'
 from pathlib import Path
 assert Path('smoke-artifacts/settings-ui.bin').read_bytes() == b't'
 PY
-settings_transition "$((WIDTH-214))" 51
+settings_transition "$((WIDTH-214))" 85
 settings_transition "$((WIDTH/2-200))" 95
 xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
 key ctrl+a ctrl+c

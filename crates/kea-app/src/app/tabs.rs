@@ -434,7 +434,7 @@ impl Render for KeaRoot {
                     )
                     .child(
                         Button::new(("close-terminal", id.0))
-                            .icon(IconName::X)
+                            .icon(IconName::Close)
                             .tooltip("Close terminal")
                             .ghost()
                             .small()

@@ -46,7 +46,7 @@ fn settings_snapshot_round_trips_all_bindings_and_unbound_actions() {
     for platform in [Platform::Other, Platform::Mac] {
         let original = Keymap::parse_overrides(platform,
             "focus_editor = alt-l\nfocus_terminal = alt-l\nrun_shell = alt-enter, alt-f12\nundo = none\nprevious_draft = alt-up\nnext_draft = alt-down").unwrap();
-        assert_eq!(original.settings_entries().len(), 27);
+        assert_eq!(original.settings_entries().len(), 33);
         assert_eq!(
             Keymap::parse_overrides(platform, &original.to_config()).unwrap(),
             original
@@ -400,4 +400,33 @@ fn terminal_actions_are_configurable_and_round_trip() {
     assert_eq!(map.label(Action::CloseTerminal), "unbound");
     assert_eq!(Keymap::parse(&map.to_config()).unwrap(), map);
     assert!(Keymap::parse("new_terminal = ctrl-enter").is_err());
+}
+
+#[test]
+fn workspace_ancestor_does_not_steal_live_terminal_shortcuts() {
+    let keymap = Keymap::defaults_for(Platform::Other);
+    let map = gpui::Keymap::new(keymap.gpui_bindings());
+    for (names, expected) in [
+        (vec!["KeaChrome", "Kea", "KeaCommand", "Input"], true),
+        (vec!["KeaChrome", "Kea", "KeaTerminal"], false),
+    ] {
+        let contexts = names
+            .iter()
+            .map(|name| gpui::KeyContext::parse(name).unwrap())
+            .collect::<Vec<_>>();
+        for spec in [
+            "ctrl-shift-t",
+            "ctrl-shift-w",
+            "ctrl-tab",
+            "ctrl-shift-tab",
+            "ctrl-shift-pageup",
+            "ctrl-shift-pagedown",
+        ] {
+            let bindings = map.bindings_for_input(&[key(spec)], &contexts).0;
+            let captured = bindings
+                .iter()
+                .any(|binding| binding.action().as_any().downcast_ref::<Invoke>().is_some());
+            assert_eq!(captured, expected, "{names:?}: {spec}");
+        }
+    }
 }
