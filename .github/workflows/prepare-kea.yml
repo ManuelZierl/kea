@@ -1,0 +1,55 @@
+name: Prepare Kea icon and tabs branch
+on:
+  push:
+    branches: [fix/windows-icon-terminal-tabs]
+permissions:
+  contents: write
+concurrency:
+  group: prepare-kea-icon-tabs
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/fix/windows-icon-terminal-tabs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-icon-terminal-tabs
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply branch-local source changes
+        run: python .kea-pr-prepare.py
+      - name: Generate deterministic Windows icon
+        run: |
+          python scripts/generate-windows-icon.py
+          python scripts/generate-windows-icon.py --check
+      - name: Resolve build dependency and format source
+        run: |
+          cargo metadata --format-version 1 > /tmp/kea-metadata.json
+          cargo fmt --all
+      - name: Inspect pinned GPUI native icon loading
+        shell: python
+        run: |
+          from pathlib import Path
+          roots = list((Path.home()/'.cargo/registry/src').glob('*/gpui-0.2.2'))
+          for root in roots:
+              for path in root.rglob('*.rs'):
+                  if 'windows' not in str(path):
+                      continue
+                  lines = path.read_text().splitlines()
+                  for i, line in enumerate(lines):
+                      if any(word in line for word in ('LoadIcon', 'LoadImage', 'IDI_APPLICATION', 'WM_SETICON', 'hIcon:')):
+                          print(str(path.relative_to(root)), i + 1)
+                          print('\n'.join(lines[max(0, i-3):i+9]))
+      - name: Commit generated sources on the PR branch only
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = fix/windows-icon-terminal-tabs
+          rm .kea-pr-prepare.py .github/workflows/prepare-kea.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git commit -m "Integrate independent terminal tabs and embedded Windows application icon"
+          git push origin HEAD:refs/heads/fix/windows-icon-terminal-tabs
