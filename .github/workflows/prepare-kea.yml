@@ -9,9 +9,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/fix/windows-icon-terminal-tabs'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,28 +18,71 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Apply source changes
+      - name: Apply reviewed source corrections
+        shell: python
         run: |
-          python .kea-pr-prepare.py
-          sed -i 's/embed-resource = "=3.0.6"/embed-resource = "=3.0.11"/' crates/kea-app/Cargo.toml
-      - name: Generate deterministic Windows icon
+          from pathlib import Path
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              assert text.count(old) == 1, (path, old, text.count(old))
+              p.write_text(text.replace(old, new))
+          replace('crates/kea-app/src/app/tabs.rs', 'IconName::X', 'IconName::Close')
+          replace('crates/kea-app/tests/unit/config/keybindings.rs', 'original.settings_entries().len(), 27', 'original.settings_entries().len(), 33')
+          replace('crates/kea-app/src/editor/command.rs',
+              '    recall.inactive.insert(recall.active_tab, old);',
+              '    // Do not resurrect an empty context after its terminal was closed.\n    if old.editor.is_some() || old.history.len() != 0 {\n        recall.inactive.insert(recall.active_tab, old);\n    }')
+          p = Path('scripts/smoke-linux.sh')
+          text = p.read_text().replace('130 51 click', '130 85 click').replace('settings_transition "$((WIDTH-214))" 51', 'settings_transition "$((WIDTH-214))" 85')
+          p.write_text(text)
+          print('Remaining coordinate-sensitive smoke input:')
+          for n, line in enumerate(text.splitlines(), 1):
+              if 'mousemove' in line or 'settings_transition ' in line:
+                  print(n, line)
+          p = Path('crates/kea-app/tests/unit/config/keybindings.rs')
+          p.write_text(p.read_text() + '''
+          #[test]
+          fn workspace_ancestor_does_not_steal_live_terminal_shortcuts() {
+              let keymap = Keymap::defaults_for(Platform::Other);
+              let map = gpui::Keymap::new(keymap.gpui_bindings());
+              for (names, expected) in [
+                  (vec!["KeaChrome", "Kea", "KeaCommand", "Input"], true),
+                  (vec!["KeaChrome", "Kea", "KeaTerminal"], false),
+              ] {
+                  let contexts = names.iter().map(|name| gpui::KeyContext::parse(name).unwrap()).collect::<Vec<_>>();
+                  for spec in ["ctrl-shift-t", "ctrl-shift-w", "ctrl-tab", "ctrl-shift-tab", "ctrl-shift-pageup", "ctrl-shift-pagedown"] {
+                      let bindings = map.bindings_for_input(&[key(spec)], &contexts).0;
+                      let captured = bindings.iter().any(|binding| binding.action().as_any().downcast_ref::<Invoke>().is_some());
+                      assert_eq!(captured, expected, "{names:?}: {spec}");
+                  }
+              }
+          }
+          ''')
+          p = Path('crates/kea-app/tests/unit/editor/command.rs')
+          p.write_text(p.read_text() + '''
+          #[gpui::test]
+          fn closed_recall_contexts_do_not_accumulate(cx: &mut TestAppContext) {
+              cx.update(|cx| {
+                  for id in 0..1000 {
+                      activate_tab_history(id, cx);
+                      forget_tab_history(id, cx);
+                  }
+                  activate_tab_history(1000, cx);
+                  assert!(cx.default_global::<DraftRecallGlobal>().inactive.is_empty());
+              });
+          }
+          ''')
+      - name: Format and verify deterministic icon
         run: |
-          python scripts/generate-windows-icon.py
-          python scripts/generate-windows-icon.py --check
-      - name: Resolve build dependency and format source
-        run: |
-          cargo metadata --format-version 1 > /tmp/kea-metadata.json 2>/tmp/metadata.log || { tail -80 /tmp/metadata.log; exit 1; }
           cargo fmt --all
-          git diff --stat
-      - name: Commit source on the PR branch only
+          python scripts/generate-windows-icon.py --check
+          git diff --check
+      - name: Commit source changes only
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = fix/windows-icon-terminal-tabs
-          # Workflow updates require separate authorized connector writes.
-          git restore .github/workflows/ci.yml
-          rm .kea-pr-prepare.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add --all
-          git commit -m "Integrate independent terminal tabs and embedded Windows application icon"
+          git add crates/kea-app scripts/smoke-linux.sh
+          git commit -m "Fix native close icon, release closed recall state and test tab shortcut isolation"
           git push origin HEAD:refs/heads/fix/windows-icon-terminal-tabs
