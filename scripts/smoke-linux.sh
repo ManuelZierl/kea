@@ -711,7 +711,7 @@ done
 [[ -n "$found" ]] || { cat smoke-artifacts/document.log; exit 1; }
 put_clipboard KEEP
 key ctrl+z ctrl+a ctrl+c; assert_clipboard KEEP
-xdotool mousemove --window "$window" "$((WIDTH-320))" 200 click 1
+xdotool mousemove --window "$window" "$((WIDTH-320))" 234 click 1
 sleep .3
 key ctrl+a ctrl+c
 clipboard >smoke-artifacts/selected-block.txt
