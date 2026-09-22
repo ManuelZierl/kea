@@ -1,0 +1,37 @@
+name: Adjust tab smoke coordinate
+on:
+  push:
+    branches: [fix/windows-icon-terminal-tabs]
+permissions:
+  contents: write
+concurrency:
+  group: adjust-tab-smoke
+  cancel-in-progress: false
+jobs:
+  adjust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-icon-terminal-tabs
+      - name: Update verified command-block position
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('scripts/smoke-linux.sh')
+          text = path.read_text()
+          before = 'xdotool mousemove --window "$window" "$((WIDTH-320))" 200 click 1'
+          after = 'xdotool mousemove --window "$window" "$((WIDTH-320))" 234 click 1'
+          assert text.count(before) == 1, 'Only the verified command-block click may change'
+          path.write_text(text.replace(before, after))
+      - name: Commit source correction only
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = fix/windows-icon-terminal-tabs
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/smoke-linux.sh
+          git commit -m "Keep command-block selection smoke aligned below the terminal tab strip"
+          git push origin HEAD:refs/heads/fix/windows-icon-terminal-tabs
