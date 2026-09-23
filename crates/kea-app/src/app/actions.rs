@@ -48,6 +48,38 @@ impl KeaView {
             }
         };
 
+        self.apply_shared_settings(self.settings.clone(), change, window, cx);
+        cx.emit(WorkspaceEvent::SettingsChanged(
+            self.settings.clone(),
+            change,
+        ));
+
+        self.notice = Some(
+            if matches!(
+                change,
+                SettingsChange::PersistHistory(_) | SettingsChange::HistoryPersistence(_)
+            ) {
+                format!(
+                    "Settings saved to {}. Draft-history persistence changes take effect on the next launch.",
+                    path.display()
+                )
+            } else {
+                format!("Settings saved to {}.", path.display())
+            },
+        );
+        cx.notify();
+    }
+
+    /// Apply a successfully saved global change without writing the file again.
+    pub(super) fn apply_shared_settings(
+        &mut self,
+        settings: Settings,
+        change: settings_window::SettingsChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use settings_window::SettingsChange;
+        self.settings = settings;
         match change {
             SettingsChange::Appearance(_) | SettingsChange::FontSize(_) => {
                 rendering::apply_appearance(&self.settings, window, cx);
@@ -73,19 +105,6 @@ impl KeaView {
             }
             _ => {}
         }
-        self.notice = Some(
-            if matches!(
-                change,
-                SettingsChange::PersistHistory(_) | SettingsChange::HistoryPersistence(_)
-            ) {
-                format!(
-                    "Settings saved to {}. Draft-history persistence changes take effect on the next launch.",
-                    path.display()
-                )
-            } else {
-                format!("Settings saved to {}.", path.display())
-            },
-        );
         cx.notify();
     }
 
@@ -253,7 +272,15 @@ impl KeaView {
                 self.focus_editor(window, cx);
                 cx.notify();
             }
-            Action::Quit => cx.quit(),
+            Action::Quit
+            | Action::NewTerminal
+            | Action::CloseTerminal
+            | Action::NextTerminal
+            | Action::PreviousTerminal
+            | Action::MoveTerminalLeft
+            | Action::MoveTerminalRight => {
+                cx.emit(WorkspaceEvent::Action(event.action));
+            }
         }
     }
 

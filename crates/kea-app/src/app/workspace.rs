@@ -135,10 +135,10 @@ impl KeaView {
                         if !this.focus.is_focused(window) {
                             this.session.terminal_selection_focus_lost();
                         }
-                        if this.settings.animate_logo && this.poll_composer_logo() {
+                        if this.visible && this.settings.animate_logo && this.poll_composer_logo() {
                             cx.notify();
                         }
-                        if this.settings.animate_logo && this.logo_warmed_frames < LOGO_FRAME_COUNT {
+                        if this.visible && this.settings.animate_logo && this.logo_warmed_frames < LOGO_FRAME_COUNT {
                             let color = cx.theme().foreground;
                             for _ in 0..6 {
                                 let frame = this.logo_warmed_frames;
@@ -159,6 +159,7 @@ impl KeaView {
         });
         let show_blocks = settings.show_blocks;
         Self {
+            visible: true,
             session,
             document,
             shell_metadata: ShellMetadata::default(),

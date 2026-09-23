@@ -3,9 +3,9 @@ title: Interaction contract
 nav_order: 3
 ---
 
-# One session, independent surfaces
+# Per-tab sessions, independent surfaces
 
-Kea has one live terminal session and one persistent editor surface. They coexist. There is no Document/PTY mode and no hidden submission-target state.
+Each Kea tab has one live terminal session and one persistent editor surface. They coexist. There is no Document/PTY mode and no hidden submission-target state.
 
 The optional block inspector is a derived view of observed shell markers. Hiding it does not change input routing, execution, the child process, recording or replay.
 
@@ -150,3 +150,5 @@ This does not bypass SmartScreen/application-control policies, and unsigned deve
 ## Validation boundary
 
 Compilation/unit tests, graphical acceptance and real OS testing are separate evidence. Important ongoing compatibility targets include Windows + OpenCode, actual macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, extended keyboard protocol negotiation, accessibility and long-session scrollback/selection behavior.
+
+Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).

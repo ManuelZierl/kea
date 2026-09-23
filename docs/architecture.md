@@ -5,7 +5,7 @@ nav_order: 8
 
 # Architecture
 
-## One session, independent surfaces
+## Per-tab sessions, independent surfaces
 
 Kea displays a live terminal and a persistent editor together. Focus decides who receives physical input. A block inspector is optional presentation, hidden by default; it is not an execution mode. See [interaction contract](unified-session.md).
 
@@ -156,3 +156,5 @@ Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks
 ## Platform validation
 
 Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, keyboard protocol negotiation, accessibility, long-session scrollback/selection behavior and packaging.
+
+Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).

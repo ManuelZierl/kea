@@ -3165,6 +3165,7 @@ name = "kea-app"
 version = "0.0.1-alpha.1"
 dependencies = [
  "anyhow",
+ "embed-resource",
  "gpui",
  "gpui-component",
  "gpui-component-assets",

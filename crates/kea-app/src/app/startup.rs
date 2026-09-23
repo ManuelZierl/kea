@@ -51,13 +51,15 @@ pub(super) fn run() -> Result<()> {
                 args.next().context("--record needs a new file path")?,
             ));
         } else if arg == "--help" || arg == "-h" {
-            let help = "Kea — one terminal session with a persistent text editor
+            let help = "Kea — independent terminal tabs with persistent text editors
 
 kea [--terminal-focus] [--record NEW.kea] [-- PROGRAM ARG...]
 kea --replay SESSION.kea
 kea --demo
 
-Terminal and editor are visible together; focus decides who receives keyboard input.
+Each tab keeps a terminal and editor visible together; focus decides who receives keyboard input.
+From composer: Ctrl+Shift+T opens a local shell, Ctrl+Shift+W closes a tab, Ctrl+Tab switches.
+Ctrl+Shift+PageUp/PageDown reorders tabs. Live terminal input keeps its native shortcuts.
 Editor defaults: Enter = new line, Ctrl+Enter = Submit to terminal, Tab = complete.
 Unknown or nonempty terminal input requires a second Enter. Other keys cancel.
 Ctrl+Shift+Enter remains a compatibility alias with the same safety policy.
@@ -100,35 +102,8 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         );
     }
 
-    #[cfg(windows)]
-    if !demo && !replay_requested && command.is_empty() {
-        command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
-    }
-
-    let shell = if demo || replay_requested {
-        None
-    } else {
-        ShellFlavor::detect(&command)
-    };
-    // -Command runs after the user's profile; -NoExit keeps the interactive
-    // shell. Unlike typing bootstrap source, this cannot leak through PSReadLine
-    // redraws or pollute the interactive history.
-    if shell == Some(ShellFlavor::PowerShell) {
-        if command.is_empty() {
-            command.push(std::env::var_os("SHELL").context("PowerShell executable unavailable")?);
-        }
-        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
-        if !command
-            .iter()
-            .any(|arg| arg.to_string_lossy().eq_ignore_ascii_case("-noexit"))
-        {
-            command.push("-NoExit".into());
-        }
-        command.push("-Command".into());
-        command.push(script.into());
-    }
-    let mut session = if demo {
-        Session::demo()?
+    let (session, shell) = if demo {
+        (Session::demo()?, None)
     } else if let Some(path) = replay {
         let loaded = kea_core::read_from(File::open(path)?)?;
         let mut session = Session::from_recording(loaded.recording)?;
@@ -137,14 +112,11 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             session.warning =
                 Some("Recovered complete events; the final recording frame was truncated.".into());
         }
-        session
+        (session, None)
     } else {
-        Session::spawn(&command, kea_core::Size::new(100, 26)?, record.as_deref())?
+        spawn_terminal(command, record.as_deref())?
     };
 
-    if shell == Some(ShellFlavor::Posix) {
-        session.send_hidden(ShellFlavor::Posix.integration(&command))?;
-    }
     let document = Document::from_recording(session.recording());
     let initial_focus = if demo || terminal_focus || shell.is_none() {
         InitialFocus::Terminal
@@ -243,7 +215,12 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                         }
                     });
                 });
-                let app = cx.new(|_| KeaRoot { view });
+                let app = cx.new(|cx| KeaRoot::new(view, window, cx));
+                let weak = app.downgrade();
+                window.on_window_should_close(cx, move |window, cx| {
+                    weak.update(cx, |root, cx| root.should_close(window, cx))
+                        .unwrap_or(true)
+                });
                 cx.new(|cx| Root::new(app, window, cx))
             }) {
                 eprintln!("kea: cannot open window: {error:#}");
@@ -279,4 +256,37 @@ pub(super) fn show_message(message: String) {
         });
         cx.activate(true);
     });
+}
+
+/// Shared startup path for a fresh local terminal. Never changes process-wide cwd.
+/// The caller alone supplies explicit command/recording options for the first tab.
+pub(super) fn spawn_terminal(
+    mut command: Vec<OsString>,
+    record: Option<&std::path::Path>,
+) -> Result<(Session, Option<ShellFlavor>)> {
+    #[cfg(windows)]
+    if command.is_empty() {
+        command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
+    }
+    let shell = ShellFlavor::detect(&command);
+    // Install after the user's profile; do not inject source through PSReadLine.
+    if shell == Some(ShellFlavor::PowerShell) {
+        if command.is_empty() {
+            command.push(std::env::var_os("SHELL").context("PowerShell executable unavailable")?);
+        }
+        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
+        if !command
+            .iter()
+            .any(|arg| arg.to_string_lossy().eq_ignore_ascii_case("-noexit"))
+        {
+            command.push("-NoExit".into());
+        }
+        command.push("-Command".into());
+        command.push(script.into());
+    }
+    let mut session = Session::spawn(&command, kea_core::Size::new(100, 26)?, record)?;
+    if shell == Some(ShellFlavor::Posix) {
+        session.send_hidden(ShellFlavor::Posix.integration(&command))?;
+    }
+    Ok((session, shell))
 }

@@ -9,7 +9,7 @@
 <h1 align="center">Kea</h1>
 <p align="center"><strong>A terminal workspace with a real editor for input.</strong></p>
 
-Kea keeps a terminal and a multiline editor visible together over one session.
+Kea keeps a terminal and a multiline editor visible together in each independent tab.
 Compose a command or prompt and submit it to the active terminal receiver,
 then recall and edit it without losing your next draft. Your shell, SSH, Vim,
 REPLs and other terminal applications keep their native input behavior.
@@ -22,6 +22,8 @@ real-platform compatibility is still being validated. See the
 [Documentation](https://manuelzierl.github.io/kea/) ·
 [Releases](https://github.com/ManuelZierl/kea/releases) ·
 [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md)
+
+See [Terminal tabs](docs/terminal-tabs.md) for creation, switching, reordering and per-tab state.
 
 ## Why Kea?
 
@@ -57,6 +59,8 @@ cargo run --locked --release
 
 | Action | Default |
 | --- | --- |
+| New terminal / close terminal | Ctrl+Shift+T / Ctrl+Shift+W |
+| Next / previous terminal | Ctrl+Tab / Ctrl+Shift+Tab |
 | Newline in the composer | Enter |
 | Submit draft to the active terminal receiver | Ctrl+Enter |
 | Switch terminal ⇄ composer | Ctrl+L / Cmd+L |

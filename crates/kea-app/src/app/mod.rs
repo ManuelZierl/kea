@@ -6,7 +6,9 @@ mod rendering;
 mod settings_window;
 mod shell_metadata;
 mod startup;
+mod tabs;
 mod terminal_input;
+use tabs::{KeaRoot, WorkspaceEvent};
 mod workspace;
 
 use gpui::{prelude::*, *};
@@ -60,6 +62,7 @@ struct TerminalFontMetrics {
 }
 
 struct KeaView {
+    visible: bool,
     session: Session,
     document: Document,
     shell_metadata: ShellMetadata,
@@ -111,20 +114,6 @@ struct KeaView {
     _filter_change: Subscription,
     _focus_lost: Subscription,
     _memory_changed: Subscription,
-}
-
-struct KeaRoot {
-    view: Entity<KeaView>,
-}
-
-impl Render for KeaRoot {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-        div()
-            .size_full()
-            .child(self.view.clone())
-            .children(dialog_layer)
-    }
 }
 
 fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {

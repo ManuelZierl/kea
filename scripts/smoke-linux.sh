@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export PYTHONDONTWRITEBYTECODE=1
+source scripts/smoke-input.sh
 mkdir -p smoke-artifacts
 exec > >(tee -a smoke-artifacts/acceptance.log) 2>&1
 # Fixed click positions require the same UI font as the fixture. Without Ubuntu,
@@ -74,9 +75,29 @@ assert_clipboard() {
   printf 'Expected <%s>; got <%s>\n' "$1" "$actual"
   exit 1
 }
+# Read back the focused field before proceeding. A fresh sentinel prevents a
+# previous copy from making an unhandled Ctrl+C look like a successful edit.
+assert_selected_field() {
+  put_clipboard kea-settings-field-sentinel
+  key ctrl+a ctrl+c
+  assert_clipboard "$1"
+}
+# Saving follows asynchronous UI dispatch. Observe the exact persisted
+# value within a bounded wait; never retry the click or rewrite the file.
+assert_file_line() {
+  local file="$1" expected="$2"
+  for _ in $(seq 1 30); do
+    kill -0 "$kea_pid" || return 1
+    if [[ -f "$file" ]] && grep -Fqx -- "$expected" "$file"; then return; fi
+    sleep .1
+  done
+  printf 'Expected saved line <%s> in %s; actual contents:\n' "$expected" "$file" >&2
+  if [[ -f "$file" ]]; then cat "$file" >&2; else echo '(file missing)' >&2; fi
+  return 1
+}
 # The Composer button stays in the toolbar across resize; a bottom-relative
 # canvas click can land in the terminal when the composer hits its minimum size.
-focus_editor() { xdotool mousemove --window "$window" 130 51 click 1; sleep .2; }
+focus_editor() { smoke_click 130 85; sleep .2; }
 # A dialog can start painting later on software-rendered/loaded runners. Wait
 # for its header to change and finish animating before targeting its contents.
 # The crop excludes the terminal and editor carets, which blink independently.
@@ -87,7 +108,7 @@ settings_transition() {
   local before previous current stable=0
   before=$(settings_header_frame)
   previous=$before
-  xdotool mousemove --window "$window" "$1" "$2" click 1
+  smoke_click "$1" "$2"
   for _ in $(seq 1 50); do
     sleep .1
     kill -0 "$kea_pid"
@@ -159,20 +180,22 @@ printf 'theme = dark\n' > "$KEA_SETTINGS"
 wait_window smoke-artifacts/settings-ui.log
 focus_editor
 xdotool type --clearmodifiers --delay 10 'settings-draft'
-settings_transition "$((WIDTH-214))" 51
-xdotool mousemove --window "$window" "$((WIDTH/2+232))" 274 click 1
-sleep .5
-grep -q '^theme = light$' "$KEA_SETTINGS"
+settings_transition "$((WIDTH-214))" 85
+smoke_click "$((WIDTH/2+232))" 274
+assert_file_line "$KEA_SETTINGS" 'theme = light'
 import -window "$window" smoke-artifacts/settings-light.png
 # Keybindings use the component editor, save a validated snapshot, and remain
 # restart-scoped. Closing/reopening must show saved values without losing draft.
 settings_transition "$((WIDTH/2-200))" 95
-xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
-key ctrl+a
-xdotool type --clearmodifiers 'alt-l'
-xdotool mousemove --window "$window" "$((WIDTH/2))" 311 click 1
-sleep .3
-grep -q '^focus_editor = alt-l$' "$KEA_KEYBINDINGS"
+smoke_click "$((WIDTH/2))" 404
+assert_selected_field ctrl-l
+# Do not race the first input frame or move focus to Save before the
+# component has accepted the complete replacement through real input.
+xdotool type --clearmodifiers --delay 50 'alt-l'
+assert_selected_field alt-l
+import -window "$window" smoke-artifacts/keybindings-edited.png
+smoke_click "$((WIDTH/2))" 311
+assert_file_line "$KEA_KEYBINDINGS" 'focus_editor = alt-l'
 import -window "$window" smoke-artifacts/keybindings-saved.png
 key Escape
 import -window "$window" smoke-artifacts/settings-draft-preserved.png
@@ -189,16 +212,15 @@ python3 - <<'PY'
 from pathlib import Path
 assert Path('smoke-artifacts/settings-ui.bin').read_bytes() == b't'
 PY
-settings_transition "$((WIDTH-214))" 51
+settings_transition "$((WIDTH-214))" 85
 settings_transition "$((WIDTH/2-200))" 95
-xdotool mousemove --window "$window" "$((WIDTH/2))" 404 click 1
-key ctrl+a ctrl+c
-assert_clipboard alt-l
+smoke_click "$((WIDTH/2))" 404
+assert_selected_field alt-l
 xdotool windowsize --sync "$window" 760 500
 sleep .3
 xdotool mousemove --window "$window" 650 360 click --repeat 100 --delay 5 5
 import -window "$window" smoke-artifacts/keybindings-small-bottom.png
-xdotool mousemove --window "$window" 80 95 click 1
+smoke_click 80 95
 sleep .3
 xdotool mousemove --window "$window" 650 360 click --repeat 100 --delay 5 5
 import -window "$window" smoke-artifacts/settings-small-bottom.png
@@ -306,7 +328,7 @@ key ctrl+a
 put_clipboard 'echo ca'
 key ctrl+v Tab
 sleep .5
-xdotool mousemove --window "$window" 150 "$((HEIGHT-44))" click 1
+smoke_click 150 "$((HEIGHT-44))"
 key ctrl+a ctrl+c
 assert_clipboard 'echo café'
 # Long candidates wrap beyond the popup viewport: keyboard selection must scroll.
@@ -392,11 +414,11 @@ key ctrl+a BackSpace
 key ctrl+r
 sleep .4
 # Open Actions with the mouse, select Forget by keyboard, then confirm by mouse.
-xdotool mousemove --window "$window" 590 "$((HEIGHT-270))" click 1
+smoke_click 590 "$((HEIGHT-270))"
 sleep .3
 key Up Return
 import -window "$window" smoke-artifacts/reverse-search-forget-confirm.png
-xdotool mousemove --window "$window" 328 "$((HEIGHT-270))" click 1
+smoke_click 328 "$((HEIGHT-270))"
 for _ in $(seq 1 40); do
   memory_files=("$KEA_MEMORY_DIR"/*.kmem)
   [[ ${#memory_files[@]} -eq 0 ]] && break
@@ -711,7 +733,7 @@ done
 [[ -n "$found" ]] || { cat smoke-artifacts/document.log; exit 1; }
 put_clipboard KEEP
 key ctrl+z ctrl+a ctrl+c; assert_clipboard KEEP
-xdotool mousemove --window "$window" "$((WIDTH-320))" 200 click 1
+smoke_click "$((WIDTH-320))" 234
 sleep .3
 key ctrl+a ctrl+c
 clipboard >smoke-artifacts/selected-block.txt
@@ -729,7 +751,7 @@ for line in 2 3 4 5 6; do
   key Return
   xdotool type --clearmodifiers --delay 10 "LINE-$line"
 done
-xdotool mousemove --window "$window" 85 "$((HEIGHT-170))" click 1
+smoke_click 85 "$((HEIGHT-170))"
 key Home shift+End ctrl+c
 assert_clipboard LINE-1
 key ctrl+a BackSpace
