@@ -50,7 +50,7 @@ pub fn activate_tab_history(id: u64, cx: &mut App) {
         editor: recall.current_editor.take(),
     };
     // Do not resurrect an empty context after its terminal was closed.
-    if old.editor.is_some() || old.history.len() != 0 {
+    if old.editor.is_some() || !old.history.is_empty() {
         recall.inactive.insert(recall.active_tab, old);
     }
     let state = recall.inactive.remove(&id).unwrap_or_else(|| {
