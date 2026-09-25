@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "output-scroll",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "content": "fn output(&mut self) { self.document_scroll.scroll_to_bottom(); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "code": "scroll",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "input-driven-and-selection-preserving",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/actions.rs",
+          "content": "fn return_to_bottom(&mut self) { self.session.scroll_bottom(); }\n"
+        },
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "content": "fn output(&mut self) { if reading { view.pending = true; } }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

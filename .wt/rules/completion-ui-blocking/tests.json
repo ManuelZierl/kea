@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "filesystem-completion-signal",
+      "files": [
+        {
+          "path": "crates/kea-app/src/editor/completion.rs",
+          "content": "let entries = std::fs::read_dir(directory)?;\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/editor/completion.rs",
+          "code": "blocking-call",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "nonblocking-channel-and-background-worker",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/composer.rs",
+          "content": "std::thread::spawn(move || { let _ = tx.send(result); });\nlet result = rx.try_recv();\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "provider-synchronous-connect",
+      "files": [
+        {
+          "path": "crates/kea-app/src/editor/provider.rs",
+          "content": "let stream = TcpStream::connect_timeout(&address, timeout)?;\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/editor/provider.rs",
+          "code": "blocking-call",
+          "kind": "review"
+        }
+      ]
+    }
+  ]
+}

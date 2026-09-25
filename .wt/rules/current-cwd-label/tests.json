@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "current-label-requires-review",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/rendering.rs",
+          "content": "(Some(path), true) => format!(\"Current shell directory: {path}\"),\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/rendering.rs",
+          "code": "current-label",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "last-reported-and-docs-are-not-ui-label",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/rendering.rs",
+          "content": "format!(\"Shell directory (last reported): {path}\")\n"
+        },
+        {
+          "path": "AGENTS.md",
+          "content": "Current shell directory only when ready\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

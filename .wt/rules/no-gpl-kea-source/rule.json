@@ -1,0 +1,36 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "gpl-kea": {
+      "help": "Remove copied GPL code; use a compatible dependency or clean-room implementation.",
+      "kind": "violation",
+      "message": "AGENTS.md: do not copy GPL Zed code into MIT Kea crates."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "no-gpl-kea-source",
+  "mode": "enforced",
+  "patterns": {
+    "gpl_header": "(?im)^(?:\\s*(?://|/\\*|\\*|#)\\s*)?(?:SPDX-License-Identifier:\\s*(?:GPL|AGPL)(?:-[0-9.]+)?\\b|(?:Copyright|©)\\s*(?:\\(c\\)\\s*)?(?:20[0-9]{2}(?:-[0-9]{4})?\\s+)?(?:Zed Industries|Zed team)\\b)"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/**/*.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "No GPL Zed headers in Kea crates"
+}

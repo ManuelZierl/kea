@@ -1,0 +1,1 @@
+editor/provider.rs:45 opens the optional provider configuration during workspace creation (workspace.rs:22), not in the completion event handler. The read is capped to MAX_CONFIG+1 bytes at provider.rs:46; it does not block a live keystroke's completion path. Startup I/O may delay initial window creation but is not a completion UI-thread operation.

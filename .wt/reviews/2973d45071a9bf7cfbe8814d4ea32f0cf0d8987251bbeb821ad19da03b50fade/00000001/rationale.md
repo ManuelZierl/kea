@@ -1,0 +1,1 @@
+New editor only: document_view.rs:208 checks that the block has no visible editor yet. follow_output_tail affects that new editor, not an existing reader's focused editor or selection; the helper checks the new editor's selection before moving its caret.

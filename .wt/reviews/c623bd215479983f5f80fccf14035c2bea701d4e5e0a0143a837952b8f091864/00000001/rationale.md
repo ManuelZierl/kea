@@ -1,0 +1,1 @@
+recording.rs:75-83 calculates payload plus per-event overhead, rejects MAX_EVENTS or exceeding MAX_BYTES before events.push, and returns an error. session.rs:397-407 surfaces capture exhaustion without blocking live input.

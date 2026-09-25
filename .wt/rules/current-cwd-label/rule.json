@@ -1,0 +1,36 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "current-label": {
+      "help": "Verify the branch uses input_context.shell_ready() and that remote/busy state never claims current cwd.",
+      "kind": "review",
+      "message": "AGENTS.md: label cwd Current shell directory only at an explicitly reported idle integrated shell prompt; otherwise say last reported."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "current-cwd-label",
+  "mode": "advisory",
+  "patterns": {
+    "label": "Current shell directory"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/app/rendering.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Current cwd label needs explicit ready shell"
+}

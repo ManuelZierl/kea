@@ -1,0 +1,36 @@
+{
+  "code": {
+    "capabilities": [
+      "ast.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "prompt-guess": {
+      "help": "Check whether this prompt-character test influences submission readiness rather than display.",
+      "kind": "review",
+      "message": "AGENTS.md: never infer submission readiness from terminal prompt text, cursor position or idle time; use explicit input context reports."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "no-prompt-readiness-guess",
+  "mode": "advisory",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/terminal/context.rs",
+      "crates/kea-app/src/app/composer.rs",
+      "crates/kea-app/src/app/workspace.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Readiness requires explicit integrated-shell reports"
+}

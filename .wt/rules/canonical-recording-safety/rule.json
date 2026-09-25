@@ -1,0 +1,45 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "lossy-canonical": {
+      "help": "Verify this conversion does not replace recorded output.",
+      "kind": "review",
+      "message": "AGENTS.md: canonical recording and raw output retain exact bytes; lossy UTF-8 belongs only in display projections."
+    },
+    "overwrite-recording": {
+      "help": "Verify a create_new path is used for the recording destination.",
+      "kind": "review",
+      "message": "AGENTS.md: persisted recordings are explicit and non-overwriting."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "canonical-recording-safety",
+  "mode": "advisory",
+  "patterns": {
+    "lossy": "\\b(?:String::)?from_utf8_lossy\\s*\\(",
+    "overwrite": "\\b(?:File::create|fs::write|std::fs::write|\\.truncate\\(true\\))\\s*\\(?"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-core/src/format.rs",
+      "crates/kea-core/src/recording.rs",
+      "crates/kea-session/src/observation.rs",
+      "crates/kea-session/src/journal.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Canonical bytes and non-overwriting recordings"
+}

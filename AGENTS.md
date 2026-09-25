@@ -48,6 +48,8 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 
 Run cargo fmt, portable tests/Clippy with -D warnings, cargo test -p kea-app --lib, cargo build -p kea-app and the Linux desktop smoke test where dependencies exist. Commit Cargo.lock and use --locked. Preserve real assertions rather than disabling tests to obtain a green build.
 
+Run `wt validate --no-global`, `wt test --no-global` and `wt check --no-global` for the repository's `.wt/` invariant rules; inspect each new finding rather than dismissing it wholesale. When fixing a bug a rule could have caught, add a focused wt rule with positive and negative fixtures.
+
 Outstanding work includes cross-platform/application acceptance and edge cases for terminal mouse, selection and scrollback; higher extended-keyboard protocol levels; image protocols; actual OS input-service/accessibility acceptance; long-session indexing/checkpoints; and platform packages. Existing terminal support is implemented by Kea's adapters, not automatically provided by the editor dependency.
 
 Multi-terminal ownership: read docs/terminal-tabs.md. Never share a PTY, input context, pending submission, completion result or draft recall cursor across tabs. Global settings and explicit saved memories may be shared.

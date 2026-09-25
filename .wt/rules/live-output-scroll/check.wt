@@ -1,0 +1,6 @@
+for m in file.ast_match("rust", "$SCROLL.scroll_to_bottom()") {
+    emit(m.span, "scroll");
+}
+for m in file.ast_match("rust", "command_editor::follow_output_tail($$$ARGS)") {
+    emit(m.span, "scroll");
+}

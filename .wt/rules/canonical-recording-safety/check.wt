@@ -1,0 +1,6 @@
+for m in rx::find_all(file, "lossy") {
+    emit(m.span, "lossy-canonical");
+}
+for m in rx::find_all(file, "overwrite") {
+    emit(m.span, "overwrite-recording");
+}

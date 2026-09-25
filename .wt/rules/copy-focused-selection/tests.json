@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "copy-view-fallback",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/actions.rs",
+          "content": "fn invoke(&mut self, event: Action, cx: &mut Context) { match event { Action::Copy => self.copy_document(cx), _ => {} } }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/actions.rs",
+          "code": "copy-export",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "explicit-copy-document-and-generic-copy",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/actions.rs",
+          "content": "fn invoke(&mut self, event: Action, cx: &mut Context) { match event { Action::Copy => self.copy_terminal_selection(cx), Action::CopyDocument => self.copy_document(cx), _ => {} } }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

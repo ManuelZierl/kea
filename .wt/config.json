@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "scan": {
+    "respect_gitignore": true,
+    "honor_git_local_excludes": true,
+    "include_hidden": true,
+    "max_file_bytes": 4194304,
+    "exclude": []
+  },
+  "rules": {"mode_overrides": {}}
+}

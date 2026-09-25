@@ -1,0 +1,1 @@
+document_view.rs:233-250 checks focus or a nonempty selection before updating the existing editor. If reading, it marks pending and does not replace text or follow the tail. This call runs only in the non-reading branch; follow_output_tail also tests selection before moving the caret.

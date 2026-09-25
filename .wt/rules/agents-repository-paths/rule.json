@@ -1,0 +1,42 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1",
+      "repo.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "missing-path": {
+      "help": "Create the linked file or correct the AGENTS.md path.",
+      "kind": "violation",
+      "message": "AGENTS.md: referenced repository documentation paths must exist so invariant guidance is reachable."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "repository",
+  "id": "agents-repository-paths",
+  "mode": "enforced",
+  "patterns": {
+    "referenced_path": "\\b(?:docs/[A-Za-z0-9_./-]+|README|CONTRIBUTING)\\.md\\b"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "AGENTS.md",
+      "README.md",
+      "CONTRIBUTING.md",
+      "docs/**/*.md"
+    ],
+    "require_files": [
+      "AGENTS.md"
+    ]
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "AGENTS.md repository document references resolve"
+}

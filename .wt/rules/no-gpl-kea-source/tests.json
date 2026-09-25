@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "gpl-and-zed-headers",
+      "files": [
+        {
+          "path": "crates/kea-app/src/lib.rs",
+          "content": "// SPDX-License-Identifier: GPL-3.0-only\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/lib.rs",
+          "code": "gpl-kea",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "compatible-vendor-and-prose",
+      "files": [
+        {
+          "path": "vendor/gpui-component/src/lib.rs",
+          "content": "// SPDX-License-Identifier: Apache-2.0\n"
+        },
+        {
+          "path": "crates/kea-app/src/lib.rs",
+          "content": "// Do not copy GPL Zed code into MIT Kea crates.\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

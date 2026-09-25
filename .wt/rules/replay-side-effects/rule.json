@@ -1,0 +1,38 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "replay-effect": {
+      "help": "Move the side effect to a live-only host path outside the historical projection.",
+      "kind": "violation",
+      "message": "AGENTS.md: replay is observation, never execution; historical projections cannot write PTY/input, clipboard, URL or window."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "replay-side-effects",
+  "mode": "enforced",
+  "patterns": {
+    "effects": "\\b(?:pty\\.send|session\\.send|write_to_clipboard|open_url|open_window|window\\.dispatch_action|Command::new|Pty::spawn)\\s*\\("
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-core/src/replay.rs",
+      "crates/kea-session/src/presentation.rs",
+      "crates/kea-alacritty/src/engine.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Historical projection must not perform host side effects"
+}

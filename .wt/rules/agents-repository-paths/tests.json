@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "broken-agent-doc-reference",
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "content": "Read docs/terminal-text-selection.md before changing selection.\n"
+        },
+        {
+          "path": "README.md",
+          "content": "Kea\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "AGENTS.md",
+          "code": "missing-path",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "actual-agent-reference-and-external-url",
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "content": "Read README.md and docs/terminal-text-selection.md; https://example.org/reference\n"
+        },
+        {
+          "path": "README.md",
+          "content": "Kea\n"
+        },
+        {
+          "path": "docs/terminal-text-selection.md",
+          "content": "# Selection\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

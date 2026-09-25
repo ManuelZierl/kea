@@ -1,0 +1,9 @@
+for m in file.ast_match("rust", "$TEXT.ends_with(\"$ \" )") {
+    emit(m.span, "prompt-guess");
+}
+for m in file.ast_match("rust", "$TEXT.ends_with(\"> \" )") {
+    emit(m.span, "prompt-guess");
+}
+for m in file.ast_match("rust", "$TEXT.contains(\"$ \" )") {
+    emit(m.span, "prompt-guess");
+}

@@ -1,0 +1,5 @@
+for m in rx::find_all(file, "cargo_command") {
+    if !m.text.contains("--locked") {
+        emit(m.span, "unlocked");
+    }
+}
