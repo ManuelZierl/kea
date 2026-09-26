@@ -18,7 +18,16 @@ impl KeaView {
             Vec::new()
         };
         let hint = recommendations.first().map(Recommendation::label);
-        let mut column = div().flex().flex_col().flex_1().min_w_0().min_h_0();
+        // The parent is a horizontal, items-start row. Flex growth fills its
+        // width, not its height: without h_full the nested input collapses to
+        // its 72 px minimum and scrolls several lines before the panel is full.
+        let mut column = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .min_h_0();
         if sections.len() == 1 {
             column = column.child(
                 Input::new(&sections[0])

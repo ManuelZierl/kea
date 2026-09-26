@@ -15,18 +15,6 @@ impl KeaView {
         } else {
             event.keystroke.key.as_str()
         };
-        #[cfg(debug_assertions)]
-        if physical == "enter" {
-            eprintln!(
-                "composer routing: action={:?} owned={} pending={} released={} focused={} active={}",
-                self.keymap.action_for(&event.keystroke),
-                self.composer_workflow.owned_keys.iter().any(|key| key == physical),
-                self.pending_run.is_some(),
-                self.pending_run.as_ref().is_some_and(|pending| pending.released),
-                self.editor.focus_handle(cx).is_focused(window),
-                window.is_window_active(),
-            );
-        }
         if self
             .composer_workflow
             .owned_keys
