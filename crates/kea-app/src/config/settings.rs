@@ -43,6 +43,12 @@ pub struct Settings {
     pub animate_logo: bool,
     /// Persist successful compose submissions; explicit saved memories always persist.
     pub history_persistence: bool,
+    /// Require an explicit Enter before forwarding Ctrl-C; Copy is unaffected.
+    pub confirm_ctrl_c: bool,
+    /// Passive recommendations never edit or submit a draft.
+    pub composer_suggestions: bool,
+    /// Empty disables textual action shorthand. The action menu remains available.
+    pub composer_action_prefix: String,
 }
 
 impl Default for Settings {
@@ -61,6 +67,9 @@ impl Default for Settings {
             shift_mouse_selects_locally: true,
             animate_logo: true,
             history_persistence: false,
+            confirm_ctrl_c: false,
+            composer_suggestions: true,
+            composer_action_prefix: "::".into(),
         }
     }
 }
@@ -159,6 +168,14 @@ impl Settings {
                     }
                 }
                 "history_persistence" => settings.history_persistence = boolean(value)?,
+                "confirm_ctrl_c" => settings.confirm_ctrl_c = boolean(value)?,
+                "composer_suggestions" => settings.composer_suggestions = boolean(value)?,
+                "composer_action_prefix" => {
+                    let prefix = if value == "none" { "" } else { value };
+                    anyhow::ensure!(crate::editor::workflow::valid_prefix(prefix),
+                        "composer_action_prefix must be at most 16 punctuation characters (excluding # and =), or none");
+                    settings.composer_action_prefix = prefix.into();
+                }
                 unknown => anyhow::bail!("unknown setting `{unknown}`"),
             }
         }
@@ -222,12 +239,20 @@ impl Settings {
             .font_size
             .map(|size| size.to_string())
             .unwrap_or_else(|| "system".into());
+        let composer_action_prefix = if self.composer_action_prefix.is_empty() {
+            "none"
+        } else {
+            self.composer_action_prefix.as_str()
+        };
         format!(
             "# Kea settings. Changes made in the app are written here.\n\
 theme = {appearance}\n\
 post_submit_focus = {post_submit_focus}\n\
 persist_history = {}\n\
 history_persistence = {}\n\
+confirm_ctrl_c = {}\n\
+composer_suggestions = {}\n\
+composer_action_prefix = {composer_action_prefix}\n\
 shift_mouse_selects_locally = {}\n\
 animate_logo = {}\n\
 show_blocks = {}\n\
@@ -239,6 +264,8 @@ soft_wrap = {}\n\
 output_wrap = {}\n",
             self.persist_history,
             self.history_persistence,
+            self.confirm_ctrl_c,
+            self.composer_suggestions,
             self.shift_mouse_selects_locally,
             self.animate_logo,
             self.show_blocks,

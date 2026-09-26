@@ -17,9 +17,14 @@ fn recognizing_typed_or_pasted_text_is_pure() {
 #[test]
 fn only_a_standalone_current_line_is_a_separator() {
     for text in ["echo ---", "----", "x---", "---x", "echo\n---\nnext"] {
-        assert!(!recommend(text, text.len(), "::").iter().any(|s| matches!(s, Recommendation::SplitSeparator(_))));
+        assert!(!recommend(text, text.len(), "::")
+            .iter()
+            .any(|s| matches!(s, Recommendation::SplitSeparator(_))));
     }
-    assert!(matches!(recommend("  ---  ", 5, "::")[0], Recommendation::SplitSeparator(_)));
+    assert!(matches!(
+        recommend("  ---  ", 5, "::")[0],
+        Recommendation::SplitSeparator(_)
+    ));
 }
 
 #[test]
@@ -37,7 +42,12 @@ fn split_preserves_unicode_and_conditional_lines() {
 fn crlf_separator_removes_only_its_boundary() {
     let text = "a\r\n---\r\nb";
     let suggestion = recommend(text, 5, "::").remove(0);
-    assert_eq!(EditPlan::for_recommendation(text, 5, &suggestion, None).unwrap().sections, ["a", "b"]);
+    assert_eq!(
+        EditPlan::for_recommendation(text, 5, &suggestion, None)
+            .unwrap()
+            .sections,
+        ["a", "b"]
+    );
 }
 
 #[test]
@@ -55,24 +65,43 @@ fn enclosing_fences_are_explicit_transformations() {
 #[test]
 fn multiple_blocks_preserve_all_prose() {
     let text = "Before\n```sh\na\n```\nBetween\n```sh\nb\n```\nAfter";
-    let plan = EditPlan::for_recommendation(text, 0, &Recommendation::SeparateCodeBlocks, None).unwrap();
+    let plan =
+        EditPlan::for_recommendation(text, 0, &Recommendation::SeparateCodeBlocks, None).unwrap();
     assert_eq!(plan.sections, ["Before\n", "a", "Between\n", "b", "After"]);
 }
 
 #[test]
 fn placeholders_are_literal_and_bounded() {
     let text = "ssh {{host}}; scp x {{host}}:/tmp; echo {{other}}";
-    let recommendation = Recommendation::FillPlaceholder { name: "host".into(), count: 2 };
-    assert_eq!(placeholders(text), [("host".into(), 2), ("other".into(), 1)]);
+    let recommendation = Recommendation::FillPlaceholder {
+        name: "host".into(),
+        count: 2,
+    };
+    assert_eq!(
+        placeholders(text),
+        [("host".into(), 2), ("other".into(), 1)]
+    );
     let plan = EditPlan::for_recommendation(text, 0, &recommendation, Some("$HOME")).unwrap();
-    assert_eq!(plan.sections[0], "ssh $HOME; scp x $HOME:/tmp; echo {{other}}");
+    assert_eq!(
+        plan.sections[0],
+        "ssh $HOME; scp x $HOME:/tmp; echo {{other}}"
+    );
     assert!(EditPlan::for_recommendation(text, 0, &recommendation, None).is_none());
-    assert!(EditPlan::for_recommendation(text, 0, &recommendation, Some(&"x".repeat(MAX_ACTION_BYTES))).is_none());
+    assert!(EditPlan::for_recommendation(
+        text,
+        0,
+        &recommendation,
+        Some(&"x".repeat(MAX_ACTION_BYTES))
+    )
+    .is_none());
 }
 
 #[test]
 fn shorthand_is_a_recommendation_not_a_directive() {
-    assert!(matches!(recommend("::split", 7, "::")[0], Recommendation::Actions { .. }));
+    assert!(matches!(
+        recommend("::split", 7, "::")[0],
+        Recommendation::Actions { .. }
+    ));
     assert!(recommend("echo ::split", 12, "::").is_empty());
     assert!(recommend("::split", 7, "").is_empty());
     assert!(valid_prefix("::"));
@@ -92,7 +121,10 @@ fn analysis_and_section_counts_are_bounded() {
 fn placeholder_counts_and_replacements_use_identical_boundaries() {
     let text = "{{host}} {{{host}}} {{host}}}";
     assert_eq!(placeholders(text), [("host".into(), 1)]);
-    let rec = Recommendation::FillPlaceholder { name: "host".into(), count: 1 };
+    let rec = Recommendation::FillPlaceholder {
+        name: "host".into(),
+        count: 1,
+    };
     let plan = EditPlan::for_recommendation(text, 0, &rec, Some("server")).unwrap();
     assert_eq!(plan.sections, ["server {{{host}}} {{host}}}"]);
 }

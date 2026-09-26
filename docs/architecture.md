@@ -158,3 +158,10 @@ Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks
 Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, keyboard protocol negotiation, accessibility, long-session scrollback/selection behavior and packaging.
 
 Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).
+
+## Composer sections and guarded interrupts
+
+See [Composer sections and actions](composer-workflow.md) for independently
+submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
+recommendations. A section is pending input for the existing receiver, not a
+separate shell or an execution queue.

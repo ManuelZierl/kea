@@ -5,11 +5,28 @@ use gpui_component::{input::RopeExt as _, Root};
 fn make_view(window: &mut Window, cx: &mut App) -> Entity<KeaView> {
     let session = Session::demo().unwrap();
     let document = Document::from_recording(session.recording());
-    cx.new(|cx| KeaView::new(session, document, None, Keymap::parse("").unwrap(),
-        Settings::default(), InitialFocus::Editor, None, window, cx))
+    cx.new(|cx| {
+        KeaView::new(
+            session,
+            document,
+            None,
+            Keymap::parse("").unwrap(),
+            Settings::default(),
+            InitialFocus::Editor,
+            None,
+            window,
+            cx,
+        )
+    })
 }
 
-fn write_at(view: &mut KeaView, text: &str, cursor: usize, window: &mut Window, cx: &mut Context<KeaView>) {
+fn write_at(
+    view: &mut KeaView,
+    text: &str,
+    cursor: usize,
+    window: &mut Window,
+    cx: &mut Context<KeaView>,
+) {
     view.editor.update(cx, |state, cx| {
         state.set_value(text, window, cx);
         let position = state.text().offset_to_position(cursor);
@@ -32,8 +49,14 @@ fn structural_splits_keep_other_entities_and_undo_restores_literal_marker(cx: &m
             assert_eq!(this.editor.read(cx).value().as_ref(), text);
             this.apply_composer_plan(plan, window, cx);
             assert_eq!(this.composer_workflow.sections.len(), 2);
-            assert_eq!(this.composer_workflow.sections[0].read(cx).value().as_ref(), "first");
-            assert_eq!(this.composer_workflow.sections[1].read(cx).value().as_ref(), "second &&\nthird");
+            assert_eq!(
+                this.composer_workflow.sections[0].read(cx).value().as_ref(),
+                "first"
+            );
+            assert_eq!(
+                this.composer_workflow.sections[1].read(cx).value().as_ref(),
+                "second &&\nthird"
+            );
             this.undo_composer_layout(false, window, cx);
             assert_eq!(this.editor, original);
             assert_eq!(this.editor.read(cx).value().as_ref(), text);

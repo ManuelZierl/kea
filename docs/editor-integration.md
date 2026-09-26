@@ -104,3 +104,10 @@ parity is explicitly a Zed-host property (it arrives with Zed's editor), not a
 standalone feature; implementing a second editor engine in Kea is out of scope.
 Terminal Alt-drag block selection is a separate, implemented terminal-surface
 feature (see terminal-text-selection.md), not composer multicursor.
+
+## Composer sections and guarded interrupts
+
+See [Composer sections and actions](composer-workflow.md) for independently
+submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
+recommendations. A section is pending input for the existing receiver, not a
+separate shell or an execution queue.

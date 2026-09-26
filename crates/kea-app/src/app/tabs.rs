@@ -145,6 +145,7 @@ impl KeaRoot {
         };
         tab.view.update(cx, |view, cx| {
             view.visible = false;
+            view.cancel_workflow();
             view.pending_run = None;
             view.composer_enter_down = false;
             view.dismiss_completion();
@@ -244,7 +245,7 @@ impl KeaRoot {
     fn needs_confirmation(tab: &TerminalTab, cx: &App) -> bool {
         let view = tab.view.read(cx);
         view.session.is_running()
-            || !view.editor.read(cx).value().is_empty()
+            || view.has_pending_sections(cx)
             || (!view.session.recording().events().is_empty() && !view.session.persistence_active())
     }
 

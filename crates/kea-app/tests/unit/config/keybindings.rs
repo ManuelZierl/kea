@@ -46,7 +46,7 @@ fn settings_snapshot_round_trips_all_bindings_and_unbound_actions() {
     for platform in [Platform::Other, Platform::Mac] {
         let original = Keymap::parse_overrides(platform,
             "focus_editor = alt-l\nfocus_terminal = alt-l\nrun_shell = alt-enter, alt-f12\nundo = none\nprevious_draft = alt-up\nnext_draft = alt-down").unwrap();
-        assert_eq!(original.settings_entries().len(), 33);
+        assert_eq!(original.settings_entries().len(), 41);
         assert_eq!(
             Keymap::parse_overrides(platform, &original.to_config()).unwrap(),
             original

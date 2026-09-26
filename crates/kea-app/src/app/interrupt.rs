@@ -20,12 +20,20 @@ impl InterruptState {
 }
 
 pub(super) fn is_ctrl_c(key: &Keystroke) -> bool {
-    key.key.eq_ignore_ascii_case("c") && key.modifiers.control
-        && !key.modifiers.alt && !key.modifiers.platform && !key.modifiers.function
+    key.key.eq_ignore_ascii_case("c")
+        && key.modifiers.control
+        && !key.modifiers.alt
+        && !key.modifiers.platform
+        && !key.modifiers.function
 }
 
 impl KeaView {
-    pub(super) fn request_interrupt(&mut self, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn request_interrupt(
+        &mut self,
+        bytes: Vec<u8>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.pump_session(cx);
         if !self.visible || !self.session.input_allowed() {
             self.interrupt.cancel();
@@ -33,7 +41,10 @@ impl KeaView {
             cx.notify();
             return;
         }
-        let protected = self.interrupt.override_enabled.unwrap_or(self.settings.confirm_ctrl_c);
+        let protected = self
+            .interrupt
+            .override_enabled
+            .unwrap_or(self.settings.confirm_ctrl_c);
         if !protected {
             self.deliver_interrupt(bytes, cx);
             return;
@@ -43,35 +54,60 @@ impl KeaView {
         self.composer_workflow.menu = None;
         if !self.interrupt.gate.is_pending() {
             self.interrupt.origin = window.focused(cx);
-            self.interrupt.gate.arm(self.input_context.generation(), bytes);
+            self.interrupt
+                .gate
+                .arm(self.input_context.generation(), bytes);
         }
         cx.notify();
     }
 
     fn deliver_interrupt(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         let result = self.session.send(bytes);
-        if result.is_ok() { self.note_forwarded_terminal_input(); }
+        if result.is_ok() {
+            self.note_forwarded_terminal_input();
+        }
         self.result(result, cx);
     }
 
     pub(super) fn validate_interrupt(&mut self, window: &Window, _cx: &App) {
-        let active = self.visible && self.session.input_allowed() && window.is_window_active()
-            && self.interrupt.origin.as_ref().is_some_and(|focus| focus.is_focused(window));
-        self.interrupt.gate.validate(self.input_context.generation(), active);
-        if !self.interrupt.gate.is_pending() { self.interrupt.origin = None; }
+        let active = self.visible
+            && self.session.input_allowed()
+            && window.is_window_active()
+            && self
+                .interrupt
+                .origin
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window));
+        self.interrupt
+            .gate
+            .validate(self.input_context.generation(), active);
+        if !self.interrupt.gate.is_pending() {
+            self.interrupt.origin = None;
+        }
     }
 
     /// Called by the window interceptor before either editor or terminal routing.
-    pub(super) fn interrupt_keystroke(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(super) fn interrupt_keystroke(
+        &mut self,
+        event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let key = &event.keystroke;
-        let physical = if key.key == "return" { "enter" } else { key.key.as_str() };
+        let physical = if key.key == "return" {
+            "enter"
+        } else {
+            key.key.as_str()
+        };
         if self.interrupt.swallowed.iter().any(|held| held == physical) {
             cx.stop_propagation();
             return true;
         }
         let enter = matches!(key.key.as_str(), "enter" | "return");
         let fresh = !enter || self.interrupt.key_latch.press(&key.key);
-        if !self.interrupt.gate.is_pending() { return false; }
+        if !self.interrupt.gate.is_pending() {
+            return false;
+        }
         // Process queued context/lifecycle events before authorizing the old target.
         self.pump_session(cx);
         self.validate_interrupt(window, cx);
@@ -86,10 +122,17 @@ impl KeaView {
             }
             return false;
         }
-        let plain = !key.modifiers.control && !key.modifiers.alt && !key.modifiers.shift
-            && !key.modifiers.platform && !key.modifiers.function;
+        let plain = !key.modifiers.control
+            && !key.modifiers.alt
+            && !key.modifiers.shift
+            && !key.modifiers.platform
+            && !key.modifiers.function;
         if enter && plain {
-            if let Some(bytes) = self.interrupt.gate.confirm(self.input_context.generation(), fresh) {
+            if let Some(bytes) = self
+                .interrupt
+                .gate
+                .confirm(self.input_context.generation(), fresh)
+            {
                 self.interrupt.origin = None;
                 self.deliver_interrupt(bytes, cx);
             }
@@ -97,7 +140,10 @@ impl KeaView {
             self.interrupt.cancel();
         } else if is_ctrl_c(key) {
             // Repetition neither confirms nor accumulates another interrupt.
-        } else if matches!(key.key.as_str(), "control" | "ctrl" | "shift" | "alt" | "cmd" | "super") {
+        } else if matches!(
+            key.key.as_str(),
+            "control" | "ctrl" | "shift" | "alt" | "cmd" | "super"
+        ) {
             return false;
         } else {
             self.interrupt.cancel();
@@ -128,7 +174,9 @@ impl KeaView {
             this.interrupt.cancel();
             this.interrupt.override_enabled = match this.interrupt.override_enabled {
                 None => Some(!this.settings.confirm_ctrl_c),
-                Some(value) if value != this.settings.confirm_ctrl_c => Some(this.settings.confirm_ctrl_c),
+                Some(value) if value != this.settings.confirm_ctrl_c => {
+                    Some(this.settings.confirm_ctrl_c)
+                }
                 Some(_) => None,
             };
             cx.notify();

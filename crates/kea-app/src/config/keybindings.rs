@@ -41,10 +41,18 @@ pub enum Action {
     PreviousTerminal,
     MoveTerminalLeft,
     MoveTerminalRight,
+    ComposerActions,
+    SplitComposer,
+    MergeComposer,
+    NextComposer,
+    PreviousComposer,
+    SendSelection,
+    UndoComposerLayout,
+    RedoComposerLayout,
 }
 
 impl Action {
-    const ALL: [Self; 30] = [
+    const ALL: [Self; 38] = [
         Self::Copy,
         Self::Cut,
         Self::Paste,
@@ -75,6 +83,14 @@ impl Action {
         Self::PreviousTerminal,
         Self::MoveTerminalLeft,
         Self::MoveTerminalRight,
+        Self::ComposerActions,
+        Self::SplitComposer,
+        Self::MergeComposer,
+        Self::NextComposer,
+        Self::PreviousComposer,
+        Self::SendSelection,
+        Self::UndoComposerLayout,
+        Self::RedoComposerLayout,
     ];
 
     fn config_name(self) -> &'static str {
@@ -109,6 +125,14 @@ impl Action {
             Self::PreviousTerminal => "previous_terminal",
             Self::MoveTerminalLeft => "move_terminal_left",
             Self::MoveTerminalRight => "move_terminal_right",
+            Self::ComposerActions => "composer_actions",
+            Self::SplitComposer => "split_composer",
+            Self::MergeComposer => "merge_composer",
+            Self::NextComposer => "next_composer",
+            Self::PreviousComposer => "previous_composer",
+            Self::SendSelection => "send_selection",
+            Self::UndoComposerLayout => "undo_composer_layout",
+            Self::RedoComposerLayout => "redo_composer_layout",
         }
     }
 
@@ -163,6 +187,14 @@ impl Action {
             Self::PreviousTerminal => "Previous terminal",
             Self::MoveTerminalLeft => "Move terminal left",
             Self::MoveTerminalRight => "Move terminal right",
+            Self::ComposerActions => "Composer actions",
+            Self::SplitComposer => "Split composer at cursor",
+            Self::MergeComposer => "Merge with previous section",
+            Self::NextComposer => "Next composer section",
+            Self::PreviousComposer => "Previous composer section",
+            Self::SendSelection => "Send selected text (preserve section)",
+            Self::UndoComposerLayout => "Undo composer split or merge",
+            Self::RedoComposerLayout => "Redo composer split or merge",
         }
     }
 }
@@ -459,10 +491,22 @@ impl Keymap {
             (Action::PreviousTerminal, "ctrl-shift-tab"),
             (Action::MoveTerminalLeft, "ctrl-shift-pageup"),
             (Action::MoveTerminalRight, "ctrl-shift-pagedown"),
+            (Action::ComposerActions, "ctrl-."),
+            (Action::SplitComposer, "ctrl-alt-enter"),
+            (Action::NextComposer, "alt-pagedown"),
+            (Action::PreviousComposer, "alt-pageup"),
         ] {
             bindings.insert(action, vec![Shortcut::parse(key).unwrap()]);
         }
         bindings.insert(Action::Newline, Vec::new());
+        for action in [
+            Action::MergeComposer,
+            Action::SendSelection,
+            Action::UndoComposerLayout,
+            Action::RedoComposerLayout,
+        ] {
+            bindings.insert(action, Vec::new());
+        }
         Self {
             bindings,
             previous_draft: vec![Shortcut::parse("ctrl-up").unwrap()],
@@ -636,6 +680,14 @@ impl Keymap {
                 Action::RunShell | Action::SendApplication | Action::Newline | Action::Complete => {
                     &["KeaCommand > Input"]
                 }
+                Action::ComposerActions
+                | Action::SplitComposer
+                | Action::MergeComposer
+                | Action::NextComposer
+                | Action::PreviousComposer
+                | Action::SendSelection
+                | Action::UndoComposerLayout
+                | Action::RedoComposerLayout => &["KeaCommand > Input"],
                 Action::FocusEditor => &["Kea > Input", "KeaChrome", "KeaTerminal"],
                 Action::SelectTerminalText => &["Kea > Input", "KeaChrome"],
                 Action::NewTerminal
@@ -722,6 +774,14 @@ const DEFAULT_KEYBINDINGS_CONF: &str = r#"# Kea keybindings: one `action = short
 # previous_draft = ctrl-up
 # next_draft = ctrl-down
 # reverse_search = ctrl-r
+# composer_actions = ctrl-.
+# split_composer = ctrl-alt-enter
+# next_composer = alt-pagedown
+# previous_composer = alt-pageup
+# merge_composer = none
+# send_selection = none
+# undo_composer_layout = none
+# redo_composer_layout = none
 # copy_document = f10
 # select_terminal_text = f4
 # new_terminal = ctrl-shift-t
@@ -748,6 +808,9 @@ pub(crate) const DEFAULT_SETTINGS_CONF: &str = r#"# Kea settings: one `key = val
 #   Shift owns local selection gestures while the child reports mouse input.
 #   Set false to forward them; the Select text button remains available.
 # animate_logo = true
+# confirm_ctrl_c = false
+# composer_suggestions = true
+# composer_action_prefix = ::
 #   Set false to keep the decorative composer bird still while typing.
 "#;
 

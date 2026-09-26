@@ -65,6 +65,9 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
         history_persistence: true,
         shift_mouse_selects_locally: false,
         animate_logo: false,
+        confirm_ctrl_c: true,
+        composer_suggestions: false,
+        composer_action_prefix: "!!".into(),
     };
 
     settings.save_to(&path).unwrap();
@@ -87,4 +90,20 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
             0o600
         );
     }
+}
+
+#[test]
+fn workflow_settings_round_trip_and_reject_ambiguous_prefixes() {
+    assert!(!Settings::default().confirm_ctrl_c);
+    assert!(Settings::default().composer_suggestions);
+    for prefix in ["::", "!!", "none"] {
+        let settings = Settings::parse(&format!(
+            "confirm_ctrl_c = true\ncomposer_action_prefix = {prefix}\n"
+        ))
+        .unwrap();
+        assert!(settings.confirm_ctrl_c);
+        assert_eq!(Settings::parse(&settings.to_config()).unwrap(), settings);
+    }
+    assert!(Settings::parse("composer_action_prefix = hello").is_err());
+    assert!(Settings::parse("confirm_ctrl_c = smart").is_err());
 }

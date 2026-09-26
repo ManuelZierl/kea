@@ -7,7 +7,20 @@ impl KeaView {
     /// `run_shell` is retained as a configuration alias. Both old actions now
     /// submit authored text to the current receiver, never shell driver source.
     pub(super) fn run_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.session.input_allowed() {
+        let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
+            return;
+        };
+        self.request_submission(text, true, window, cx);
+    }
+
+    pub(super) fn request_submission(
+        &mut self,
+        text: String,
+        consume: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.visible || !self.session.input_allowed() {
             self.pending_run = None;
             self.result(
                 Err(anyhow::anyhow!(
@@ -17,25 +30,30 @@ impl KeaView {
             );
             return;
         }
-        let Some(text) = command_editor::submission_text(&self.editor, window, cx) else {
+        let Some(draft) = command_editor::submission_text(&self.editor, window, cx) else {
             return;
         };
+        // History is committed explicitly after a successful PTY write, never by
+        // constructing an empty section after a split or cancelled submission.
+        command_editor::cancel_submission_candidate(cx);
         if text.is_empty() {
             return;
         }
         self.pump_session(cx);
-        // Validate paste policy before arming a confirmation. In particular,
-        // multiline input is not sent to a child without bracketed-paste support.
         if let Err(error) = input::paste(&text, self.session.bracketed_paste()) {
             self.result(Err(error), cx);
             return;
         }
+        self.interrupt.cancel();
+        self.composer_workflow.menu = None;
         self.dismiss_completion();
         if self.input_context.ready() {
-            self.submit_text(text, window, cx);
+            self.submit_text(text, consume, window, cx);
         } else {
             self.pending_run = Some(PendingRun {
                 text,
+                draft,
+                consume,
                 editor: self.editor.clone(),
                 context_generation: self.input_context.generation(),
                 released: !self.composer_enter_down,
@@ -45,7 +63,13 @@ impl KeaView {
         }
     }
 
-    fn submit_text(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn submit_text(
+        &mut self,
+        text: String,
+        consume: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let shell_ready = self.input_context.shell_ready();
         let context_id = self.input_context.id().to_owned();
         let kind = match self.input_context.kind() {
@@ -81,8 +105,12 @@ impl KeaView {
             self.input_context.invalidate();
             self.prompt_line.invalidate();
             self.document.note_terminal_input();
-            self.editor = command_editor::new_draft(self.shell, &self.settings, "", window, cx);
-            self.observe_composer(cx);
+            command_editor::record_submission(&text, cx);
+            self.clear_composer_layout_history();
+            if consume {
+                self.finish_section_submission(window, cx);
+            }
+
             self.dismiss_completion();
             match self.settings.post_submit_focus {
                 kea_app::config::settings::PostSubmitFocus::Editor => self.focus_editor(window, cx),
@@ -101,9 +129,10 @@ impl KeaView {
             let valid = pending.editor == self.editor
                 && pending.context_generation == self.input_context.generation()
                 && command_editor::submission_text(&self.editor, window, cx).as_deref()
-                    == Some(&pending.text);
+                    == Some(&pending.draft);
+            command_editor::cancel_submission_candidate(cx);
             if valid {
-                self.submit_text(pending.text, window, cx);
+                self.submit_text(pending.text, pending.consume, window, cx);
             }
         } else {
             self.run_shell(window, cx);
@@ -122,6 +151,9 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workflow_keystroke(event, window, cx) {
+            return;
+        }
         if !self.editor.focus_handle(cx).is_focused(window) {
             return;
         }
@@ -157,12 +189,12 @@ impl KeaView {
             if let Some(pending) = self.pending_run.as_ref() {
                 let valid = pending.editor == self.editor
                     && pending.context_generation == self.input_context.generation()
-                    && self.editor.read(cx).value().as_ref() == pending.text
+                    && self.editor.read(cx).value().as_ref() == pending.draft
                     && self.session.input_allowed();
                 if enter && valid {
                     if pending.released {
                         let pending = self.pending_run.take().unwrap();
-                        self.submit_text(pending.text, window, cx);
+                        self.submit_text(pending.text, pending.consume, window, cx);
                     }
                     // A held first chord cannot acknowledge its own warning.
                     cx.stop_propagation();
@@ -194,6 +226,19 @@ impl KeaView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) {
+        let physical = if event.keystroke.key == "return" {
+            "enter"
+        } else {
+            event.keystroke.key.as_str()
+        };
+        self.composer_workflow
+            .owned_keys
+            .retain(|key| key != physical);
+        self.interrupt.swallowed.retain(|key| key != physical);
+        self.composer_workflow
+            .key_latch
+            .release(&event.keystroke.key);
+        self.interrupt.key_latch.release(&event.keystroke.key);
         if matches!(event.keystroke.key.as_str(), "enter" | "return") {
             self.composer_enter_down = false;
             if let Some(pending) = &mut self.pending_run {

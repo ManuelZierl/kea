@@ -2,7 +2,10 @@
 //! InputState remains the owner of all text, selection, IME and text undo.
 use super::*;
 use gpui_component::input::{Input, InputEvent};
-use kea_app::{editor::workflow::{self, EditPlan, Recommendation}, terminal::interrupt::KeyLatch};
+use kea_app::{
+    editor::workflow::{self, EditPlan, Recommendation},
+    terminal::interrupt::KeyLatch,
+};
 
 const MAX_LAYOUT_HISTORY: usize = 8;
 const MAX_LAYOUT_HISTORY_BYTES: usize = 8 * 1024 * 1024;
@@ -15,16 +18,27 @@ struct LayoutSnapshot {
 }
 
 impl LayoutSnapshot {
-    fn bytes(&self) -> usize { self.values.iter().map(String::len).sum() }
+    fn bytes(&self) -> usize {
+        self.values.iter().map(String::len).sum()
+    }
     fn matches(&self, sections: &[Entity<InputState>], cx: &App) -> bool {
-        self.editors == sections && self.editors.iter().zip(&self.values)
-            .all(|(editor, value)| editor.read(cx).value().as_ref() == value)
+        self.editors == sections
+            && self
+                .editors
+                .iter()
+                .zip(&self.values)
+                .all(|(editor, value)| editor.read(cx).value().as_ref() == value)
     }
 }
 
-struct LayoutChange { before: LayoutSnapshot, after: LayoutSnapshot }
+struct LayoutChange {
+    before: LayoutSnapshot,
+    after: LayoutSnapshot,
+}
 impl LayoutChange {
-    fn bytes(&self) -> usize { self.before.bytes() + self.after.bytes() }
+    fn bytes(&self) -> usize {
+        self.before.bytes() + self.after.bytes()
+    }
 }
 
 #[derive(Clone)]
@@ -72,7 +86,13 @@ pub(super) struct ComposerMenu {
     focus: FocusHandle,
 }
 
-type RecommendationCache = (Entity<InputState>, SharedString, usize, String, Vec<Recommendation>);
+type RecommendationCache = (
+    Entity<InputState>,
+    SharedString,
+    usize,
+    String,
+    Vec<Recommendation>,
+);
 
 pub(super) struct ComposerWorkflow {
     pub sections: Vec<Entity<InputState>>,
@@ -92,30 +112,52 @@ impl ComposerWorkflow {
         let sections = vec![editor];
         let subscriptions = observe_sections(&sections, cx);
         Self {
-            sections, active: 0, menu: None, key_latch: KeyLatch::default(), owned_keys: Vec::new(),
-            scroll: ScrollHandle::new(), subscriptions,
-            undo: Vec::new(), redo: Vec::new(), recommendations: None,
+            sections,
+            active: 0,
+            menu: None,
+            key_latch: KeyLatch::default(),
+            owned_keys: Vec::new(),
+            scroll: ScrollHandle::new(),
+            subscriptions,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            recommendations: None,
         }
     }
 }
 
-fn observe_sections(sections: &[Entity<InputState>], cx: &mut Context<KeaView>) -> Vec<Subscription> {
-    sections.iter().map(|editor| {
-        cx.subscribe(editor, |this, editor, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Focus) {
-                if let Some(index) = this.composer_workflow.sections.iter().position(|e| *e == editor) {
-                    if this.editor != editor { this.select_composer_section(index, cx); }
+fn observe_sections(
+    sections: &[Entity<InputState>],
+    cx: &mut Context<KeaView>,
+) -> Vec<Subscription> {
+    sections
+        .iter()
+        .map(|editor| {
+            cx.subscribe(editor, |this, editor, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Focus) {
+                    if let Some(index) = this
+                        .composer_workflow
+                        .sections
+                        .iter()
+                        .position(|e| *e == editor)
+                    {
+                        if this.editor != editor {
+                            this.select_composer_section(index, cx);
+                        }
+                    }
                 }
-            }
-            if matches!(event, InputEvent::Change | InputEvent::Focus) { cx.notify(); }
+                if matches!(event, InputEvent::Change | InputEvent::Focus) {
+                    cx.notify();
+                }
+            })
         })
-    }).collect()
+        .collect()
 }
 
-mod sections;
-mod suggestions;
 mod keyboard;
 mod rendering;
+mod sections;
+mod suggestions;
 
 #[cfg(test)]
 #[path = "../../tests/unit/app/composer_workflow.rs"]
