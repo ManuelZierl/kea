@@ -190,12 +190,7 @@ impl KeaRoot {
         cx.notify();
     }
 
-    fn workflow_key_up(
-        &mut self,
-        event: &KeyUpEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn workflow_key_up(&mut self, event: &KeyUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(held) = &mut self.held_keys {
             held.release(&event.keystroke.key);
         }
