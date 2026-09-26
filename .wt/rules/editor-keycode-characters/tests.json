@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "manual-codepoint-in-composer",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/composer.rs",
+          "content": "fn convert(code: u32) { let ch = char::from_u32(code); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/composer.rs",
+          "code": "manual-character",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "platform-text-and-terminal-encoder",
+      "files": [
+        {
+          "path": "crates/kea-app/src/editor/command.rs",
+          "content": "fn edit(state: &mut State) { state.replace_text_in_range(None, \"hello\", window, cx); }\n"
+        },
+        {
+          "path": "crates/kea-app/src/terminal/input.rs",
+          "content": "fn encode(code: u8) { char::from(code); }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

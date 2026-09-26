@@ -1,0 +1,1 @@
+editor/completion.rs:138 scans reported local PATH entries. composer.rs:282-299 calls completion::suggest inside std::thread::spawn, not on the UI thread, and caps visited directories/entries at MAX_PATH_DIRS/MAX_PATH_ENTRIES.

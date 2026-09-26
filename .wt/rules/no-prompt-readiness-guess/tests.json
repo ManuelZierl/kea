@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "prompt-character-guess",
+      "files": [
+        {
+          "path": "crates/kea-app/src/terminal/context.rs",
+          "content": "fn inferred(text: &str) -> bool { text.ends_with(\"$ \" ) }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/terminal/context.rs",
+          "code": "prompt-guess",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "explicit-marker-terminator-and-ready-state",
+      "files": [
+        {
+          "path": "crates/kea-app/src/terminal/context.rs",
+          "content": "fn ready(&self) -> bool { self.readiness == Readiness::Ready }\nfn marker(&self) -> bool { self.pending.ends_with(b\"\\x1b\\\\\") }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

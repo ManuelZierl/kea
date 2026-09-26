@@ -1,0 +1,49 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "commented-assert": {
+      "help": "Restore or replace this assertion with a meaningful check.",
+      "kind": "review",
+      "message": "AGENTS.md: preserve real assertions rather than commenting them out to get green."
+    },
+    "reasonless-ignore": {
+      "help": "Explain the test skip in #[ignore = \"reason\"] or restore the test.",
+      "kind": "violation",
+      "message": "AGENTS.md: preserve real test assertions; do not disable tests to obtain a green build (#[ignore] needs a reason)."
+    },
+    "trivial-assert": {
+      "help": "Restore an assertion on actual behavior.",
+      "kind": "review",
+      "message": "AGENTS.md: preserve meaningful assertions; assert!(true) tests nothing."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "test-assertions-not-disabled",
+  "mode": "enforced",
+  "patterns": {
+    "bare_ignore": "#\\[ignore\\]",
+    "commented": "(?m)^\\s*//\\s*assert(?:_eq|_ne)?!\\s*\\(",
+    "trivial": "\\bassert!\\(\\s*true\\s*\\)"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/**/tests/**/*.rs",
+      "crates/**/src/**/*.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Tests retain assertions"
+}

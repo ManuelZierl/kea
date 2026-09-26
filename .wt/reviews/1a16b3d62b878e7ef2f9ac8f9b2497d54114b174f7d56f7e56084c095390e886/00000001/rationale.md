@@ -1,0 +1,1 @@
+model.rs:157-176 calls validate_submission before blocks.push. validate_submission checks can_retain_block (MAX_BLOCKS, MAX_DOCUMENT_BYTES, validated input) and rejects saturation; this queue_local path is only used for optional observed blocks.

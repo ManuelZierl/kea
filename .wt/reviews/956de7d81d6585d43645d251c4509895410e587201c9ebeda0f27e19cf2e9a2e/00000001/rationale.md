@@ -1,0 +1,1 @@
+editor/completion.rs:174 fetches executable metadata from the bounded completion scan. The only composer invocation of suggest is inside the worker at composer.rs:282-299; the UI does not call this function synchronously.

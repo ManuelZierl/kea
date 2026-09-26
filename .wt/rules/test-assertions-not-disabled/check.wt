@@ -1,0 +1,9 @@
+for m in rx::find_all(file, "bare_ignore") {
+    emit(m.span, "reasonless-ignore");
+}
+for m in rx::find_all(file, "trivial") {
+    emit(m.span, "trivial-assert");
+}
+for m in rx::find_all(file, "commented") {
+    emit(m.span, "commented-assert");
+}

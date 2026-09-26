@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "finding_id": "sha256:c623bd215479983f5f80fccf14035c2bea701d4e5e0a0143a837952b8f091864",
+  "evidence_digest": "sha256:ced59ef9cf51dbaa125c738dc25e491fbb26ba84b9d2d8428c3217aa2f761b53",
+  "decision": "acceptable",
+  "rule_id": "local/retained-collection-growth",
+  "code": "growth",
+  "path": "crates/kea-core/src/recording.rs",
+  "start_byte": 2696,
+  "end_byte": 2732,
+  "matched_digest": "sha256:c32c19cc008a9b067c01b02d513797eb09ca48b608efca41f29bb9b9211947aa",
+  "rule_digest": "sha256:8d21859ad14a137f31e4fe872fb8646ec027eab48de9954a3426052b3881bc18",
+  "file_digest": "sha256:cdfded23c55cc23db4b4503e24c5439ddbcddd291b3b6625fa9af7d058a9192b",
+  "context_digest": "sha256:35d53ed3c02af99e5f8a6313fd6010e81f3cc96509aeb38c5099cae84d6c6be0",
+  "engine_digest": "sha256:c79157972c88f5a70affdc5436051cd91907306f3ba997fd11a11486e9a0be63",
+  "watched_files": {},
+  "rationale_file": "rationale.md",
+  "previous": null
+}

@@ -1,0 +1,9 @@
+for m in file.ast_match("rust", "self.events.push($VALUE)") {
+    emit(m.span, "growth");
+}
+for m in file.ast_match("rust", "self.blocks.push($VALUE)") {
+    emit(m.span, "growth");
+}
+for m in file.ast_match("rust", "self.output.extend_from_slice($VALUE)") {
+    emit(m.span, "growth");
+}

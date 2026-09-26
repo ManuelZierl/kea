@@ -1,0 +1,34 @@
+{
+  "code": {
+    "capabilities": [
+      "ast.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "scroll": {
+      "help": "Check reading/selection guard or explicit user action before following output.",
+      "kind": "review",
+      "message": "AGENTS.md: live output cannot reset a reading selection or unconditionally scroll to bottom."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "live-output-scroll",
+  "mode": "advisory",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/app/document_view.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Reader selection must survive live output"
+}

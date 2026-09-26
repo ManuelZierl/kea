@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "lossy-canonical",
+      "files": [
+        {
+          "path": "crates/kea-core/src/format.rs",
+          "content": "let output = String::from_utf8_lossy(bytes);\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-core/src/format.rs",
+          "code": "lossy-canonical",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "overwriting-journal",
+      "files": [
+        {
+          "path": "crates/kea-session/src/journal.rs",
+          "content": "let file = File::create(path)?;\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-session/src/journal.rs",
+          "code": "overwrite-recording",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "valid-projection-and-create-new",
+      "files": [
+        {
+          "path": "crates/kea-document/src/text.rs",
+          "content": "let text = String::from_utf8_lossy(&stripped);\n"
+        },
+        {
+          "path": "crates/kea-session/src/journal.rs",
+          "content": "options.write(true).create_new(true);\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+let dependencies = false;
+for line in text::lines(file) {
+    if line.text.starts_with("[") {
+        dependencies = rx::capture_text("dep_header", line.text) != ();
+    } else if dependencies {
+        for entry in rx::find_in(line.span, "dep_entry") {
+            if file.path == "crates/kea-core/Cargo.toml" || entry.group_text("name") != "kea-core" {
+                emit(entry.span, "host-dependency");
+            }
+        }
+    }
+}
+for m in rx::find_all(file, "host_paths") {
+    emit(m.span, "host-reference");
+}

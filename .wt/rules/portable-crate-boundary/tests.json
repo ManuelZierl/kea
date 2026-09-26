@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "reject-host-dependencies-including-dev",
+      "files": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "content": "[package]\nname = \"kea-document\"\n[dependencies]\nkea-core.workspace = true\n[dev-dependencies]\ngpui = \"0.2\"\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "code": "host-dependency",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "reject-host-code",
+      "files": [
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "content": "fn bad() { kea_pty::Pty::spawn(); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "code": "host-reference",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "allow-current-portable-code",
+      "files": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "content": "[dependencies]\nkea-core.workspace = true\n[lints]\nworkspace = true\n"
+        },
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "content": "use crate::{Recording, Size};\nuse std::io;\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "unknown-dependency-not-permitted",
+      "files": [
+        {
+          "path": "crates/kea-core/Cargo.toml",
+          "content": "[build-dependencies]\nunknown-helper = \"1\"\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-core/Cargo.toml",
+          "code": "host-dependency",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "document-second-dependency-target-section",
+      "files": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "content": "[target.'cfg(windows)'.dev-dependencies]\nkea-core.workspace = true\nserde = \"1\"\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "code": "host-dependency",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "array-value-does-not-end-section",
+      "files": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "content": "[dependencies]\nkea-core = { version = \"1\", features = [\"std\"] }\nserde = \"1\"\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-document/Cargo.toml",
+          "code": "host-dependency",
+          "kind": "violation"
+        }
+      ]
+    }
+  ]
+}

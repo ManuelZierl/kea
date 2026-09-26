@@ -1,0 +1,6 @@
+for m in file.ast_match("rust", "char::from($CODE)") {
+    emit(m.span, "manual-character");
+}
+for m in file.ast_match("rust", "char::from_u32($CODE)") {
+    emit(m.span, "manual-character");
+}

@@ -32,8 +32,11 @@ cargo test --locked -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p k
 cargo clippy --locked -p kea-core -p kea-document -p kea-alacritty -p kea-pty -p kea-session --all-targets -- -D warnings
 cargo test --locked -p kea-app --lib
 cargo build --locked -p kea-app
+wt validate --no-global && wt test --no-global && wt check --no-global
 bash scripts/test-reverse-search-core.sh
 ```
+
+Install [Watchtower wt v0.0.1](https://github.com/ManuelZierl/wt/releases/tag/v0.0.1) to run the repository's `.wt/` invariant checks; CI pins that release and runs them next to Clippy on Linux. Review findings individually with `wt inspect` and `wt review`; a reviewed occurrence reopens when its evidence changes.
 
 `cargo test --locked -p kea-app` also runs the binary host's tests. On Linux,
 run the graphical smoke test in an isolated X11 display with the dependencies
@@ -46,6 +49,8 @@ Keep changes focused, preserve meaningful assertions, and include regression
 coverage when fixing behavior. Commit `Cargo.lock` when dependencies or workspace
 versions change. Do not include secrets, personal recordings or generated build
 output. Vendored dependencies retain their original licenses; document any patch.
+The vendored `vendor/gpui-component` is Apache-2.0 licensed (see its
+`LICENSE-APACHE`); `.wt/` checks Kea-owned crate sources, not that vendored code.
 
 ## Documentation
 

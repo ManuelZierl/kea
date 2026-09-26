@@ -1,0 +1,46 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "host-dependency": {
+      "help": "Remove the dependency, including dev/build dependencies, or move the feature to a host crate.",
+      "kind": "violation",
+      "message": "AGENTS.md: kea-core is std-only and kea-document may depend only on kea-core; no GPUI/editor/Zed/PTY/OS/shell adapters."
+    },
+    "host-reference": {
+      "help": "Keep host references in the host crates.",
+      "kind": "violation",
+      "message": "AGENTS.md: portable crates must not reference GPUI/editor/Zed/PTY/OS/shell adapters."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "portable-crate-boundary",
+  "mode": "enforced",
+  "patterns": {
+    "dep_entry": "^[ \\t]*(?P<name>[A-Za-z][A-Za-z0-9_-]*)(?:\\.[A-Za-z_-]+)?[ \\t]*=",
+    "dep_header": "^[ \\t]*\\[(?:target\\.[^\\]]+\\.)?(?:dev-|build-)?dependencies\\][ \\t]*(?:#.*)?$",
+    "host_paths": "\\b(?:gpui(?:_component)?|kea_(?:app|session|pty|alacritty)|portable_pty|alacritty|zed_editor)::"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-core/Cargo.toml",
+      "crates/kea-document/Cargo.toml",
+      "crates/kea-core/src/**/*.rs",
+      "crates/kea-document/src/**/*.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Portable crates cannot import host dependencies"
+}

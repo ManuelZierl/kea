@@ -1,0 +1,3 @@
+# AGENTS.md repository document references
+
+AGENTS.md directs agents to named local Markdown files. Compare root README.md, CONTRIBUTING.md and docs/*.md paths mentioned in AGENTS.md against existing repository files. A missing path is a violation whether it is a Markdown link or plain/backticked prose. A real docs/terminal-text-selection.md reference is a positive example of a path that must remain valid. This rule does not resolve relative/anchored links in README or CONTRIBUTING; those are separate link-checker concerns. It only looks at Markdown filenames with these forms, not generic paths.

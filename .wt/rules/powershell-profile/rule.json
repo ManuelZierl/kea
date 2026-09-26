@@ -1,0 +1,43 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "no-profile": {
+      "help": "Launch with the profile enabled; startup hooks run after it.",
+      "kind": "violation",
+      "message": "AGENTS.md: default Windows PowerShell must preserve the user's profile; do not pass -NoProfile."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "powershell-profile",
+  "mode": "enforced",
+  "patterns": {
+    "no_profile": "(?i)(?:\\.args\\(\\s*\\[[^\\]\\r\\n]*?|\\.arg\\(\\s*|\\b(?:pwsh|powershell)(?:\\.exe)?\\b[^\\r\\n]*?[ \\t])[\\\"']?-noprofile\\b"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [
+      {
+        "glob": "crates/kea-app/src/shell/mod.rs",
+        "reason": "User-supplied command detection permits an explicit -NoProfile; default launch is in app/startup.rs."
+      }
+    ],
+    "include": [
+      "crates/kea-app/src/**/*.rs",
+      "scripts/**/*.sh",
+      ".github/workflows/**/*.yml"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Keep the default PowerShell profile"
+}

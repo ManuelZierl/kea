@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "reject-startup-switch",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/startup.rs",
+          "content": "command.arg(\"-NoProfile\");\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/startup.rs",
+          "code": "no-profile",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "allow-profile-preserving-startup-and-absence-test",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/startup.rs",
+          "content": "command.args([\"-NoLogo\", \"-NoExit\"]);\n"
+        },
+        {
+          "path": "crates/kea-app/tests/unit/shell/mod.rs",
+          "content": "assert!(!args.iter().any(|arg| arg == \"-NoProfile\"));\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "allow-source-and-smoke-assertions",
+      "files": [
+        {
+          "path": "crates/kea-app/src/shell/mod.rs",
+          "content": "// Hooks must not pass -NoProfile.\n"
+        },
+        {
+          "path": "scripts/smoke-linux.sh",
+          "content": "assert_not_present '-NoProfile'\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "reject-switch-in-args-array",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/startup.rs",
+          "content": "command.args([\"-NoLogo\", \"-NoProfile\"]);\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/startup.rs",
+          "code": "no-profile",
+          "kind": "violation"
+        }
+      ]
+    }
+  ]
+}
