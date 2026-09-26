@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in confirmation before forwarding Ctrl-C, with per-terminal overrides
+  and protection against stale targets and repeated confirmation keys.
+- Add independently submitted composer sections, split/merge/navigation actions,
+  bounded structural undo, and explicit selection submission that preserves its draft.
+- Suggest nonexecuting editor actions for separators, code fences, placeholders,
+  and configurable shorthand. Text remains literal until a transformation is accepted.
+  See [Composer sections and actions](docs/composer-workflow.md) for controls and
+  the desktop acceptance checklist.
 - Unify composer submission under Ctrl+Enter with exact-draft/context confirmation
   for unknown input; retain Ctrl+Shift+Enter as a guarded compatibility alias.
 - Replace authored-command eval wrappers with observational shell hooks. Install
