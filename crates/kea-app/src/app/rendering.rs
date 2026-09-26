@@ -373,7 +373,10 @@ impl Render for KeaView {
                 "Input unconfirmed · Submit asks before sending".into()
             }
         });
-        let directory = match (self.document.directory(), self.input_context.shell_ready()) {
+        let directory = match (
+            self.document.directory(),
+            self.input_context.local_shell_ready(),
+        ) {
             (Some(path), true) => format!("Current shell directory: {path}"),
             (Some(path), false) => format!("Shell directory (last reported): {path}"),
             _ => "Shell directory: not reported".into(),

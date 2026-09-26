@@ -62,12 +62,17 @@ impl KeaView {
             uses_compact_chrome(window, cx) || f32::from(window.viewport_size().width) < 900.;
         let query = self.document_ui.filter.read(cx).value().to_lowercase();
         // Pin the existing page before new output/blocks change the latest-page offset.
+        // Focus pins, and so does a nonempty selection: live output must not move
+        // a reading viewport.
         if self.document_ui.page_start.is_none()
-            && self
-                .document_ui
-                .visible
-                .values()
-                .any(|view| view.editor.focus_handle(cx).is_focused(window))
+            && self.document_ui.visible.values().any(|view| {
+                view.editor.focus_handle(cx).is_focused(window)
+                    || view.editor.update(cx, |state, cx| {
+                        state
+                            .selected_text_range(true, window, cx)
+                            .is_some_and(|selection| !selection.range.is_empty())
+                    })
+            })
         {
             self.document_ui.page_start = Some(self.document_ui.last_start);
         }
@@ -216,8 +221,23 @@ impl KeaView {
                             .default_value(text)
                     });
                     command_editor::follow_output_tail(&editor, window, cx);
+                    // New editors start without selection, so tail-follow is safe.
+                    // The outer inspector must not yank a reading viewport: skip
+                    // auto-scroll while any visible block is focused or selected.
+                    // The page pin above already preserves the window; this keeps
+                    // pixel scroll stable on the latest page too.
                     if self.document_ui.page_start.is_none() {
-                        self.document_scroll.scroll_to_bottom();
+                        let reading = self.document_ui.visible.values().any(|view| {
+                            view.editor.focus_handle(cx).is_focused(window)
+                                || view.editor.update(cx, |state, cx| {
+                                    state
+                                        .selected_text_range(true, window, cx)
+                                        .is_some_and(|selection| !selection.range.is_empty())
+                                })
+                        });
+                        if !reading {
+                            self.document_scroll.scroll_to_bottom();
+                        }
                     }
                     self.document_ui.visible.insert(
                         id,
