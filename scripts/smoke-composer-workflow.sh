@@ -108,12 +108,13 @@ key Return
 assert_bytes '1b5b3230307e66697273740a2d2d2d0a7365636f6e641b5b3230317e0d'
 
 # A preview can be cancelled. Only a second explicit acceptance applies a split.
+# Home is a supported line-start action; Ctrl+Home is not a buffer-start binding.
 start_fixture sections
 put_clipboard $'first\n---\nsecond'
-key ctrl+v ctrl+Home Down ctrl+period Return Escape
+key ctrl+v End Home Up ctrl+period Return Escape
 assert_draft $'first\n---\nsecond'
 assert_bytes ''
-key ctrl+Home Down ctrl+period Return Return
+key End Home Up ctrl+period Return Return
 assert_draft first
 assert_bytes ''
 key End ctrl+Return
@@ -139,4 +140,16 @@ put_clipboard 'copy stays local'
 key ctrl+v
 assert_draft 'copy stays local'
 assert_bytes '030d'
-echo 'Composer literal input, explicit previews, independent sections, held confirmation, protected Ctrl-C, cancellation and local Copy passed.'
+
+# Confirm before C has repeated, while C itself remains physically held. A
+# repeated key-down after confirmation must not leak text or arm another gate.
+start_fixture interrupt-trigger
+key ctrl+l
+xdotool keydown Control_L keydown c keyup Control_L
+xdotool key --delay 50 Return
+xdotool keydown c keyup c
+sleep .2
+assert_bytes '03'
+key Return
+assert_bytes '030d'
+echo 'Composer literal input, explicit previews, independent sections, held confirmation, protected Ctrl-C, held trigger, cancellation and local Copy passed.'

@@ -1,7 +1,11 @@
 //! Opt-in confirmation on the terminal input path, after local Copy routing.
 use super::*;
 use gpui_component::ActiveTheme as _;
-use kea_app::terminal::interrupt::{InterruptGuard, KeyLatch};
+use kea_app::terminal::{
+    input,
+    interrupt::{InterruptGuard, KeyLatch},
+    selection::{self, LocalKey},
+};
 
 #[derive(Default)]
 pub(super) struct InterruptState {
@@ -86,6 +90,46 @@ impl KeaView {
         }
     }
 
+    /// Own the triggering physical key from its first press, not its first
+    /// repeat. Confirmation may finish before autorepeat begins. The normal
+    /// handler still decides whether to arm and retains the encoded bytes.
+    fn protected_interrupt_press(
+        &mut self,
+        key: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.session.input_allowed()
+            || !self
+                .interrupt
+                .override_enabled
+                .unwrap_or(self.settings.confirm_ctrl_c)
+        {
+            return false;
+        }
+        if self.focus.is_focused(window) && is_ctrl_c(key) {
+            let m = key.modifiers;
+            let local = selection::local_key(
+                &key.key,
+                m.shift,
+                m.control,
+                m.alt,
+                m.platform,
+                m.function,
+                self.session.terminal_local_selection_active(),
+            );
+            let composing = self.terminal_composition.update(cx, |state, cx| {
+                state.marked_text_range(window, cx).is_some()
+            });
+            return matches!(local, LocalKey::Forward) && !input::defer_to_ime(key, composing);
+        }
+        self.editor.focus_handle(cx).is_focused(window)
+            && self.keymap.action_for(key) == Some(Action::Interrupt)
+            && !self.editor.update(cx, |state, cx| {
+                state.marked_text_range(window, cx).is_some()
+            })
+    }
+
     /// Called by the window interceptor before either editor or terminal routing.
     pub(super) fn interrupt_keystroke(
         &mut self,
@@ -106,6 +150,11 @@ impl KeaView {
         let enter = matches!(key.key.as_str(), "enter" | "return");
         let fresh = !enter || self.interrupt.key_latch.press(&key.key);
         if !self.interrupt.gate.is_pending() {
+            if self.protected_interrupt_press(key, window, cx) {
+                self.interrupt.swallowed.push(physical.to_owned());
+            }
+            // Only later repeats are swallowed. Local Copy and IME stay ahead
+            // of the actual interrupt request in the normal input dispatcher.
             return false;
         }
         // Process queued context/lifecycle events before authorizing the old target.
