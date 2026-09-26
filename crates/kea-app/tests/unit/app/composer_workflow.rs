@@ -1,6 +1,11 @@
-use super::*;
-use gpui::TestAppContext;
+use super::{workflow, EditPlan, KeaView};
+use crate::app::InitialFocus;
+use gpui::{App, AppContext as _, Context, Entity, TestAppContext, Window};
 use gpui_component::{input::RopeExt as _, Root};
+use kea_app::config::{keybindings::Keymap, settings::Settings};
+use kea_app::editor::command as command_editor;
+use kea_document::Document;
+use kea_session::Session;
 
 fn make_view(window: &mut Window, cx: &mut App) -> Entity<KeaView> {
     let session = Session::demo().unwrap();
