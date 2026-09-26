@@ -152,4 +152,24 @@ sleep .2
 assert_bytes '03'
 key Return
 assert_bytes '030d'
-echo 'Composer literal input, explicit previews, independent sections, held confirmation, protected Ctrl-C, held trigger, cancellation and local Copy passed.'
+
+# A confirmation key remains owned across a tab switch until physical release.
+# The other draft is harmless even if a regression accidentally submits it.
+start_fixture tab-guard
+key ctrl+shift+t
+sleep .5
+xdotool type --clearmodifiers 'printf untouched'
+assert_draft 'printf untouched'
+key ctrl+Tab
+put_clipboard guarded
+key ctrl+v ctrl+Return
+assert_bytes ''
+xdotool keydown Return
+key ctrl+Tab
+sleep .8
+xdotool keydown Return
+xdotool keyup Return
+sleep .2
+assert_draft 'printf untouched'
+assert_bytes '1b5b3230307e677561726465641b5b3230317e0d'
+echo 'Composer literal input, explicit previews, independent sections, held confirmation, protected Ctrl-C, held trigger, tab isolation, cancellation and local Copy passed.'
