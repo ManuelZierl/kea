@@ -152,3 +152,10 @@ This does not bypass SmartScreen/application-control policies, and unsigned deve
 Compilation/unit tests, graphical acceptance and real OS testing are separate evidence. Important ongoing compatibility targets include Windows + OpenCode, actual macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, extended keyboard protocol negotiation, accessibility and long-session scrollback/selection behavior.
 
 Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).
+
+## Composer sections and guarded interrupts
+
+See [Composer sections and actions](composer-workflow.md) for independently
+submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
+recommendations. A section is pending input for the existing receiver, not a
+separate shell or an execution queue.

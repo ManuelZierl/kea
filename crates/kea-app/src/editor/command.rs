@@ -336,3 +336,27 @@ pub fn follow_output_tail(editor: &Entity<InputState>, window: &mut Window, _cx:
 #[cfg(test)]
 #[path = "../../tests/unit/editor/command.rs"]
 mod tests;
+
+/// Switch the active composer section without treating construction or focus as submission.
+pub fn activate_section(editor: &Entity<InputState>, cx: &mut App) {
+    let recall = cx.default_global::<DraftRecallGlobal>();
+    if recall.current_editor.as_ref() != Some(editor) {
+        recall.current_editor = Some(editor.clone());
+        recall.submission_candidate = None;
+        recall.history.reset_navigation();
+    }
+}
+
+/// A section/pattern transformation is never a successful submission.
+pub fn cancel_submission_candidate(cx: &mut App) {
+    cx.default_global::<DraftRecallGlobal>()
+        .submission_candidate = None;
+}
+
+/// Account for exactly one successful terminal delivery, including selection sends.
+pub fn record_submission(text: &str, cx: &mut App) {
+    let recall = cx.default_global::<DraftRecallGlobal>();
+    recall.submission_candidate = None;
+    recall.history.record(text.to_owned());
+    recall.persisted.record(text.to_owned());
+}

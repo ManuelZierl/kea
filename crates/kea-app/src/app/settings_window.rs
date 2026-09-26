@@ -27,6 +27,8 @@ pub(super) enum SettingsChange {
     HistoryPersistence(bool),
     ShiftMouseSelectsLocally(bool),
     AnimateLogo(bool),
+    ConfirmCtrlC(bool),
+    ComposerSuggestions(bool),
 }
 
 pub(super) fn open(view: Entity<KeaView>, window: &mut Window, cx: &mut App) {
@@ -287,6 +289,24 @@ fn build_dialog(
                             cx,
                         ),
                         toggle_row(
+                            "confirm-ctrl-c",
+                            "Confirm Ctrl-C before forwarding",
+                            "Enter sends once; Escape cancels. Copy keeps its normal behavior. Each terminal can override this default.",
+                            settings.confirm_ctrl_c,
+                            SettingsChange::ConfirmCtrlC,
+                            view,
+                            cx,
+                        ),
+                        toggle_row(
+                            "composer-suggestions",
+                            "Suggest composer actions",
+                            "Show non-mutating recommendations for separators, code fences and placeholders. Acceptance is always explicit.",
+                            settings.composer_suggestions,
+                            SettingsChange::ComposerSuggestions,
+                            view,
+                            cx,
+                        ),
+                        toggle_row(
                             "shift-local-selection",
                             "Shift-drag selects terminal text locally",
                             "Turn off to forward Shift pointer gestures to mouse-aware terminal apps.",
@@ -320,7 +340,7 @@ fn build_dialog(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("Saved to {path}. Font-family overrides remain available in settings.conf. Use the Keybindings tab for shortcuts.")),
+                        .child(format!("Saved to {path}. Font-family and composer_action_prefix overrides remain available in settings.conf. Use the Keybindings tab for shortcuts.")),
                 ),
         )
 }

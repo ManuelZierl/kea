@@ -83,6 +83,7 @@ impl EntityInputHandler for KeaView {
         if !self.focus.is_focused(window) || !self.session.input_allowed() {
             return;
         }
+        self.interrupt.cancel();
         if !self.terminal_replacement_fits(range.as_ref(), text, window, cx) {
             self.reject_large_terminal_text(cx);
             return;
@@ -122,6 +123,7 @@ impl EntityInputHandler for KeaView {
         if !self.focus.is_focused(window) || !self.session.input_allowed() {
             return;
         }
+        self.interrupt.cancel();
         if !self.terminal_replacement_fits(range.as_ref(), text, window, cx) {
             self.reject_large_terminal_text(cx);
             return;

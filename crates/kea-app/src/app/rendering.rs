@@ -1,7 +1,7 @@
 use super::*;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    input::{self as edit, Input},
+    input as edit,
     resizable::{h_resizable, resizable_panel, v_resizable},
     ActiveTheme, Disableable as _, IconName, Selectable as _, Sizable as _, Theme, ThemeMode,
 };
@@ -21,6 +21,7 @@ const TERMINAL_SELECTION_FOREGROUND: u32 = 0xffffff;
 
 impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.validate_workflow(window, cx);
         let editor = self.editor.clone();
         let enabled = self.session.input_allowed();
         self.reverse_search.update(cx, |search, cx| {
@@ -174,6 +175,7 @@ impl Render for KeaView {
                 )
             })
             .child(div().flex_1())
+            .child(self.interrupt_toggle(cx))
             .when(!compact_chrome, |header| {
                 header.child(if terminal_display_offset == 0 {
                     div()
@@ -249,6 +251,7 @@ impl Render for KeaView {
             .min_w_0()
             .h_full()
             .child(terminal_header)
+            .child(self.interrupt_controls(cx))
             .child(terminal);
 
         let output = if self.show_blocks {
@@ -436,6 +439,8 @@ impl Render for KeaView {
                         )
                     })
                     .child(div().flex_1().min_w_0())
+                    .child(button("composer-actions", "Actions")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_composer_actions(window, cx))))
                     .child(
                         button(
                             "run-draft",
@@ -463,6 +468,7 @@ impl Render for KeaView {
                     .child("No text sent. Input state is unconfirmed or nonempty. Enter again (or Submit) sends; any other key cancels.")
             ))
             .child(self.reverse_search.clone())
+            .child(self.render_composer_actions(window, cx))
             .child(
                 div()
                     .flex()
@@ -473,12 +479,7 @@ impl Render for KeaView {
                     .min_h_0()
                     .child(div().flex_shrink_0().mt(px(4.)).child(self.composer_logo()))
                     .child(
-                        Input::new(&self.editor)
-                            .flex_1()
-                            .h_full()
-                            .min_h(px(72.))
-                            .appearance(false)
-                            .bordered(false),
+                        self.render_composer_sections(window, cx),
                     ),
             )
             .child(completions);

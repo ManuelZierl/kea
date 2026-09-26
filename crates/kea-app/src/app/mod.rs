@@ -1,6 +1,8 @@
 mod actions;
 mod composer;
+mod composer_workflow;
 mod document_view;
+mod interrupt;
 mod pointer;
 mod rendering;
 mod settings_window;
@@ -41,6 +43,8 @@ enum InitialFocus {
 
 struct PendingRun {
     text: String,
+    draft: String,
+    consume: bool,
     editor: Entity<InputState>,
     context_generation: u64,
     released: bool,
@@ -82,6 +86,8 @@ struct KeaView {
     prompt_line: PromptLineTracker,
     pending_run: Option<PendingRun>,
     composer_enter_down: bool,
+    composer_workflow: composer_workflow::ComposerWorkflow,
+    interrupt: interrupt::InterruptState,
     terminal_composition: Entity<InputState>,
     completion_rx: Option<Receiver<CompletionResult>>,
     completion_generation: u64,

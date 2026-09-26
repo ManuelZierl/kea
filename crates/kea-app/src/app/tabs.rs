@@ -7,6 +7,9 @@ use gpui_component::{
 };
 use kea_app::tabs::{TabId, Tabs, MAX_TERMINALS};
 
+mod held_keys;
+use held_keys::HeldWorkflowKeys;
+
 pub(super) enum WorkspaceEvent {
     Action(Action),
     SettingsChanged(Settings, settings_window::SettingsChange),
@@ -29,6 +32,7 @@ pub(super) struct KeaRoot {
     scroll: ScrollHandle,
     notice: Option<String>,
     close_allowed: bool,
+    held_keys: Option<HeldWorkflowKeys>,
 }
 
 #[derive(Clone)]
@@ -63,6 +67,7 @@ impl KeaRoot {
             scroll: ScrollHandle::new(),
             notice: None,
             close_allowed: false,
+            held_keys: None,
         };
         let title = if view.read(cx).session.is_running() {
             "Terminal"
@@ -143,15 +148,18 @@ impl KeaRoot {
         } else {
             InitialFocus::Editor
         };
-        tab.view.update(cx, |view, cx| {
+        self.held_keys = Some(tab.view.update(cx, |view, cx| {
+            let held = HeldWorkflowKeys::take(view);
             view.visible = false;
+            view.cancel_workflow();
             view.pending_run = None;
             view.composer_enter_down = false;
             view.dismiss_completion();
             view.terminal_gesture = None;
             view.terminal_gesture_bounds = None;
             cx.notify();
-        });
+            held
+        }));
     }
 
     fn focus_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -159,7 +167,11 @@ impl KeaRoot {
             command_editor::activate_tab_history(id.0, cx);
         }
         if let Some(tab) = self.tabs.active() {
+            let held = self.held_keys.take();
             tab.view.update(cx, |view, cx| {
+                if let Some(held) = held {
+                    held.restore(view);
+                }
                 view.visible = true;
                 // A hidden terminal keeps its last nonzero dimensions. Re-entering
                 // layout resizes only this session using its actual canvas.
@@ -176,6 +188,20 @@ impl KeaRoot {
         }
         self.reveal_active();
         cx.notify();
+    }
+
+    fn workflow_key_up(&mut self, event: &KeyUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(held) = &mut self.held_keys {
+            held.release(&event.keystroke.key);
+        }
+        // The tab bar and dialogs are outside KeaView's key-up ancestry. A
+        // release there must still retire ownership, or the next press sticks.
+        // When KeaView already handled this release, repeating it is harmless.
+        if let Some(tab) = self.tabs.active() {
+            tab.view.update(cx, |view, cx| {
+                view.composer_key_up(event, window, cx);
+            });
+        }
     }
 
     fn activate(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
@@ -244,7 +270,7 @@ impl KeaRoot {
     fn needs_confirmation(tab: &TerminalTab, cx: &App) -> bool {
         let view = tab.view.read(cx);
         view.session.is_running()
-            || !view.editor.read(cx).value().is_empty()
+            || view.has_pending_sections(cx)
             || (!view.session.recording().events().is_empty() && !view.session.persistence_active())
     }
 
@@ -283,6 +309,9 @@ impl KeaRoot {
 
     fn remove_tab(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.tabs.active_id() == Some(id);
+        if selected {
+            self.suspend_active(window, cx);
+        }
         // Drop the view's pump/subscriptions and PTY, not merely its UI element.
         if self.tabs.remove(id).is_some() {
             command_editor::forget_tab_history(id.0, cx);
@@ -372,6 +401,9 @@ impl KeaRoot {
 
 impl Render for KeaRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !window.is_window_active() {
+            self.held_keys = None;
+        }
         let active = self.tabs.active_id();
         let mut strip = div()
             .id("terminal-tabs")
@@ -464,6 +496,7 @@ impl Render for KeaRoot {
             .on_action(cx.listener(|this, action: &Invoke, window, cx| {
                 this.invoke_action(action.action, window, cx)
             }))
+            .on_key_up(cx.listener(Self::workflow_key_up))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
@@ -507,3 +540,7 @@ impl Render for KeaRoot {
             .children(dialog_layer)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/tab_keys.rs"]
+mod tests;

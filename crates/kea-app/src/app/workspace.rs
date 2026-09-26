@@ -132,6 +132,7 @@ impl KeaView {
                             _ => {}
                         }
                         this.pump_session(cx);
+                        this.validate_workflow(window, cx);
                         if !this.focus.is_focused(window) {
                             this.session.terminal_selection_focus_lost();
                         }
@@ -158,6 +159,8 @@ impl KeaView {
             }
         });
         let show_blocks = settings.show_blocks;
+        let composer_workflow =
+            composer_workflow::ComposerWorkflow::new(editor.clone(), window, cx);
         Self {
             visible: true,
             session,
@@ -178,6 +181,8 @@ impl KeaView {
             prompt_line: PromptLineTracker::default(),
             pending_run: None,
             composer_enter_down: false,
+            composer_workflow,
+            interrupt: interrupt::InterruptState::default(),
             terminal_composition,
             completion_rx: None,
             completion_generation: 0,
@@ -241,6 +246,7 @@ impl KeaView {
 
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_run = None;
+        self.cancel_workflow();
         settings_window::open(cx.entity(), window, cx);
     }
 
@@ -249,6 +255,7 @@ impl KeaView {
     }
 
     pub(super) fn observe_composer(&mut self, cx: &mut Context<Self>) {
+        self.sync_composer_section(cx);
         let editor = self.editor.clone();
         self._composer_change =
             cx.subscribe(
@@ -340,6 +347,7 @@ impl KeaView {
         }
         if previous_context != self.input_context.generation() {
             self.pending_run = None;
+            self.interrupt.cancel();
             self.dismiss_completion();
             changed = true;
         }

@@ -36,6 +36,10 @@ impl KeaView {
                 self.settings.shift_mouse_selects_locally = value
             }
             SettingsChange::AnimateLogo(value) => self.settings.animate_logo = value,
+            SettingsChange::ConfirmCtrlC(value) => self.settings.confirm_ctrl_c = value,
+            SettingsChange::ComposerSuggestions(value) => {
+                self.settings.composer_suggestions = value
+            }
         }
 
         let path = match self.settings.save() {
@@ -80,6 +84,7 @@ impl KeaView {
     ) {
         use settings_window::SettingsChange;
         self.settings = settings;
+        self.cancel_workflow();
         match change {
             SettingsChange::Appearance(_) | SettingsChange::FontSize(_) => {
                 rendering::apply_appearance(&self.settings, window, cx);
@@ -88,7 +93,9 @@ impl KeaView {
             SettingsChange::LineNumbers(_)
             | SettingsChange::SoftWrap(_)
             | SettingsChange::SyntaxHighlighting(_) => {
-                command_editor::apply_settings(&self.editor, self.shell, &self.settings, window, cx)
+                for editor in self.composer_workflow.sections.clone() {
+                    command_editor::apply_settings(&editor, self.shell, &self.settings, window, cx);
+                }
             }
             SettingsChange::OutputWrap(_) => {
                 self.document_ui
@@ -155,6 +162,7 @@ impl KeaView {
     }
 
     pub(super) fn note_forwarded_terminal_input(&mut self) {
+        self.interrupt.cancel();
         self.session.scroll_bottom();
         self.session.clear_terminal_selection();
         self.prompt_line.invalidate();
@@ -215,18 +223,15 @@ impl KeaView {
                 }
             }
             Action::SelectTerminalText => self.select_terminal_text(window, cx),
-            Action::Interrupt => {
-                let result = self.session.send(vec![3]);
-                if result.is_ok() {
-                    self.session.scroll_bottom();
-                    self.session.clear_terminal_selection();
-                    self.prompt_line.invalidate();
-                    self.pending_run = None;
-                    self.document.note_terminal_input();
-                    self.input_context.invalidate();
-                }
-                self.result(result, cx);
-            }
+            Action::Interrupt => self.request_interrupt(vec![3], window, cx),
+            Action::ComposerActions => self.open_composer_actions(window, cx),
+            Action::SplitComposer => self.split_composer(window, cx),
+            Action::MergeComposer => self.merge_composer(window, cx),
+            Action::NextComposer => self.navigate_composer(true, window, cx),
+            Action::PreviousComposer => self.navigate_composer(false, window, cx),
+            Action::SendSelection => self.send_selection(window, cx),
+            Action::UndoComposerLayout => self.undo_composer_layout(false, window, cx),
+            Action::RedoComposerLayout => self.undo_composer_layout(true, window, cx),
             Action::RunShell => self.run_shell(window, cx),
             Action::SendApplication => self.send_editor(window, cx),
             Action::Newline => {
@@ -340,6 +345,12 @@ impl KeaView {
             self.session.terminal_extended_keyboard(),
         ) {
             if self.session.input_allowed() {
+                if interrupt::is_ctrl_c(&event.keystroke) {
+                    self.request_interrupt(bytes, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                self.interrupt.cancel();
                 let tracked_bytes = bytes.clone();
                 let result = self.session.send(bytes);
                 if result.is_ok() {

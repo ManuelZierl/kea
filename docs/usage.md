@@ -352,3 +352,10 @@ and [roadmap](roadmap.md).
 ## License
 
 MIT. Dependencies retain their licenses. Kea is independent, not an official Zed feature or extension.
+
+## Composer sections and guarded interrupts
+
+See [Composer sections and actions](composer-workflow.md) for independently
+submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
+recommendations. A section is pending input for the existing receiver, not a
+separate shell or an execution queue.
