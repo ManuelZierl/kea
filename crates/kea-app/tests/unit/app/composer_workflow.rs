@@ -33,7 +33,7 @@ fn write_at(
     cx: &mut Context<KeaView>,
 ) {
     view.editor.update(cx, |state, cx| {
-        state.set_value(text, window, cx);
+        state.set_value(text.to_owned(), window, cx);
         let position = state.text().offset_to_position(cursor);
         state.set_cursor_position(position, window, cx);
         state.focus(window, cx);
