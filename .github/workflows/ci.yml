@@ -38,7 +38,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/ManuelZierl/wt/v0.0.1/install.sh | env WT_VERSION=v0.0.1 WT_INSTALL_DIR="$RUNNER_TEMP/wt-bin" sh
+          mkdir -p "$RUNNER_TEMP/wt-bin"
+          curl -fsSL https://github.com/ManuelZierl/wt/releases/download/v0.0.1/wt-linux-x86_64.tar.gz -o "$RUNNER_TEMP/wt-bin/wt.tar.gz"
+          (cd "$RUNNER_TEMP/wt-bin" && echo '42743a63ab30fbc93598ab1a0256fbf23758e45cc31db132084fc89d2883b1fb  wt.tar.gz' | sha256sum --check)
+          tar -xzf "$RUNNER_TEMP/wt-bin/wt.tar.gz" -C "$RUNNER_TEMP/wt-bin" wt
           "$RUNNER_TEMP/wt-bin/wt" validate --no-global
           "$RUNNER_TEMP/wt-bin/wt" test --no-global
           "$RUNNER_TEMP/wt-bin/wt" check --no-global --no-host-ignores --no-cache

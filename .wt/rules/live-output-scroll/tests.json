@@ -18,6 +18,48 @@
       ]
     },
     {
+      "name": "focus-only-guard-still-needs-scroll-position-review",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "content": "fn output(&mut self) { if !focused && !selected { self.document_scroll.scroll_to_bottom(); } }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "code": "scroll",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "geometry-guard-still-requires-sequencing-review",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "content": "fn output(&mut self) { if is_at_document_tail(&self.document_scroll) { self.document_scroll.scroll_to_bottom(); } }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "code": "scroll",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "wheel-reading-pins-page-without-scrolling",
+      "files": [
+        {
+          "path": "crates/kea-app/src/app/document_view.rs",
+          "content": "fn output(&mut self) { if !is_at_document_tail(&self.document_scroll) { self.document_ui.page_start = Some(self.document_ui.last_start); } }\n"
+        }
+      ],
+      "expect": []
+    },
+    {
       "name": "input-driven-and-selection-preserving",
       "files": [
         {

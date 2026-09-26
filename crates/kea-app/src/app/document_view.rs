@@ -13,6 +13,13 @@ use kea_document::status_label;
 use std::collections::{HashMap, HashSet};
 const PAGE_SIZE: usize = 24;
 
+fn is_at_document_tail(scroll: &ScrollHandle) -> bool {
+    // ScrollHandle stores the vertical offset as a negative distance from the
+    // content origin. scroll_to_bottom() is deferred until prepaint, so use
+    // the geometry from the last laid-out frame before arming it.
+    scroll.offset().y + scroll.max_offset().height <= px(1.)
+}
+
 struct BlockText {
     editor: Entity<InputState>,
     output_len: usize,
@@ -22,6 +29,7 @@ struct BlockText {
 pub(super) struct DocumentUi {
     pub filter: Entity<InputState>,
     pub page_start: Option<usize>,
+    latest_navigation: bool,
     pub dirty: bool,
     query: String,
     matches: Vec<usize>,
@@ -34,6 +42,7 @@ impl DocumentUi {
         Self {
             filter: cx.new(|cx| InputState::new(window, cx).placeholder("Find in command blocks…")),
             page_start: None,
+            latest_navigation: false,
             dirty: true,
             query: String::new(),
             matches: Vec::new(),
@@ -61,18 +70,21 @@ impl KeaView {
         let compact_chrome =
             uses_compact_chrome(window, cx) || f32::from(window.viewport_size().width) < 900.;
         let query = self.document_ui.filter.read(cx).value().to_lowercase();
+        let latest_navigation = std::mem::take(&mut self.document_ui.latest_navigation);
         // Pin the existing page before new output/blocks change the latest-page offset.
         // Focus pins, and so does a nonempty selection: live output must not move
         // a reading viewport.
         if self.document_ui.page_start.is_none()
-            && self.document_ui.visible.values().any(|view| {
-                view.editor.focus_handle(cx).is_focused(window)
-                    || view.editor.update(cx, |state, cx| {
-                        state
-                            .selected_text_range(true, window, cx)
-                            .is_some_and(|selection| !selection.range.is_empty())
-                    })
-            })
+            && !latest_navigation
+            && (!is_at_document_tail(&self.document_scroll)
+                || self.document_ui.visible.values().any(|view| {
+                    view.editor.focus_handle(cx).is_focused(window)
+                        || view.editor.update(cx, |state, cx| {
+                            state
+                                .selected_text_range(true, window, cx)
+                                .is_some_and(|selection| !selection.range.is_empty())
+                        })
+                }))
         {
             self.document_ui.page_start = Some(self.document_ui.last_start);
         }
@@ -101,6 +113,9 @@ impl KeaView {
         self.document_ui.last_start = start;
         let end = (start + PAGE_SIZE).min(total);
         let indices = self.document_ui.matches[start..end].to_vec();
+        if latest_navigation && self.document_ui.page_start.is_none() {
+            self.document_scroll.scroll_to_bottom();
+        }
         let ids: HashSet<_> = indices
             .iter()
             .map(|&index| self.document.blocks()[index].id)
@@ -226,7 +241,9 @@ impl KeaView {
                     // auto-scroll while any visible block is focused or selected.
                     // The page pin above already preserves the window; this keeps
                     // pixel scroll stable on the latest page too.
-                    if self.document_ui.page_start.is_none() {
+                    if self.document_ui.page_start.is_none()
+                        && is_at_document_tail(&self.document_scroll)
+                    {
                         let reading = self.document_ui.visible.values().any(|view| {
                             view.editor.focus_handle(cx).is_focused(window)
                                 || view.editor.update(cx, |state, cx| {
@@ -370,7 +387,7 @@ impl KeaView {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.focus_active(window, cx);
                                         this.document_ui.page_start = None;
-                                        this.document_scroll.scroll_to_bottom();
+                                        this.document_ui.latest_navigation = true;
                                         cx.notify();
                                     })),
                             )
@@ -423,3 +440,7 @@ impl KeaView {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/document_view.rs"]
+mod tests;

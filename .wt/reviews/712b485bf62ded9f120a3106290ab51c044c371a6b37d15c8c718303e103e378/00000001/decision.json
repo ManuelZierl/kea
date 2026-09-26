@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "finding_id": "sha256:712b485bf62ded9f120a3106290ab51c044c371a6b37d15c8c718303e103e378",
+  "evidence_digest": "sha256:e4096f01f05d021e880d0c58b1caeb0fa9307faea4d474e71b09e012c89ec182",
+  "decision": "acceptable",
+  "rule_id": "local/current-cwd-label",
+  "code": "current-label",
+  "path": "crates/kea-app/src/app/rendering.rs",
+  "start_byte": 16324,
+  "end_byte": 16347,
+  "matched_digest": "sha256:09a19cbc26c5bbf729b50ce772a0e5b07fa8a70a14a792379d39bc1904ce5a8f",
+  "rule_digest": "sha256:6b2c90a28d5a4b307565a541b857b0b50dac2182cc89e028336bfe449f9992eb",
+  "file_digest": "sha256:24cafab484a372d67a551dc2487a26b44d50aed88d3933c463d259522814b8ea",
+  "context_digest": "sha256:4f0f971839f0d07818dc494b2a4380bc247abffe3fd0e7cca3529cfce2af5bfe",
+  "engine_digest": "sha256:c79157972c88f5a70affdc5436051cd91907306f3ba997fd11a11486e9a0be63",
+  "watched_files": {},
+  "rationale_file": "rationale.md",
+  "previous": null
+}

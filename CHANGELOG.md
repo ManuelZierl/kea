@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.0.1-alpha.2 — 2026-09-26
+
+- Add independent terminal tabs with per-tab processes, drafts, history navigation,
+  completion, recordings and input ownership; support switching, reordering and
+  confirmed closing without interrupting other tabs.
+- Add a native Windows application icon and verify the embedded icon and GUI subsystem.
+- Preserve the block inspector's reading position when new blocks arrive, including
+  wheel-only reading without a selection; explicit Latest resumes following output.
+- Label the shell directory as current only at the explicitly reported local prompt.
+- Add repository invariant rules with reviewed evidence and a checksum-pinned CI tool.
 
 - Add opt-in confirmation before forwarding Ctrl-C, with per-terminal overrides
   and protection against stale targets and repeated confirmation keys.
@@ -20,6 +29,18 @@
 - Focus clicked input fields explicitly and add isolated shortcut recording.
 - Write recording format v2 with separate submission metadata; keep v1 reading.
   Older Kea releases cannot read newly written v2 recordings.
+
+### Validation and known limits
+
+- Linux automated coverage includes portable engines, application/component tests,
+  warnings-denied Clippy, and isolated graphical acceptance for terminal tabs,
+  guarded composer actions, terminal/editor routing, completion, history and replay.
+- Windows application tests/build and macOS portable tests are covered by hosted CI.
+  Real Windows/macOS graphical interaction, platform IMEs, accessibility, SSH/TUI
+  combinations and long-session behavior remain separate acceptance work.
+- Release archives are unsigned; native installers, advanced image protocols and
+  higher extended-keyboard protocol levels remain unavailable. Recordings, saved
+  history and memories are bounded and unencrypted.
 
 ## 0.0.1-alpha.1 — 2026-09-19
 

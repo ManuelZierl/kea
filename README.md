@@ -14,7 +14,7 @@ Compose a command or prompt and submit it to the active terminal receiver,
 then recall and edit it without losing your next draft. Your shell, SSH, Vim,
 REPLs and other terminal applications keep their native input behavior.
 
-**Early alpha:** `v0.0.1-alpha.1` is the first release. Expect rough edges;
+**Early alpha:** `v0.0.1-alpha.2`. Expect rough edges;
 real-platform compatibility is still being validated. See the
 [compatibility checklist](docs/terminal-compatibility-alpha.md) and
 [known limits](docs/usage.md#limits-and-privacy).

@@ -1,0 +1,1 @@
+editor/provider.rs:112 makes a synchronous bounded network connection, but Endpoint::complete is called only inside composer.rs:282-299's spawned completion worker. TIMEOUT and remaining(deadline) also bound the request; the UI polls completion results asynchronously.
