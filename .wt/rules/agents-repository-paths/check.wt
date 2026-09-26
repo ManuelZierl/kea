@@ -1,0 +1,16 @@
+for source in repo.files() {
+    if source.path == "AGENTS.md" {
+        for reference in rx::find_all(source, "referenced_path") {
+            let found = false;
+            for candidate in repo.files() {
+                if candidate.path == reference.text {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                emit(reference.span, "missing-path");
+            }
+        }
+    }
+}

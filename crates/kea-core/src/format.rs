@@ -2,7 +2,7 @@ use crate::types::invalid;
 use crate::{Event, Kind, Recording, Size, MAX_OUTPUT};
 use std::io::{self, Read, Write};
 
-const MAGIC: &[u8; 8] = b"KEA\x01\r\n\x1a\n";
+const MAGIC: &[u8; 8] = b"KEA\x02\r\n\x1a\n";
 
 pub struct Loaded {
     pub recording: Recording,
@@ -34,6 +34,24 @@ pub fn write_event(mut out: impl Write, event: &Event) -> io::Result<()> {
             body.extend_from_slice(&size.columns.to_le_bytes());
             body.extend_from_slice(&size.rows.to_le_bytes());
         }
+        Kind::Submitted { id, context, input } => {
+            if input.is_empty() || input.len() > 64 * 1024 || input.contains('\0') {
+                return Err(invalid("invalid submitted input"));
+            }
+            if context.is_empty()
+                || context.len() > 128
+                || !context
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            {
+                return Err(invalid("invalid input context"));
+            }
+            body.push(3);
+            body.extend_from_slice(&id.to_le_bytes());
+            body.extend_from_slice(&(context.len() as u16).to_le_bytes());
+            body.extend_from_slice(context.as_bytes());
+            body.extend_from_slice(input.as_bytes());
+        }
         Kind::Exit(code) => {
             body.push(2);
             body.extend_from_slice(&code.to_le_bytes());
@@ -47,8 +65,9 @@ pub fn write_event(mut out: impl Write, event: &Event) -> io::Result<()> {
 pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
     let mut header = [0; 12];
     input.read_exact(&mut header)?;
-    if &header[..8] != MAGIC {
-        return Err(invalid("not a supported Kea v1 recording"));
+    let version = header[3];
+    if &header[..3] != b"KEA" || !matches!(version, 1 | 2) || header[4..8] != MAGIC[4..] {
+        return Err(invalid("not a supported Kea v1/v2 recording"));
     }
     let initial = Size::new(
         u16::from_le_bytes([header[8], header[9]]),
@@ -98,6 +117,23 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
                     .try_into()
                     .map_err(|_| invalid("bad exit code"))?,
             )),
+            3 if version >= 2 && (21..=19 + 128 + 64 * 1024).contains(&length) => {
+                let context_len = u16::from_le_bytes([body[17], body[18]]) as usize;
+                if context_len == 0 || context_len > 128 || 19 + context_len >= length {
+                    return Err(invalid("invalid input context length"));
+                }
+                Kind::Submitted {
+                    id: u64::from_le_bytes(
+                        body[9..17]
+                            .try_into()
+                            .map_err(|_| invalid("bad submission id"))?,
+                    ),
+                    context: String::from_utf8(body[19..19 + context_len].to_vec())
+                        .map_err(|_| invalid("invalid context UTF-8"))?,
+                    input: String::from_utf8(body[19 + context_len..].to_vec())
+                        .map_err(|_| invalid("invalid input UTF-8"))?,
+                }
+            }
             _ => return Err(invalid("unknown or malformed event")),
         };
         recording.append(at, kind)?;

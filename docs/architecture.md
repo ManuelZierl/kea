@@ -5,23 +5,32 @@ nav_order: 8
 
 # Architecture
 
-## One session, independent surfaces
+## Per-tab sessions, independent surfaces
 
 Kea displays a live terminal and a persistent editor together. Focus decides who receives physical input. A block inspector is optional presentation, hidden by default; it is not an execution mode. See [interaction contract](unified-session.md).
 
 The editor/platform owns ordinary text editing, selection, clipboard, undo and composition. Kea owns explicit submission, process/session history, optional metadata and historical inspection. The configurable `focus_editor` escape is the only semantic accelerator reserved in live-terminal focus; visible local text interaction temporarily owns its limited read-only commands.
 
-The same PTY is used by terminal input, **Run in shell**, and **Send to app**. There is no second shell, no submission-target mode and no application-name guessing.
+The same PTY is used by direct terminal input and composer **Submit**. There is
+no second shell, submission-target mode, or process-name guessing. An explicit
+live `InputContext` models receiver identity, readiness and generation; it is
+independent of `kea-document` and its retained blocks.
 
 ## Execution before metadata
 
-Execution is authoritative; structure observes it.
+Submit sends authored text followed by Enter, never an eval wrapper. Ready input
+permits immediate send; unknown/nonempty/busy input requires confirmation of the
+unchanged draft and context. Confirmation is a UI safeguard, not authenticated
+provenance or transactional delivery. Normal input invalidates readiness and
+pending work. Interrupt is always explicit.
 
-`Run in shell` requires an explicit prompt-ready report, creates a shell-driver line, and sends it. It does **not** first create a queued document block. Start/done markers in later output may derive a block, but retention exhaustion, malformed/missing markers or document-parser failure cannot prevent the command from executing.
+A successful shell-ready submission can append a typed metadata event. Shell
+hooks subsequently report scoped native start/done boundaries. The optional block
+observer correlates those reports without gating PTY writes. Missing hooks,
+retention exhaustion and malformed metadata degrade to untracked execution.
 
-`Send to app` never creates shell metadata or a wrapper. It sends literal editor text plus Enter to the current stdin owner, using bracketed paste for multiline content when the application enables it.
-
-This keeps the optional block model useful without making terminal correctness depend on it.
+See [active input and provider contract](active-input.md) and the
+[interaction contract](unified-session.md) for the exact policy and limits.
 
 ## Crate boundaries
 
@@ -64,64 +73,61 @@ the library/component tests; `--lib` intentionally runs only the latter.
 
 ## Canonical stream and metadata
 
-Raw terminal output plus ordered resize/lifecycle events are canonical. Live sessions also retain a bounded, event-aligned presentation stream for rewind, so application-owned shell driver echoes hidden from the live terminal remain hidden during playback without changing raw bytes, timestamps or journal data. Imported v1 recordings have no separate presentation data and replay their canonical stream. Structured records are derived from explicit OSC metadata, never prompt regexes, idle time, cursor position or `$`/`>` text.
+Raw terminal output is never replaced by rendered text or fabricated metadata
+bytes. Ordered `Submitted` events hold authored shell submissions separately
+from output, resize and lifecycle events. The writer emits v2; the reader retains
+v1 compatibility. Terminal replay ignores `Submitted`; `kea-document` observes
+it. Recordings contain no raw keystroke stream.
 
-Integrated shell prompt hooks report cwd/readiness through bounded OSC 777 metadata. The live host also receives the effective shell `PATH` on OSC 778 for editor command completion. PATH is completion context, not required for replaying command blocks.
+The bounded OSC 779 parser owns live input context. Each complete report is a
+new generation, even if its fields repeat. Malformed/oversized reports fail closed
+to unknown readiness. Normal terminal input invalidates readiness. These live
+observations are never used as an authentication boundary.
 
-Native terminal input immediately invalidates prompt-ready state. Only the next explicit shell prompt report makes **Run in shell** safe again. This prevents a shell wrapper from being appended to a partially typed prompt or injected into OpenCode/SSH/a REPL.
-
-Markers are interoperability data, not authentication. Programs can forge terminal output; metadata must never become an authorization boundary.
+OSC 777 retains cwd and legacy block compatibility and adds scoped native
+start/done. OSC 778 supplies live PATH. The flat block model cannot represent
+nested command trees; it observes an outer block without gating inner input.
 
 ## Shell integration
 
-Interactive POSIX-style shells and PowerShell receive small host-owned prompt hooks. Noninteractive command/script invocations are not injected.
+Bash uses PS0 plus PROMPT_COMMAND hooks; zsh uses preexec/precmd hooks. PowerShell
+preserves the original prompt and PSConsoleHostReadLine, returning the authored
+command to the normal execution path. Hooks capture status before housekeeping.
+Bash/zsh report integer shell status; PowerShell reports a success/failure flag.
+Shells without execution hooks still accept input but may not produce blocks.
 
-The integration preserves user shell behavior where possible:
-
-- Bash retains existing `PROMPT_COMMAND`;
-- zsh extends `precmd_functions`;
-- PowerShell keeps the user's profile and delegates to the pre-existing prompt function;
-- unsupported/remote foreground applications are not guessed.
-
-Prompt hooks update cwd and PATH after commands typed either through Kea or directly in the terminal. While a foreground TUI/remote program is active, the local shell metadata is explicitly treated as **last reported**.
-
-For bash the hook also excludes Kea driver lines from shell history (appended
-`HISTIGNORE` patterns plus self-removal of the installer line), so Run-in-shell
-wrappers never appear in `history`/up-arrow; the clean command inside the
-wrapper is skipped with it, while Kea's own submitted-draft recall is
-unaffected. Other shells have no equivalent exclusion yet.
-
-Shell driver input for **Run in shell** transports multiline drafts as one physical PTY line. User newline bytes are encoded as data and reconstructed inside the shell, avoiding interactive line-editor splitting before the start marker executes. Before the start marker, the driver prints a control-safe presentation of the original draft at the terminal's measured prompt column; private transport text remains hidden.
-
-The hidden-input echo filter fails open: if exact cosmetic suppression becomes unsafe, real output wins over hiding wrapper text.
+The original POSIX shell receives one fail-open bootstrap line. PowerShell startup
+uses -NoExit -Command after the profile, avoiding PSReadLine echo/history pollution.
+No authored command is submitted through eval or Invoke-Expression. The same
+integration can be printed and installed explicitly inside nested/remote shells;
+Kea does not install remotely, infer prompt text, or treat SSH specially.
 
 ## Text services and key routing
 
 GPUI Component supplies the editable draft, read-only block text and search fields. Platform text-input integration owns composition and replacement ranges. The terminal surface also implements GPUI's text-input handler so committed IME/composed text can reach the child without a handwritten character approximation.
 
-Editor submission keys are semantic/configurable actions. The editor-native default leaves Enter to the editor and binds Run in shell to Ctrl+Enter. A terminal/chat-style policy can instead bind Enter to Run and Shift+Enter to Newline.
+Editor submission keys are semantic/configurable actions. The editor-native default leaves Enter to the editor and binds Submit to Ctrl+Enter. A terminal/chat-style policy can bind Enter to Submit and Shift+Enter to Newline.
 
 With live terminal focus, Kea accelerators other than `focus_editor`—defaults and user overrides—are masked at the deeper terminal key context. `focus_editor` is the single switch key (terminal → composer, and the same chord returns from composer focus). Explicit terminal clipboard paste (Ctrl+Shift+V, Cmd+V on macOS) is handled on the terminal key path rather than as a masked action; plain Ctrl+V stays ordinary child input. A local selection or caret owns Copy, Esc and navigation/extension; unrelated input clears it before normal terminal forwarding. Active IME composition takes precedence. The terminal encoder receives representable key distinctions. OS-reserved combinations and distinctions absent from the terminal protocol cannot be recreated by Kea; modern keyboard-protocol negotiation is a terminal-compatibility concern.
 
 ## Completion
 
-Terminal Tab is passed to the child unchanged and remains the authoritative path for shell programmable completion, REPL/application completion, aliases/functions and remote/application-specific behavior.
+Native terminal Tab is unchanged. Composer completion is either an explicitly
+configured receiver provider or labelled local cwd/PATH/history suggestions at a
+confirmed local prompt. Provider transport is bounded loopback JSON RPC, does not
+launch processes or send PTY probes, and never accepts endpoint addresses from
+terminal output. Remote file paths are never resolved on the local host.
 
-Editor Tab uses bounded local completion on a worker thread. When an integrated shell is idle it combines:
+Requests include context, draft and UTF-8 cursor; replies carry request/context
+identity plus validated replacement ranges. The host additionally checks focus,
+IME state, draft/cursor equality and context generation. One worker is retained
+until drained; there are no retries. The menu uses measured geometry for vertical
+navigation and ordered candidates for horizontal/Tab cycling.
 
-- retained command prefixes;
-- executables from the shell-reported effective `PATH`;
-- filesystem entries relative to the shell-reported cwd.
-
-Candidates are discarded if text/cursor changed and are applied as ordinary undoable editor replacements. Kea never evaluates draft shell code for completion. Complex syntax intentionally falls back to native terminal completion instead of speculative parsing.
-
-The popup captures component navigation/acceptance actions only while its focused
-draft snapshot is current and not composing. Blur invalidates pending results.
-An invalidated worker receiver is retained until drained, bounding scans to one
-in flight. Relative/empty PATH entries use reported cwd; executable symlinks follow
-target metadata. Completion may reuse last-reported cwd/PATH after the narrow
-ASCII insertion/exact-backspace recovery sequence, without restoring prompt-ready
-state or relaxing the Run marker guard.
+This transport is not a bundled native-shell/TUI completion adapter. Native
+equivalence requires a cooperating provider with access to the actual receiver's
+state. Starting another shell, scraping a screen or silently pasting a draft into
+a TUI is not an equivalent implementation.
 
 ## Layout and optional blocks
 
@@ -150,3 +156,12 @@ Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks
 ## Platform validation
 
 Compilation, unit/component tests, graphical acceptance and real-machine validation are distinct evidence. Priority real-system targets include Windows + OpenCode, macOS/Windows IMEs, Wayland/IBus/Fcitx, terminal mouse-protocol forwarding, keyboard protocol negotiation, accessibility, long-session scrollback/selection behavior and packaging.
+
+Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).
+
+## Composer sections and guarded interrupts
+
+See [Composer sections and actions](composer-workflow.md) for independently
+submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
+recommendations. A section is pending input for the existing receiver, not a
+separate shell or an execution queue.

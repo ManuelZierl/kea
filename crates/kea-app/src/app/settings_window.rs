@@ -27,6 +27,8 @@ pub(super) enum SettingsChange {
     HistoryPersistence(bool),
     ShiftMouseSelectsLocally(bool),
     AnimateLogo(bool),
+    ConfirmCtrlC(bool),
+    ComposerSuggestions(bool),
 }
 
 pub(super) fn open(view: Entity<KeaView>, window: &mut Window, cx: &mut App) {
@@ -263,10 +265,10 @@ fn build_dialog(
                 ))
                 .child(setting_group(
                     "Workflow and privacy",
-                    "Input ownership stays explicit: Run in shell and Send to app remain separate actions.",
+                    "Submit targets the active receiver; uncertain input requires confirmation.",
                     vec![
                         choice_row(
-                            "After successful Run or Send",
+                            "After successful Submit",
                             "Choose which surface receives the next key.",
                             vec![
                                 choice(
@@ -284,6 +286,24 @@ fn build_dialog(
                                     view,
                                 ),
                             ],
+                            cx,
+                        ),
+                        toggle_row(
+                            "confirm-ctrl-c",
+                            "Confirm Ctrl-C before forwarding",
+                            "Enter sends once; Escape cancels. Copy keeps its normal behavior. Each terminal can override this default.",
+                            settings.confirm_ctrl_c,
+                            SettingsChange::ConfirmCtrlC,
+                            view,
+                            cx,
+                        ),
+                        toggle_row(
+                            "composer-suggestions",
+                            "Suggest composer actions",
+                            "Show non-mutating recommendations for separators, code fences and placeholders. Acceptance is always explicit.",
+                            settings.composer_suggestions,
+                            SettingsChange::ComposerSuggestions,
+                            view,
                             cx,
                         ),
                         toggle_row(
@@ -320,7 +340,7 @@ fn build_dialog(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("Saved to {path}. Font-family overrides remain available in settings.conf. Use the Keybindings tab for shortcuts.")),
+                        .child(format!("Saved to {path}. Font-family and composer_action_prefix overrides remain available in settings.conf. Use the Keybindings tab for shortcuts.")),
                 ),
         )
 }

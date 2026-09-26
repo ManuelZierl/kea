@@ -1,5 +1,4 @@
-use kea_document::{encode_input, Error};
-use std::{ffi::OsString, fmt::Write as _};
+use std::ffi::OsString;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellFlavor {
@@ -39,23 +38,34 @@ impl ShellFlavor {
         }
     }
 
-    /// Install a prompt hook without replacing the user's profile or normal prompt.
-    ///
-    /// For bash the hook additionally keeps Kea's own driver lines out of the
-    /// interactive shell history: later `__kea_entry_*` wrapper lines are
-    /// skipped via an appended `HISTIGNORE` pattern (any pre-existing patterns
-    /// are preserved), and the installer line itself removes its own history
-    /// entry. Run-in-shell commands therefore stay out of `history`/up-arrow;
-    /// Kea's own submitted-draft recall (Ctrl+Up) is unaffected.
+    /// Install observational hooks once, preserving user profiles and prompts.
+    /// Authored commands never pass through an eval driver.
     pub fn integration(self, command: &[OsString]) -> Vec<u8> {
+        let mut integration = self.integration_for(command, "local");
+        if self == Self::Posix {
+            debug_assert_eq!(integration.last(), Some(&b'\n'));
+            *integration
+                .last_mut()
+                .expect("POSIX integration is not empty") = b'\r';
+        }
+        integration
+    }
+
+    /// The same protocol is available inside nested/remote shells. The caller
+    /// chooses a distinct context identity; no SSH/application-name detection.
+    pub fn integration_for(self, command: &[OsString], context: &str) -> Vec<u8> {
+        assert!(
+            !context.is_empty()
+                && context.len() <= 128
+                && context
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        );
         match self {
             Self::PowerShell => {
-                let script = r#"if (-not $global:__kea_prompt_installed) { $global:__kea_prompt_installed=$true; $global:__kea_saved_prompt=$function:prompt; function global:prompt { $keaLast=$global:LASTEXITCODE; $keaCwd=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path)); $keaPath=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$env:PATH)); [Console]::Write([char]27+']777;kea;prompt;'+$keaCwd+[char]7+[char]27+']778;kea;path;'+$keaPath+[char]7); $global:LASTEXITCODE=$keaLast; if ($global:__kea_saved_prompt) { & $global:__kea_saved_prompt } else { 'PS '+(Get-Location).Path+'> ' } } }
+                let script = r#"if (-not $global:__kea_prompt_installed) { $global:__kea_prompt_installed=$true; $global:__kea_context='@CONTEXT@'; $global:__kea_saved_prompt=$function:prompt; function global:prompt { $keaStatus=[int](-not $global:?); $keaLast=$global:LASTEXITCODE; $keaCwd=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path)); $keaPath=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$env:PATH)); [Console]::Write([char]27+']777;kea;native-done;'+$global:__kea_context+';'+$keaStatus+[char]7+[char]27+']777;kea;prompt;'+$keaCwd+[char]7+[char]27+']778;kea;path;'+$keaPath+[char]7); $global:LASTEXITCODE=$keaLast; if ($keaStatus -ne 0) { Write-Error 'previous command failed' -ErrorAction Ignore }; $keaPrompt=if ($global:__kea_saved_prompt) { & $global:__kea_saved_prompt } else { 'PS '+(Get-Location).Path+'> ' }; [Console]::Write([char]27+']779;kea;input;1;'+$global:__kea_context+';powershell;ready'+[char]7); $keaPrompt }; if ($function:PSConsoleHostReadLine) { $global:__kea_saved_readline=$function:PSConsoleHostReadLine; function global:PSConsoleHostReadLine { $keaLine=& $global:__kea_saved_readline; if ($keaLine) { [Console]::Write([char]27+']779;kea;input;1;'+$global:__kea_context+';powershell;busy'+[char]7+[char]27+']777;kea;native-start;'+$global:__kea_context+[char]7) }; $keaLine } } }
 "#;
-                script
-                    .bytes()
-                    .map(|byte| if byte == b'\n' { b'\r' } else { byte })
-                    .collect()
+                script.replace("@CONTEXT@", context).into_bytes()
             }
             Self::Posix => {
                 let program = command
@@ -64,81 +74,21 @@ impl ShellFlavor {
                     .or_else(|| std::env::var("SHELL").ok())
                     .unwrap_or_else(|| "sh".into());
                 let name = program.rsplit('/').next().unwrap_or(&program);
-                let report = r#"__kea_prompt() { __kea_rc=$?; __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007' "$__kea_dir" "$__kea_path"; return "$__kea_rc"; }; "#;
+                let report = r#"__kea_context='@CONTEXT@'; __kea_before_prompt() { __kea_status=$?; printf '\033]777;kea;native-done;%s;%d\007' "$__kea_context" "$__kea_status"; return "$__kea_status"; }; __kea_prompt() { __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007\033]779;kea;input;1;%s;posix;ready\007' "$__kea_dir" "$__kea_path" "$__kea_context"; return "${__kea_status:-0}"; }; "#;
                 let hook = match name {
                     "bash" => {
-                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND+=(__kea_prompt); else PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi; HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}__kea_entry_*:__kea_prompt*"; history -d $HISTCMD 2>/dev/null"#
+                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND=(__kea_before_prompt "${PROMPT_COMMAND[@]}" __kea_prompt); else PROMPT_COMMAND="__kea_before_prompt; ${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi; PS0="${PS0-}"$(printf '\033]779;kea;input;1;%s;posix;busy\007\033]777;kea;native-start;%s\007' "$__kea_context" "$__kea_context"); history -d $HISTCMD 2>/dev/null"#
                     }
-                    "zsh" => "precmd_functions+=(__kea_prompt)",
-                    _ => "PS1='$(__kea_prompt)'\"${PS1:-$ }\"",
+                    "zsh" => {
+                        r#"precmd_functions=(__kea_before_prompt "${precmd_functions[@]}" __kea_prompt); __kea_preexec() { printf '\033]779;kea;input;1;%s;posix;busy\007\033]777;kea;native-start;%s\007' "$__kea_context" "$__kea_context"; }; preexec_functions+=(__kea_preexec)"#
+                    }
+                    _ => r#"PS1='$(__kea_before_prompt; __kea_prompt)'"${PS1:-$ }""#,
                 };
-                format!("{report}{hook}\r").into_bytes()
+                format!("if [ -z \"${{__kea_installed-}}\" ]; then __kea_installed=1; {report}{hook}; fi\n")
+                    .replace("@CONTEXT@", context).into_bytes()
             }
         }
     }
-
-    /// Build one physical PTY line. User newlines are decoded only inside the shell.
-    ///
-    /// Instrumentation must be observational: after the wrapper finishes, the shell's
-    /// visible status must be the user's command status, not the status of Kea's marker
-    /// printf/unset bookkeeping. The final subshell `exit` restores `$?` without exiting
-    /// the interactive parent shell. Symmetrically, the wrapper snapshots the entry
-    /// `$?` before its own display line runs and restores it immediately before `eval`,
-    /// so user code observing `$?` (for example `echo $?` after a failing Run) sees the
-    /// previous command status instead of Kea's display `printf` status.
-    pub fn wrap(self, id: u64, input: &str, prompt_column: usize) -> Result<Vec<u8>, Error> {
-        let encoded = encode_input(input)?;
-        let display = display_source(input);
-        let display_column = prompt_column.saturating_add(1);
-        let command = match self {
-            Self::Posix => {
-                let source = encode_posix_source(input);
-                let display = encode_posix_source(&display);
-                let entry_var = format!("__kea_entry_{id}");
-                let source_var = format!("__kea_source_{id}");
-                let status_var = format!("__kea_status_{id}");
-                let command = format!(
-                    "{entry_var}=$?; printf '\\033[{display_column}G%b' '{display}'; {source_var}=$(printf '%b_' '{source}'); {source_var}=${{{source_var}%_}}; printf '\\033]777;kea;start;{id};{encoded}\\007'; (exit \"${entry_var}\"); eval \"${source_var}\"; {status_var}=$?; printf '\\033]777;kea;done;{id};%d\\007' \"${status_var}\"; (exit \"${status_var}\"); {source_var}_kea_rc=$?; unset {entry_var} {source_var} {status_var}; (exit \"${{{source_var}_kea_rc}}\")\r"
-                );
-                command
-            }
-            Self::PowerShell => {
-                let source_var = format!("$__kea_source_{id}");
-                let display = encode_input(&display)?;
-                let command = format!(
-                    "{source_var}=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')); [Console]::Write([char]27 + ']777;kea;start;{id};{encoded}' + [char]7); $__kea_previous=$global:LASTEXITCODE; $global:LASTEXITCODE=$null; Invoke-Expression {source_var}; $__kea_ok=$?; $__kea_native=$global:LASTEXITCODE; $__kea_status=if ($__kea_ok) {{ if ($null -ne $__kea_native) {{ [int]$__kea_native }} else {{ 0 }} }} else {{ if ($null -ne $__kea_native -and [int]$__kea_native -ne 0) {{ [int]$__kea_native }} else {{ 1 }} }}; if ($null -eq $__kea_native) {{ $global:LASTEXITCODE=$__kea_previous }}; [Console]::Write([char]27 + ']777;kea;done;{id};' + $__kea_status + [char]7); Remove-Variable __kea_source_{id} -ErrorAction SilentlyContinue\r"
-                );
-                format!("[Console]::Write([char]27 + '[{display_column}G' + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{display}'))); {command}")
-            }
-        };
-        Ok(command.into_bytes())
-    }
-}
-
-fn encode_posix_source(input: &str) -> String {
-    let mut encoded = String::with_capacity(input.len().saturating_mul(5));
-    for byte in input.as_bytes() {
-        write!(&mut encoded, "\\0{byte:03o}").expect("writing to String cannot fail");
-    }
-    encoded
-}
-
-fn display_source(input: &str) -> String {
-    let mut display = String::with_capacity(input.len().saturating_add(1));
-    for character in input.chars() {
-        match character {
-            '\n' | '\t' => display.push(character),
-            character if character.is_control() => {
-                write!(&mut display, "\\u{{{:x}}}", u32::from(character))
-                    .expect("writing to String cannot fail");
-            }
-            character => display.push(character),
-        }
-    }
-    if !display.ends_with('\n') {
-        display.push('\n');
-    }
-    display
 }
 
 #[cfg(test)]

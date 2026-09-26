@@ -14,11 +14,11 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 - GPUI Component owns draft selection, clipboard, undo/redo, mouse editing and composition.
 - A live terminal and editor are simultaneously visible over one PTY.
 - Live-terminal focus gives ordinary terminal input to the child; the configurable `focus_editor` host escape is the deliberate exception that keeps the workspace keyboard-navigable.
-- Run in shell and Send to app are independent actions, not modes.
-- Editor-native Enter/newline is the default, but Run/Newline bindings are configurable (including Enter-to-run + Shift+Enter-newline).
+- Submit sends authored text to the active receiver; uncertain/nonempty input requires confirmation instead of a separate target action.
+- Editor-native Enter/newline is the default, but Submit/Newline bindings are configurable (including Enter-to-submit + Shift+Enter-newline).
 - Successful submissions are retained as exact authored drafts independently of optional shell command blocks and can be recalled/edit-as-new.
 - Integrated local-shell prompt hooks explicitly report cwd/readiness and preserve user prompt/profile behavior.
-- Editor completion uses retained history, shell-reported PATH executables and shell-reported cwd paths; terminal Tab remains native application completion.
+- Composer completion uses explicitly configured receiver providers or labelled local history/PATH/cwd suggestions at a confirmed local prompt; terminal Tab remains native application completion.
 - Command blocks are optional/fail-open observers. Execution does not queue or depend on a block.
 - Read-only command/output surfaces preserve selection during live output changes.
 - The primary terminal screen has bounded local scrollback, viewport-aware pointer selection and selection-only copy.
@@ -34,11 +34,11 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 ## Acceptance
 
 1. **Editor behavior:** select with keyboard/mouse, copy only the selection, cut, paste, undo/redo, Unicode and IME composition. Confirming an IME candidate must never execute a command.
-2. **Configurable Enter:** default Enter inserts newline and Ctrl+Enter runs. With `run_shell = enter` and `newline = shift-enter`, Enter runs and Shift+Enter inserts a newline without double insertion.
-3. **Explicit actions:** Run in shell and Send to app never depend on hidden mode state. Send never adds a shell wrapper.
+2. **Configurable Enter:** default Enter inserts newline and Ctrl+Enter submits. With `run_shell = enter` and `newline = shift-enter`, Enter submits and Shift+Enter inserts a newline without double insertion.
+3. **Guarded Submit:** a ready report permits immediate submission. Unknown/nonempty input sends no bytes until the exact draft/context is confirmed after key release. Submission never adds a shell wrapper or implicitly interrupts the child.
 4. **Fail-open structure:** execute a command with blocks hidden and with document retention saturated. The command still runs. Missing/malformed metadata may lose a block but must never strand execution in queued state.
-5. **Multiline Run:** a draft such as `ls\nls` is transported as one physical PTY line, executes both lines, and may produce one observed block.
-6. **cwd:** start Kea from a known directory, run `cd /tmp` via editor and directly in the terminal, and verify the header updates after the next local-shell prompt. While a TUI/SSH owns stdin, label cwd as last reported rather than current.
+5. **Multiline Submit:** with bracketed paste negotiated, a draft such as `ls\nls` follows the native paste path and may produce one observed block. Without bracketed paste, submission fails visibly and preserves the draft.
+6. **cwd:** start Kea from a known directory, submit `cd /tmp` via the editor and type it directly in the terminal, and verify the header updates after the next local-shell prompt. While a TUI/SSH owns stdin, label cwd as last reported rather than current.
 7. **PATH autocomplete:** modify PATH in the shell, return to a prompt, and verify editor completion sees an executable in the new PATH. File completion is relative to the reported cwd. No draft is evaluated for completion.
 8. **Native completion:** terminal Tab reaches Bash/PowerShell/OpenCode/REPL completion unchanged, including profile-provided PowerShell completers.
 9. **TUI keys:** with terminal focus, verify Space, Tab/Shift+Tab, Ctrl combinations, modified Enter and function keys are delivered as the negotiated terminal protocol permits.
@@ -55,7 +55,7 @@ Kea is a persistent terminal workspace built around a normal editor. The termina
 
 **OS service certification:** real IBus/Fcitx/Wayland/dead-key/AltGr layouts, macOS/Windows IMEs, system prediction/dictation and screen readers. API integration alone is not certification; representative real-OS checks remain release work.
 
-**Autocomplete depth:** editor completion robustly covers history, executables and paths from the integrated local shell context. Application-specific/programmable argument completion remains native terminal behavior unless a safe provider interface is added later.
+**Autocomplete depth:** local suggestions cover history, executables and paths from the integrated local shell context, and a bounded provider transport exists. Bundled native Bash, PowerShell, OpenCode and remote provider servers remain future work; application-native terminal Tab stays authoritative without one.
 
 **Metadata scope:** cwd is robust for the integrated local shell. Remote/internal TUI cwd requires explicit integration from that environment; it must not be guessed. Future metadata may add environment snapshots or richer task context without becoming authoritative execution state.
 

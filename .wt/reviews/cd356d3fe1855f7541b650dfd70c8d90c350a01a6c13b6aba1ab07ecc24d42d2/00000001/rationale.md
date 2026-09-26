@@ -1,0 +1,1 @@
+Acceptable: label branch now uses `input_context.local_shell_ready()`, which requires `ready && id=="local" && (Posix|PowerShell)` (terminal/context.rs:49). `Current shell directory` appears only for an explicitly reported idle integrated local shell; remote/nested/busy states fall through to `Shell directory (last reported)`. Matches AGENTS.md cwd invariant.

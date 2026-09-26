@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "finding_id": "sha256:1a1a7afef29da166a8217ee4ae887126edb86c2ca52867533305acbf6ed1e0fb",
+  "evidence_digest": "sha256:b05074169445ffd4bd25e08f53910cf01353fc13f1da2c1b94d6c4fb0a886b2e",
+  "decision": "acceptable",
+  "rule_id": "local/completion-ui-blocking",
+  "code": "blocking-call",
+  "path": "crates/kea-app/src/editor/provider.rs",
+  "start_byte": 1387,
+  "end_byte": 1398,
+  "matched_digest": "sha256:a2c1bf62f2e365858b5a5cdb99e73dba37010b29f4364120dbabb95557011893",
+  "rule_digest": "sha256:a052af6d20518c2de381ff0f30f9336d63bd527af7d2a1e2968d256687b7b04d",
+  "file_digest": "sha256:cf8891bafadebab6ea97c14d0f10857164134bc15fb4e6bdcd85ad8866f75968",
+  "context_digest": "sha256:acd0fc3cd24a0f1a08bd3cf0d25c2d1f7d064574bcfb857d914b9805857e0ff7",
+  "engine_digest": "sha256:c79157972c88f5a70affdc5436051cd91907306f3ba997fd11a11486e9a0be63",
+  "watched_files": {},
+  "rationale_file": "rationale.md",
+  "previous": null
+}

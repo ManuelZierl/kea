@@ -1,0 +1,3 @@
+for m in rx::find_all(file, "blocking") {
+    emit(m.span, "blocking-call");
+}

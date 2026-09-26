@@ -1,0 +1,3 @@
+for m in rx::find_all(file, "copy_export") {
+    emit(m.span, "copy-export");
+}

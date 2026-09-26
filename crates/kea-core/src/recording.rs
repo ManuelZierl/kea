@@ -57,6 +57,20 @@ impl Recording {
                 4
             }
             Kind::Exit(_) => 4,
+            Kind::Submitted { context, input, .. } => {
+                if input.is_empty() || input.len() > 64 * 1024 || input.contains('\0') {
+                    return Err(invalid("invalid submitted input"));
+                }
+                if context.is_empty()
+                    || context.len() > 128
+                    || !context
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                {
+                    return Err(invalid("invalid input context"));
+                }
+                input.len() + context.len() + 10
+            }
         };
         // Include per-event bookkeeping; many small events also consume memory.
         let cost = payload + 64;

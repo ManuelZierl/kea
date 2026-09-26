@@ -26,6 +26,13 @@ pub enum Kind {
     Output(Vec<u8>),
     Resize(Size),
     Exit(u32),
+    /// Authored input accepted for delivery to an integrated shell. This is
+    /// observational metadata, not PTY output and never an instruction to replay.
+    Submitted {
+        id: u64,
+        context: String,
+        input: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

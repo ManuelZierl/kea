@@ -1,0 +1,1 @@
+editor/completion.rs:232 reads local directory entries within complete_paths. The composer invokes suggest inside the spawned worker at composer.rs:282-299, with MAX_DIRECTORY_ENTRIES bounding inspected entries.

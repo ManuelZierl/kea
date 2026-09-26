@@ -1,0 +1,3 @@
+for m in rx::find_all(file, "no_profile") {
+    emit(m.span, "no-profile");
+}

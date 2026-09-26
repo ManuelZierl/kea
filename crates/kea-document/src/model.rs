@@ -68,6 +68,8 @@ pub struct Document {
     scanner: MarkerScanner,
     directory: Option<String>,
     prompt_ready: bool,
+    submitted: Option<(u64, String, String, u64)>,
+    active_context: Option<String>,
 }
 
 impl Document {
@@ -86,12 +88,25 @@ impl Document {
                     document.ingest_output(event.at, bytes);
                 }
                 Kind::Exit(_) => {
-                    document.abort_in_flight(event.at);
+                    document.finish(event.at);
                 }
                 Kind::Resize(_) => {}
+                Kind::Submitted { id, context, input } => {
+                    document.note_submission(*id, context, input, event.at);
+                }
             }
         }
         document
+    }
+
+    /// Associate an accepted authored draft with the next explicit native start.
+    /// No block exists before that marker, and missing metadata never gates input.
+    pub fn note_submission(&mut self, id: u64, context: &str, input: &str, at: u64) {
+        self.submitted = None;
+        if self.active.is_none() && validate_input(input).is_ok() && self.can_retain_block(input) {
+            self.next_id = self.next_id.max(id.saturating_add(1));
+            self.submitted = Some((id, context.to_owned(), input.to_owned(), at));
+        }
     }
 
     pub fn blocks(&self) -> &[CommandBlock] {
@@ -164,22 +179,40 @@ impl Document {
     pub fn ingest_output(&mut self, at: u64, bytes: &[u8]) -> bool {
         let mut changed = false;
         for piece in self.scanner.push(bytes) {
-            match piece {
-                Piece::Data(data) => {
-                    if let Some(id) = self.active {
-                        if let Some(index) = self.blocks.iter().position(|block| block.id == id) {
-                            let remaining = MAX_DOCUMENT_BYTES.saturating_sub(self.retained_bytes);
-                            let retained = self.blocks[index].append_output(&data, remaining);
-                            self.retained_bytes += retained;
-                            if retained != data.len() {
-                                self.saturated |= remaining == 0;
-                            }
-                            changed |= !data.is_empty();
-                        }
+            let piece = match piece {
+                Piece::Marker(Marker::NativeStart(context)) => {
+                    if self
+                        .submitted
+                        .as_ref()
+                        .is_none_or(|(_, owner, _, _)| *owner != context)
+                    {
+                        continue;
                     }
+                    let Some((id, _, input, submitted_at)) = self.submitted.take() else {
+                        continue;
+                    };
+                    // Retain the authored submission time without adding a queued
+                    // execution dependency. queue_local is used only after start.
+                    if self.queue_local(id, input.clone(), submitted_at).is_err() {
+                        continue;
+                    }
+                    self.active_context = Some(context);
+                    Piece::Marker(Marker::Start(id, input))
+                }
+                piece => piece,
+            };
+            match piece {
+                Piece::Marker(Marker::NativeStart(_)) => unreachable!(),
+                Piece::Data(data) => {
+                    changed |= self.append_active_output(&data);
                 }
                 Piece::Marker(Marker::Prompt(directory)) => {
-                    self.abort_in_flight(at);
+                    // Legacy prompt metadata carries no identity. A nested prompt
+                    // must not finish an outer native execution block.
+                    if self.active_context.is_none() {
+                        self.abort_in_flight(at);
+                    }
+                    self.submitted = None;
                     self.directory = (!directory.is_empty()).then_some(directory);
                     self.prompt_ready = true;
                     changed = true;
@@ -226,20 +259,25 @@ impl Document {
                     }
                 }
                 Piece::Marker(Marker::Done(id, status)) => {
-                    if self.active == Some(id) {
-                        if let Some(block) = self.block_mut(id) {
-                            if block.status == CommandStatus::Running {
-                                block.status = CommandStatus::Finished(status);
-                                block.finished_at = Some(at);
-                                changed = true;
-                            }
+                    if self.active_context.is_none() {
+                        changed |= self.finish_block(id, status, at);
+                    }
+                }
+                Piece::Marker(Marker::NativeDone(context, status)) => {
+                    if self.active_context.as_ref() == Some(&context) {
+                        if let Some(id) = self.active {
+                            changed |= self.finish_block(id, status, at);
                         }
-                        self.active = None;
                     }
                 }
             }
         }
         changed
+    }
+
+    pub fn finish(&mut self, at: u64) -> bool {
+        let pending = self.scanner.finish();
+        self.append_active_output(&pending) | self.abort_in_flight(at)
     }
 
     pub fn abort_in_flight(&mut self, at: u64) -> bool {
@@ -252,6 +290,8 @@ impl Document {
             }
         }
         self.active = None;
+        self.submitted = None;
+        self.active_context = None;
         changed
     }
 
@@ -288,6 +328,39 @@ impl Document {
 
     fn block_mut(&mut self, id: u64) -> Option<&mut CommandBlock> {
         self.blocks.iter_mut().find(|block| block.id == id)
+    }
+
+    fn append_active_output(&mut self, data: &[u8]) -> bool {
+        let Some(id) = self.active else {
+            return false;
+        };
+        let Some(index) = self.blocks.iter().position(|block| block.id == id) else {
+            return false;
+        };
+        let remaining = MAX_DOCUMENT_BYTES.saturating_sub(self.retained_bytes);
+        let retained = self.blocks[index].append_output(data, remaining);
+        self.retained_bytes += retained;
+        if retained != data.len() {
+            self.saturated |= remaining == 0;
+        }
+        !data.is_empty()
+    }
+
+    fn finish_block(&mut self, id: u64, status: i32, at: u64) -> bool {
+        if self.active != Some(id) {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(block) = self.block_mut(id) {
+            if block.status == CommandStatus::Running {
+                block.status = CommandStatus::Finished(status);
+                block.finished_at = Some(at);
+                changed = true;
+            }
+        }
+        self.active = None;
+        self.active_context = None;
+        changed
     }
 }
 

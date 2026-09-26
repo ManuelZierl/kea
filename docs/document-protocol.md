@@ -5,59 +5,76 @@ nav_order: 10
 
 # Optional command metadata protocol
 
-Kea's optional command blocks need exact boundaries while retaining a normal PTY
-and an ordinary interactive shell. Prompt parsing is forbidden because prompts
-are arbitrary, localized and mutable. Blocks observe execution; missing or
-invalid metadata never prevents commands from running.
+Blocks observe execution in one normal PTY; missing or malformed metadata never
+prevents input. Readiness belongs to the separate live
+[active-input context](active-input.md), not the retained block model. Prompt
+text, cursor positions and idle time are never used to find execution boundaries.
 
-The standalone shell adapter emits private OSC messages into the terminal output
-stream for **Run in shell**. **Send to app** and ordinary terminal input do not
-add command-boundary wrappers. There is no separate execution mode.
+## Native scoped boundaries
 
-## Start
-
-```text
-ESC ] 777 ; kea ; start ; <id> ; <base64-utf8-command> BEL
-```
-
-## Completion
+Authored text follows the normal terminal input and shell execution path. Shell
+hooks observe native start and completion without per-command eval wrappers:
 
 ```text
-ESC ] 777 ; kea ; done ; <id> ; <signed-exit-status> BEL
+ESC ] 777;kea;native-start;<context> BEL
+ESC ] 777;kea;native-done;<context>;<signed-status> BEL
 ```
 
-`id` is an unsigned 64-bit command identifier. Command text is Base64-encoded UTF-8 so arbitrary newlines, semicolons and ordinary shell syntax cannot interfere with marker fields. The command is currently limited to 64 KiB.
+Context identifies a receiver within the session. Local, nested and remote
+integrations use the same convention. Bash/zsh report integer shell status;
+PowerShell reports success/failure (0/1), not exact native exit codes. Hooks must
+preserve the status seen by the user's next command and original prompt.
 
-Everything observed after a valid start marker and before the matching completion marker belongs to that command's output block. Bytes outside an active block remain ordinary terminal output (for example shell prompts).
+After a successful ready-shell composer submission, Kea records a separate
+`Submitted { id, context, input }` event. A matching native-start can turn that
+pending observation into a block; a matching native-done finishes it. The
+submitted text is not carried by the native marker and never needs to be hidden
+from the shell's line editor. Output remains the raw terminal stream.
 
-## Streaming requirements
+A prompt without a matching start clears a pending observation rather than
+creating a stuck execution queue. An unscoped legacy prompt cannot finish an
+active native block: a remote prompt may appear inside an outer command.
+The current document model is flat, so an outer tracked command can contain
+untracked nested input. That limitation does not restrict submission or completion.
+Direct terminal keystrokes are not recorded as composer submissions.
 
-PTY reads are arbitrary chunks. A marker may be split across any number of reads or share a read with prompts and command output. `kea-document` therefore uses a streaming scanner with bounded pending marker memory rather than assuming one marker per output event.
+## Legacy markers
 
-Unknown or malformed marker-looking bytes fail open as ordinary output. The parser never waits without a bound for a terminator.
+These remain accepted for existing recordings and cooperating legacy producers:
 
-## Recording
+```text
+ESC ] 777;kea;start;<id>;<base64-utf8-command> BEL
+ESC ] 777;kea;done;<id>;<signed-exit-status> BEL
+```
 
-Markers are not a new `kea-core` frame type. They are ordinary output bytes inside v1 recordings. This keeps the terminal event stream canonical and makes structured document reconstruction optional/derived.
+ID is an unsigned 64-bit command identifier. Input is bounded to 64 KiB and encoded
+as Base64 UTF-8 to avoid newline/semicolon ambiguity. Everything between a valid
+start and its matching done belongs to the output block; bytes outside active
+blocks remain ordinary terminal output. Kea no longer sends the historical
+shell wrappers that produced these markers.
 
-Because the original command is carried by the start marker, an offline reader can rebuild command blocks without access to raw keyboard input and without guessing prompt text.
+## Streaming and retention
 
-## Shell wrapper
+PTY reads are arbitrary chunks. A marker can span reads or share a read with
+other output. `kea-document` uses a streaming scanner with bounded pending data.
+Unknown or malformed command-marker-looking bytes fail open as ordinary output.
+This differs from malformed readiness reports: those fail closed to unknown
+input state, since they govern confirmation rather than output retention.
 
-A shell adapter is responsible for:
+Command text, output per block, aggregate retained bytes and block count all have
+limits. Exhaustion or missing boundaries degrades observation; it never cancels,
+queues or prevents a terminal write. A block can end Aborted when the session ends
+without a matching completion report.
 
-1. emitting the start marker;
-2. evaluating the submitted editor text in the current interactive shell scope;
-3. preserving the resulting status;
-4. emitting the completion marker.
+## Recording and trust
 
-The application sends this wrapper as hidden application-owned PTY input. The wrapper text itself is not the user command block.
+v1 stores legacy markers inside output frames. v2 adds separate Submitted events
+while preserving raw output. Both formats remain readable. Terminal replay
+ignores submission metadata, while a document-aware reader may reconstruct blocks.
+See the [recording format](recording-format.md) for framing and validation.
 
-Adapters cover supported POSIX-style shells and PowerShell. Other shells and
-applications remain usable through terminal input and Send to app. Run in shell
-requires an integrated-shell adapter and an explicit prompt-ready report; see
-the [interaction contract](unified-session.md).
-
-## Trust
-
-OSC 777 here is a Kea-private convention, not an authentication channel. A process that deliberately emits the same syntax can forge markers. The protocol prevents accidental prompt ambiguity; it does not establish trusted provenance for hostile terminal output or imported recordings.
+OSC metadata is interoperability, not authentication. Any terminal program can
+forge these messages. They do not establish trusted command provenance or grant
+permission to launch a process, install a provider or contact a supplied address.
+Authored commands and output may contain secrets; persistence is explicit,
+bounded, plaintext and non-overwriting.

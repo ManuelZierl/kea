@@ -1,0 +1,41 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "unlocked": {
+      "help": "Add --locked on the same command line.",
+      "kind": "violation",
+      "message": "AGENTS.md: commit Cargo.lock and use --locked for build, test, run, clippy and install commands."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "locked-cargo-commands",
+  "mode": "enforced",
+  "patterns": {
+    "cargo_command": "cargo[ \\t]+(?:build|test|run|clippy|install)\\b[^\\r\\n]*"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      ".github/workflows/**/*.yml",
+      ".github/workflows/**/*.yaml",
+      "scripts/**/*.sh",
+      "docs/**/*.md",
+      "README.md",
+      "CONTRIBUTING.md"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Lockfile required in documented and scripted Cargo commands"
+}

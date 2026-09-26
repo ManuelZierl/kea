@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "replay-sends-input",
+      "files": [
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "content": "fn replay() { pty.send(bytes); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "code": "replay-effect",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "projection-and-live-send",
+      "files": [
+        {
+          "path": "crates/kea-core/src/replay.rs",
+          "content": "into.output(bytes);\n"
+        },
+        {
+          "path": "crates/kea-session/src/session.rs",
+          "content": "self.pty.as_ref().unwrap().send(bytes);\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

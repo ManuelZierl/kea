@@ -1,0 +1,35 @@
+{
+  "code": {
+    "capabilities": [
+      "ast.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "growth": {
+      "help": "Check the matching append path for an explicit size/count bound and visible exhaustion.",
+      "kind": "review",
+      "message": "AGENTS.md: bound retained recording and block data; growth must account for quotas, truncation and gaps."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "retained-collection-growth",
+  "mode": "advisory",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-core/src/recording.rs",
+      "crates/kea-document/src/model.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Check retained collection growth against bounds"
+}

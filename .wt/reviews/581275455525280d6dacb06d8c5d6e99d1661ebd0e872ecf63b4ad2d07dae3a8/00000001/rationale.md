@@ -1,0 +1,1 @@
+Acceptable: current document_view.rs:373-384 is the explicit Latest button handler. It focuses the active editor, clears `page_start`, and scrolls to bottom only after the user requests the latest blocks. This is intentional navigation, not live output delivery or an implicit reader reset.

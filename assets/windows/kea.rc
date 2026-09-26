@@ -1,0 +1,3 @@
+// The lowest numbered icon group is Explorer's default executable icon.
+// GPUI's native window class loads the application icon from the executable.
+1 ICON "kea.ico"

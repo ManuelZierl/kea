@@ -9,12 +9,12 @@
 <h1 align="center">Kea</h1>
 <p align="center"><strong>A terminal workspace with a real editor for input.</strong></p>
 
-Kea keeps a terminal and a multiline editor visible together over one session.
-Compose a command or prompt, run it in your shell or send it to a terminal app,
+Kea keeps a terminal and a multiline editor visible together in each independent tab.
+Compose a command or prompt and submit it to the active terminal receiver,
 then recall and edit it without losing your next draft. Your shell, SSH, Vim,
 REPLs and other terminal applications keep their native input behavior.
 
-**Early alpha:** `v0.0.1-alpha.1` is the first planned release. Expect rough edges;
+**Early alpha:** `v0.0.1-alpha.2`. Expect rough edges;
 real-platform compatibility is still being validated. See the
 [compatibility checklist](docs/terminal-compatibility-alpha.md) and
 [known limits](docs/usage.md#limits-and-privacy).
@@ -23,12 +23,14 @@ real-platform compatibility is still being validated. See the
 [Releases](https://github.com/ManuelZierl/kea/releases) ·
 [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md)
 
+See [Terminal tabs](docs/terminal-tabs.md) for creation, switching, reordering and per-tab state.
+
 ## Why Kea?
 
 - **Edit before you send.** Multiline composition, selection, undo, search,
-  syntax highlighting and local shell completion.
+  syntax highlighting and local completion suggestions.
 - **Keep the terminal native.** Switch focus to interact directly with your shell
-  or TUI. One session, with explicit **Run in shell** and **Send to app** actions.
+  or TUI. One session and one **Submit** action; uncertain input requires confirmation.
 - **Reuse authored input.** Recall submitted drafts or search history and named
   memories. Recall never executes automatically.
 - **Inspect output.** Select and copy terminal text, browse bounded scrollback,
@@ -40,7 +42,7 @@ real-platform compatibility is still being validated. See the
 
 Release archives are unsigned standalone binaries for Linux, macOS and Windows;
 native installers are not available yet. Download a matching archive from
-[Releases](https://github.com/ManuelZierl/kea/releases) when published, extract it,
+[Releases](https://github.com/ManuelZierl/kea/releases), extract it,
 and run `kea` (`kea.exe` on Windows). Linux needs a Vulkan-capable graphics stack
 and the system libraries listed in the [source setup](docs/usage.md#run-from-source).
 
@@ -57,16 +59,22 @@ cargo run --locked --release
 
 | Action | Default |
 | --- | --- |
+| New terminal / close terminal | Ctrl+Shift+T / Ctrl+Shift+W |
+| Next / previous terminal | Ctrl+Tab / Ctrl+Shift+Tab |
 | Newline in the composer | Enter |
-| Run draft in the integrated shell | Ctrl+Enter |
-| Send draft to the current terminal app | Ctrl+Shift+Enter |
+| Submit draft to the active terminal receiver | Ctrl+Enter |
 | Switch terminal ⇄ composer | Ctrl+L / Cmd+L |
 | Recall previous / next draft | Ctrl+Up / Ctrl+Down |
 | Search submitted input and memories | Ctrl+R |
 | Complete in the composer | Tab |
 
-**Run in shell** requires an explicitly reported shell prompt. **Send to app**
-sends literal text followed by Enter; multiline sends require bracketed paste.
+**Submit** sends authored text followed by Enter, without a per-command shell
+wrapper. At an explicitly reported ready input prompt it submits immediately.
+Otherwise it asks for a second Enter; another key cancels without sending.
+Multiline sends require bracketed paste. Ctrl+Shift+Enter remains a legacy alias
+for the same guarded action. Integrated remote and nested shells use the same
+[active-input contract](docs/active-input.md). Native TUI completion remains
+available with terminal focus; composer providers require explicit configuration.
 Shortcuts and appearance are configurable in Settings. The
 [user guide](docs/usage.md) covers selection, configuration, shell integration,
 history and privacy in detail.

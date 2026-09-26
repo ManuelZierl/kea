@@ -1,0 +1,1 @@
+Acceptable: explicit user navigation. This `scroll_to_bottom` runs only in the Latest button on_click handler, which also calls `focus_active` and clears `page_start`. The user explicitly requested the latest blocks, so following to bottom is the requested action, not live output yanking a reader. Out of scope per rule doc for explicit latest-page navigation.

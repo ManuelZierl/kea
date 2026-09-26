@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "reasonless-ignore",
+      "files": [
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "content": "#[ignore]\nfn test_send() {}\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "code": "reasonless-ignore",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "trivial-and-commented",
+      "files": [
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "content": "assert!(true);\n// assert_eq!(actual, expected);\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "code": "trivial-assert",
+          "kind": "review"
+        },
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "code": "commented-assert",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "meaningful-assertions",
+      "files": [
+        {
+          "path": "crates/kea-app/tests/unit/app/composer.rs",
+          "content": "#[ignore = \"needs real OS input service\"]\nfn test_ime() { assert_eq!(output, expected); }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "code": {
+    "capabilities": [
+      "ast.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "manual-character": {
+      "help": "Use component text-input replacement; only terminal protocol encoding may translate representable keys.",
+      "kind": "review",
+      "message": "AGENTS.md: ordinary editor text/composition arrives through the platform input handler, never manual keycode-to-character conversion."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "editor-keycode-characters",
+  "mode": "advisory",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/editor/command.rs",
+      "crates/kea-app/src/app/composer.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Editor characters arrive via platform text input"
+}

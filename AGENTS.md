@@ -5,20 +5,20 @@ Target `develop` for ordinary pull requests; `main` holds release-ready work.
 Release tags must match the workspace version and point to a commit on `main`.
 See [docs/releasing.md](docs/releasing.md) for publication and Pages setup.
 
-Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-integration.md before changing the design.
+Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input.md and docs/editor-integration.md before changing the design.
 
 ## Product and host invariants
 
-- Kea has one terminal session and a persistent editor visible together. Focus changes input ownership; there is no Document/Direct execution mode and no hidden submission-target state.
+- Each Kea tab owns one terminal session and a persistent editor visible together. Focus changes input ownership; there is no Document/Direct execution mode and no hidden submission-target state.
 - Blocks are optional/fail-open observers. **Never make command execution depend on creating, retaining or completing a block.** Missing structure must degrade to untracked execution, not queued/stuck execution.
-- `Run in shell` and `Send to app` are explicit separate actions. Run requires an explicit integrated-shell prompt-ready marker. Send never adds shell wrappers. Never infer readiness from prompt text, cursor position or idle time.
+- Composer Submit sends authored text plus Enter to the active receiver, never per-command shell wrappers. `run_shell` and `send_application` are compatibility names for the same guarded action. Explicit ready input submits immediately; all uncertain/nonempty states require confirmation for the exact draft and context generation. Never infer readiness from process names, prompt text, cursor position or idle time, and never implicitly interrupt a child.
 - Editor-native Enter/newline is the default, but submission/newline shortcuts are semantic and configurable. Support terminal/chat policy (`run_shell = enter`, `newline = shift-enter`) without changing execution architecture.
 - While the live child owns the keyboard, `focus_editor` is the sole configurable Kea accelerator. Mask other Kea accelerators, including user overrides; visible chrome remains available. A visible Kea selection/caret owns only the local read-only commands in docs/terminal-text-selection.md, with unrelated input clearing local state and following normal terminal routing.
 - Preserve every key distinction exposed by the OS + terminal protocol. Do not claim physical-key distinctions that classic terminal encoding cannot represent; extended keyboard protocol support is a compatibility concern.
 - Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
 - Ordinary editor text/composition arrives through the component/platform input handler, not manual keycode-to-character conversion. Terminal committed IME text also uses the platform text-input bridge.
 - Copy means focused selection. Copy block/view/screen is explicit. Never silently replace selection-copy with whole-document copy.
-- Undo affects only the current draft, never execution or recorded output. Successful Run/Send creates a fresh draft. Edit as new preserves the prior command and never executes automatically.
+- Undo affects only the current draft, never execution or recorded output. Successful Submit creates a fresh draft. Edit as new preserves the prior command and never executes automatically.
 - Read-only output must remain selectable, searchable and copyable. Keep editor entities stable across renders. Live output cannot reset a reading selection or unconditionally scroll to bottom.
 - Follow system appearance by default; use component/platform defaults unless the user explicitly overrides them.
 
@@ -28,17 +28,17 @@ Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-in
 - Label cwd **Current shell directory** only while the integrated local shell has explicitly reported an idle prompt. While a TUI/SSH/REPL owns stdin, label it **last reported** rather than pretending to know the foreground application's cwd.
 - Preserve the user's shell profile/prompt configuration. In particular, default Windows PowerShell must not use `-NoProfile`.
 - Terminal Tab remains native application completion.
-- Editor completion may use retained history, the integrated shell's reported effective PATH and its reported cwd. Completion never evaluates the draft, blocks the UI thread indefinitely or invents remote/application-specific context.
-- Complex/programmable/remote completion belongs to native terminal Tab unless a future explicit provider supplies it safely.
+- Local editor suggestions may use retained history, the local integrated shell's reported effective PATH and cwd only at a confirmed local prompt. Never read a remote cwd on the host filesystem. Completion never evaluates the draft or blocks the UI thread indefinitely; configured providers must supply the receiver's actual context.
+- Complex/programmable/remote completion belongs to native terminal Tab unless an explicitly configured cooperating provider supplies it. Provider addresses come from local configuration, not terminal output; requests/results are bounded and tied to context/draft generations. No screen scraping or speculative PTY probes.
 
 ## Data and execution invariants
 
-- Raw output bytes plus ordered resize/lifecycle events are canonical. Do not replace them with lossy UTF-8 or rendered text.
+- Raw output bytes plus ordered resize/lifecycle and typed submission-metadata events are canonical. Do not replace raw output with lossy UTF-8/rendered text or inject metadata as fake output. Replay never executes submission metadata. v2 recordings retain authored shell submissions separately; v1 recordings remain readable.
 - Command blocks require explicit application-owned/shell-provided boundaries, never prompt regexes, cursor position, idle time or `$`/`>` text.
 - `kea-document` depends only on `kea-core`; keep GPUI, editor, Zed, PTY, OS and shell-adapter dependencies out of both crates.
 - Replay is observation, never execution. Historical engines cannot issue PTY replies, send input, mutate clipboard, open URLs or change windows.
 - Live and historical emulator state stay separate; live output/protocol replies continue during rewind.
-- Shell wrappers are implementation input. Hidden-echo suppression fails open; do not drop real output to hide cosmetic wrapper echoes.
+- Per-command wrappers are forbidden. One-time POSIX bootstrap input may use fail-open echo suppression; do not drop real output for cosmetic suppression. PowerShell integration is installed at startup rather than typed into PSReadLine.
 - No raw keystroke recording by default. Submitted command markers and output can contain secrets. Persistence is explicit, bounded and non-overwriting.
 - Bound retained data and UI entities. Surface quota exhaustion, disk failures, truncation and gaps; do not call incomplete history complete.
 - Replay checkpoints need full parser state, partial escapes/UTF-8, both buffers, modes, margins, tabs, cursor and colors. A grid clone is not a checkpoint.
@@ -48,4 +48,8 @@ Read README.md, docs/architecture.md, docs/unified-session.md and docs/editor-in
 
 Run cargo fmt, portable tests/Clippy with -D warnings, cargo test -p kea-app --lib, cargo build -p kea-app and the Linux desktop smoke test where dependencies exist. Commit Cargo.lock and use --locked. Preserve real assertions rather than disabling tests to obtain a green build.
 
+Run `wt validate --no-global`, `wt test --no-global` and `wt check --no-global` for the repository's `.wt/` invariant rules; inspect each new finding rather than dismissing it wholesale. When fixing a bug a rule could have caught, add a focused wt rule with positive and negative fixtures.
+
 Outstanding work includes cross-platform/application acceptance and edge cases for terminal mouse, selection and scrollback; higher extended-keyboard protocol levels; image protocols; actual OS input-service/accessibility acceptance; long-session indexing/checkpoints; and platform packages. Existing terminal support is implemented by Kea's adapters, not automatically provided by the editor dependency.
+
+Multi-terminal ownership: read docs/terminal-tabs.md. Never share a PTY, input context, pending submission, completion result or draft recall cursor across tabs. Global settings and explicit saved memories may be shared.

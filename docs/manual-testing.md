@@ -281,7 +281,7 @@ is not a substitute for candidate navigation, cancellation and commitment.
 ## 11 — Composer workflow and physical shortcuts
 
 - [ ] With default settings, Enter in the lower composer inserts a newline and
-  does not execute. Explicit Run/Send acts once on the intended child.
+  does not execute. Explicit Submit acts once on the active receiver.
 - [ ] After successful submission, a fresh composer is focused by default. Type
   immediately: it should edit the new draft, not leak into the TUI. Undo should
   affect only this draft, never the previous command/output.
@@ -305,16 +305,16 @@ Use the applications you actually work with; mark unavailable ones NOT RUN.
 
 | Environment | Human check |
 |---|---|
-| Normal shell/profile | Prompt appearance, aliases and native Tab still work. Type `cd` directly, press Enter, then check Current shell directory. Repeat via Run. |
-| OpenCode | Send a multiline composer draft, work directly in its input, return to composer, recall/edit/send. No surprise focus change or hidden Run/Send target. |
+| Normal shell/profile | Prompt appearance, aliases and native Tab still work. Type `cd` directly, press Enter, then check Current shell directory. Repeat via Submit. |
+| OpenCode | Submit a multiline composer draft, work directly in its input, return to composer, recall/edit/submit. No surprise focus change or hidden target. |
 | Vim/Neovim | Enter/leave alternate screen, insert Unicode, navigate, enable native mouse selection, then use Kea Shift-selection. Exit without broken display/input. |
 | tmux | Exercise native pane clicks, scrolling and application shortcuts, then Kea's override. No mixed gesture or stuck button state. |
-| SSH / REPL | Native Tab and input remain application-owned; Send is literal. Cwd is last reported, not an invented remote/application directory. |
+| SSH / REPL | Native Tab and input remain application-owned; confirmed Submit sends literal text. Cwd is last reported, not an invented remote/application directory. |
 
-While a child owns stdin, Run must not inject a shell wrapper. After returning to
-the actual integrated-shell prompt, Run should become available again. An empty
-looking line alone must not be treated as readiness; observe the displayed
-reason if submission is refused.
+While a child owns stdin, the first Submit must send no bytes until confirmed and
+must never inject a shell wrapper. After returning to an integrated ready prompt,
+Submit should become immediate again. An empty-looking line alone must not be
+treated as readiness.
 
 ## 13 — Layout, scaling and sustained use
 

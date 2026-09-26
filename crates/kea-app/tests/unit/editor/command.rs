@@ -217,3 +217,113 @@ fn failed_send_or_edit_as_new_is_not_misclassified_as_submission(cx: &mut TestAp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn terminal_tabs_preserve_independent_recall_and_scratch(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        register_languages();
+    });
+    let window = cx.add_window(|window, cx| {
+        let view = cx.new(|_| EmptyView);
+        Root::new(view, window, cx)
+    });
+    window
+        .update(cx, |_, window, cx| {
+            let a = new_draft(None, &Settings::default(), "submitted A", window, cx);
+            a.update(cx, |state, cx| state.focus(window, cx));
+            assert_eq!(
+                submission_text(&a, window, cx).as_deref(),
+                Some("submitted A")
+            );
+            let a = new_draft(None, &Settings::default(), "", window, cx);
+            a.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.replace_text_in_range(None, "scratch A", window, cx);
+            });
+            assert!(navigate_submitted_drafts(
+                HistoryDirection::Previous,
+                window,
+                cx
+            ));
+            activate_tab_history(1, cx);
+            let b = new_draft(None, &Settings::default(), "draft B", window, cx);
+            b.update(cx, |state, cx| state.focus(window, cx));
+            assert_eq!(submitted_history_len(cx), 0);
+            assert!(!navigate_submitted_drafts(
+                HistoryDirection::Previous,
+                window,
+                cx
+            ));
+            // Reading a candidate is not a successful send; switching discards it.
+            assert_eq!(submission_text(&b, window, cx).as_deref(), Some("draft B"));
+            activate_tab_history(2, cx);
+            let c = new_draft(None, &Settings::default(), "", window, cx);
+            assert_eq!(submitted_history_len(cx), 0);
+            assert!(c.read(cx).value().is_empty());
+            activate_tab_history(0, cx);
+            a.update(cx, |state, cx| state.focus(window, cx));
+            assert_eq!(submitted_history_len(cx), 1);
+            assert_eq!(a.read(cx).value().as_ref(), "submitted A");
+            assert!(navigate_submitted_drafts(
+                HistoryDirection::Next,
+                window,
+                cx
+            ));
+            assert_eq!(a.read(cx).value().as_ref(), "scratch A");
+            activate_tab_history(1, cx);
+            assert_eq!(submitted_history_len(cx), 0);
+            assert_eq!(b.read(cx).value().as_ref(), "draft B");
+            forget_tab_history(0, cx);
+            assert!(!cx
+                .default_global::<DraftRecallGlobal>()
+                .inactive
+                .contains_key(&0));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        register_languages();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("drafts.txt");
+    let window = cx.add_window(|window, cx| {
+        let view = cx.new(|_| EmptyView);
+        Root::new(view, window, cx)
+    });
+    window
+        .update(cx, |_, window, cx| {
+            set_history_persistence(path.clone(), vec!["old".into()], cx);
+            for (id, text) in [(0, "A"), (1, "B"), (0, "C")] {
+                activate_tab_history(id, cx);
+                let draft = new_draft(None, &Settings::default(), text, window, cx);
+                draft.update(cx, |state, cx| state.focus(window, cx));
+                assert_eq!(submission_text(&draft, window, cx).as_deref(), Some(text));
+                new_draft(None, &Settings::default(), "", window, cx);
+            }
+            assert_eq!(
+                crate::editor::history::load_history_file(&path).unwrap(),
+                vec!["old", "A", "B", "C"]
+            );
+            assert_eq!(submitted_history_len(cx), 3); // old, A, C; B belongs to tab 1
+            activate_tab_history(1, cx);
+            assert_eq!(submitted_history_len(cx), 2); // old, B
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closed_recall_contexts_do_not_accumulate(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        for id in 0..1000 {
+            activate_tab_history(id, cx);
+            forget_tab_history(id, cx);
+        }
+        activate_tab_history(1000, cx);
+        assert!(cx.default_global::<DraftRecallGlobal>().inactive.is_empty());
+    });
+}

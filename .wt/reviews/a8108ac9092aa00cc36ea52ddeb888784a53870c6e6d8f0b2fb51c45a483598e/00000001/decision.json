@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "finding_id": "sha256:a8108ac9092aa00cc36ea52ddeb888784a53870c6e6d8f0b2fb51c45a483598e",
+  "evidence_digest": "sha256:159f90164d4a4dd87978ff6b899cd2075115c30ee3ad7f683f4b55384ce4a972",
+  "decision": "acceptable",
+  "rule_id": "local/live-output-scroll",
+  "code": "scroll",
+  "path": "crates/kea-app/src/app/document_view.rs",
+  "start_byte": 15827,
+  "end_byte": 15866,
+  "matched_digest": "sha256:dceeea4c33e718b44192a8ab8475b4ba6d8642d1c12b0565b8b21f3e7b2731f3",
+  "rule_digest": "sha256:bb6475cdf7e12031fecf17ebb4365a0e002a7ecf38fe5800a2bb5ade289256bb",
+  "file_digest": "sha256:e77cbd3f2df5456a58cc011ffac82676495f7b4a3e77d4c99c1b6f8ceca6f0fb",
+  "context_digest": "sha256:bf3bbe284f104347f3b5d7286ae06877c09c99f719d94374f0acc8ed2288c3c9",
+  "engine_digest": "sha256:c79157972c88f5a70affdc5436051cd91907306f3ba997fd11a11486e9a0be63",
+  "watched_files": {},
+  "rationale_file": "rationale.md",
+  "previous": null
+}

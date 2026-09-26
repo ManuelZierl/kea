@@ -271,6 +271,23 @@ impl Session {
         Ok(())
     }
 
+    /// Call only after an authored submission was accepted by `send`. Failure
+    /// to retain metadata never retries or changes the already delivered input.
+    pub fn note_submission(&mut self, id: u64, context: &str, input: &str) -> u64 {
+        let at = self.elapsed_micros();
+        if self.record_at(
+            at,
+            Kind::Submitted {
+                id,
+                context: context.to_owned(),
+                input: input.to_owned(),
+            },
+        ) {
+            self.presentation.push(PresentationEvent::Submitted);
+        }
+        at
+    }
+
     pub fn resize(&mut self, size: Size) -> Result<()> {
         Size::new(size.columns, size.rows)?;
         if let Some((_, historical)) = &mut self.history {

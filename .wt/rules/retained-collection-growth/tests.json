@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "retained-append",
+      "files": [
+        {
+          "path": "crates/kea-core/src/recording.rs",
+          "content": "fn append(&mut self, event: Event) { self.events.push(event); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-core/src/recording.rs",
+          "code": "growth",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "output-extension",
+      "files": [
+        {
+          "path": "crates/kea-document/src/model.rs",
+          "content": "fn append(&mut self, bytes: &[u8]) { self.output.extend_from_slice(bytes); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-document/src/model.rs",
+          "code": "growth",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "rendered-string-and-read-only-access",
+      "files": [
+        {
+          "path": "crates/kea-document/src/text.rs",
+          "content": "fn render(mut out: String) { out.push_str(\"hello\"); }\n"
+        },
+        {
+          "path": "crates/kea-core/src/recording.rs",
+          "content": "fn events(&self) -> &[Event] { &self.events }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

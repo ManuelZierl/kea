@@ -10,8 +10,8 @@ const MAX_HISTORY_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Exact text the user intentionally submitted from Kea's editor.
 ///
-/// This is deliberately independent of shell command blocks. `Send to app` text is
-/// valuable authored input even when the child application exposes no structured
+/// This is deliberately independent of shell command blocks. Submitted text is
+/// valuable authored input even when the active receiver exposes no structured
 /// acknowledgement, and recalling text must never imply that it is safe to re-run.
 #[derive(Debug)]
 pub struct DraftHistory {

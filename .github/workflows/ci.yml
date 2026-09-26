@@ -29,9 +29,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - run: python scripts/generate-windows-icon.py --check
       - run: cargo fmt --all -- --check
       - run: cargo test --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document
       - run: cargo clippy --locked -p kea-core -p kea-alacritty -p kea-pty -p kea-session -p kea-document --all-targets -- -D warnings
+      - name: Watchtower rules
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wt-bin"
+          curl -fsSL https://github.com/ManuelZierl/wt/releases/download/v0.0.1/wt-linux-x86_64.tar.gz -o "$RUNNER_TEMP/wt-bin/wt.tar.gz"
+          (cd "$RUNNER_TEMP/wt-bin" && echo '42743a63ab30fbc93598ab1a0256fbf23758e45cc31db132084fc89d2883b1fb  wt.tar.gz' | sha256sum --check)
+          tar -xzf "$RUNNER_TEMP/wt-bin/wt.tar.gz" -C "$RUNNER_TEMP/wt-bin" wt
+          "$RUNNER_TEMP/wt-bin/wt" validate --no-global
+          "$RUNNER_TEMP/wt-bin/wt" test --no-global
+          "$RUNNER_TEMP/wt-bin/wt" check --no-global --no-host-ignores --no-cache
       - name: Build macOS release binary
         if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
         run: cargo build --release --locked -p kea-app
@@ -73,6 +86,30 @@ jobs:
       - name: Build Linux release binary
         if: startsWith(github.ref, 'refs/tags/v')
         run: cargo build --release --locked -p kea-app
+      - name: Independent terminal tab acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -e "${lvp_icds[0]}"
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-tabs.sh
+      - name: Guarded composer workflow acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -e "${lvp_icds[0]}"
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-composer-workflow.sh
       - name: Shared terminal/editor acceptance
         shell: bash
         run: |
@@ -120,8 +157,13 @@ jobs:
         with:
           key: desktop-windows
           cache-on-failure: true
-      - run: cargo test --locked -p kea-app --lib
+      - run: cargo test --locked -p kea-app
       - run: cargo build --release --locked -p kea-app
+      - name: Verify icon source and embedded native icon
+        run: |
+          python scripts/generate-windows-icon.py --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify-windows-icon.py target/release/kea.exe
       - name: Verify Windows GUI subsystem
         run: python scripts/verify-windows-subsystem.py target/release/kea.exe
       - name: Package Windows release binary

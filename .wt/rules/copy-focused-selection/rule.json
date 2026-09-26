@@ -1,0 +1,36 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "copy-export": {
+      "help": "Generic Action::Copy must dispatch editor copy or terminal_selection_text, without falling back to copy_document.",
+      "kind": "review",
+      "message": "AGENTS.md: Copy means focused selection; Copy document/view/block must be a separate explicit action."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "copy-focused-selection",
+  "mode": "advisory",
+  "patterns": {
+    "copy_export": "Action::Copy\\s*=>\\s*self\\.(?:copy_document\\s*\\(|session\\.screen\\s*\\(\\s*\\)\\.text\\s*\\()"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/app/actions.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Generic Copy cannot export a whole view"
+}

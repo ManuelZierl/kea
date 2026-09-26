@@ -19,7 +19,7 @@ Contributions are welcome. See [contributing](contributing.md) and the
 ## Product and interaction
 
 - [Interaction contract](unified-session.md) — terminal/composer ownership,
-  explicit Run and Send actions, focus, completion and cwd.
+  guarded Submit, focus, completion and cwd.
 - [Terminal text selection](terminal-text-selection.md) — local selection,
   keyboard and mouse routing, caret lifecycle and compatibility boundaries.
 - [Terminal compatibility](terminal-compatibility-alpha.md) — alpha contracts,
@@ -37,7 +37,7 @@ Contributions are welcome. See [contributing](contributing.md) and the
   focus, read-only output and OS acceptance boundaries.
 - [Command metadata protocol](document-protocol.md) — shell-provided OSC command
   boundaries and trust model.
-- [Recording format](recording-format.md) — binary v1 layout and validation.
+- [Recording format](recording-format.md) — binary v1/v2 layout and validation.
 
 Automated checks are listed in the [contributor guide](contributing.md).
 A green build or unit-test run does not establish real keyboard, IME, clipboard,

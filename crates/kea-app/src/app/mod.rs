@@ -1,12 +1,16 @@
 mod actions;
 mod composer;
+mod composer_workflow;
 mod document_view;
+mod interrupt;
 mod pointer;
 mod rendering;
 mod settings_window;
 mod shell_metadata;
 mod startup;
+mod tabs;
 mod terminal_input;
+use tabs::{KeaRoot, WorkspaceEvent};
 mod workspace;
 
 use gpui::{prelude::*, *};
@@ -17,10 +21,10 @@ use kea_app::{
         keybindings::{Action, Invoke, Keymap},
         settings::Settings,
     },
-    editor::{command as command_editor, completion},
+    editor::{command as command_editor, completion, provider::Providers},
     reverse_search::view::ReverseSearchView,
     shell::ShellFlavor,
-    terminal::{input, recovery::PromptLineTracker, selection},
+    terminal::{context::InputContext, input, recovery::PromptLineTracker, selection},
 };
 use kea_document::Document;
 use kea_session::Session;
@@ -39,10 +43,19 @@ enum InitialFocus {
 
 struct PendingRun {
     text: String,
+    draft: String,
+    consume: bool,
     editor: Entity<InputState>,
+    context_generation: u64,
+    released: bool,
 }
 
-type CompletionResult = (u64, String, usize, Vec<completion::Candidate>);
+type CompletionResult = (
+    u64,
+    String,
+    usize,
+    Result<Vec<completion::Candidate>, String>,
+);
 
 #[derive(Clone)]
 struct TerminalFontMetrics {
@@ -53,9 +66,11 @@ struct TerminalFontMetrics {
 }
 
 struct KeaView {
+    visible: bool,
     session: Session,
     document: Document,
     shell_metadata: ShellMetadata,
+    input_context: InputContext,
     shell: Option<ShellFlavor>,
     keymap: Keymap,
     settings: Settings,
@@ -70,6 +85,9 @@ struct KeaView {
     timeline_hovered: bool,
     prompt_line: PromptLineTracker,
     pending_run: Option<PendingRun>,
+    composer_enter_down: bool,
+    composer_workflow: composer_workflow::ComposerWorkflow,
+    interrupt: interrupt::InterruptState,
     terminal_composition: Entity<InputState>,
     completion_rx: Option<Receiver<CompletionResult>>,
     completion_generation: u64,
@@ -79,6 +97,10 @@ struct KeaView {
     completion_scroll: ScrollHandle,
     completion_text: String,
     completion_cursor: usize,
+    completion_context: u64,
+    completion_providers: Providers,
+    completion_source: String,
+    completion_bounds: Vec<Option<Bounds<Pixels>>>,
     editor: Entity<InputState>,
     reverse_search: Entity<ReverseSearchView>,
     document_ui: document_view::DocumentUi,
@@ -92,25 +114,12 @@ struct KeaView {
     composer_logo_deadline: Option<Instant>,
     logo_warmed_frames: usize,
     _composer_change: Subscription,
+    _composer_keys: Subscription,
     _pump: Task<()>,
     _appearance: Subscription,
     _filter_change: Subscription,
     _focus_lost: Subscription,
     _memory_changed: Subscription,
-}
-
-struct KeaRoot {
-    view: Entity<KeaView>,
-}
-
-impl Render for KeaRoot {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-        div()
-            .size_full()
-            .child(self.view.clone())
-            .children(dialog_layer)
-    }
 }
 
 fn button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {

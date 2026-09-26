@@ -1,0 +1,38 @@
+{
+  "code": {
+    "capabilities": [
+      "text.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "blocking-call": {
+      "help": "Check whether this code runs in the completion worker or directly on the UI thread.",
+      "kind": "review",
+      "message": "AGENTS.md: completion never blocks the UI thread indefinitely; local suggestions/provider I/O must run off-thread."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "completion-ui-blocking",
+  "mode": "advisory",
+  "patterns": {
+    "blocking": "(?:\\b(?:thread::sleep|block_on|Command::output|Command::status|std::fs::read_dir|std::fs::metadata|TcpStream::connect(?:_timeout)?|File::open)|\\.recv)\\s*\\("
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "crates/kea-app/src/app/composer.rs",
+      "crates/kea-app/src/editor/completion.rs",
+      "crates/kea-app/src/editor/provider.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "UI completion must not block"
+}
