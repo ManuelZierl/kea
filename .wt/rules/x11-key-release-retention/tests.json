@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "bare-assignment-overwrites-pending-release",
+      "files": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/client.rs",
+          "content": "fn retain(event: Event) { last_key_release = Some(event); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/client.rs",
+          "code": "pending-release-overwrite",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "forward-physical-release-directly",
+      "files": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/client.rs",
+          "content": "fn retain(event: Event) { events.push(event); }\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "timing-filter-cannot-handle-split-repeat-pairs",
+      "files": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/client.rs",
+          "content": "fn retain() { if key_press.time.saturating_sub(key_release.time) > 20 { events.push(Event::KeyRelease(key_release)); } }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/client.rs",
+          "code": "repeat-timing-heuristic",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "assignment-outside-vendored-x11-client-is-out-of-scope",
+      "files": [
+        {
+          "path": "vendor/gpui/src/platform/linux/x11/other.rs",
+          "content": "fn retain(event: Event) { last_key_release = Some(event); }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

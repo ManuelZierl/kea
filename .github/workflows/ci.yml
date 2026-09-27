@@ -58,6 +58,11 @@ jobs:
           mkdir -p dist/package
           cp target/release/kea dist/package/kea
           cp LICENSE README.md CHANGELOG.md dist/package/
+          mkdir -p dist/package/licenses
+          cp vendor/gpui/LICENSE-APACHE dist/package/licenses/gpui-LICENSE-APACHE
+          cp vendor/gpui/README.kea.md dist/package/licenses/gpui-patches.md
+          cp vendor/gpui-component/LICENSE-APACHE dist/package/licenses/gpui-component-LICENSE-APACHE
+          cp vendor/gpui-component/README.kea.md dist/package/licenses/gpui-component-patches.md
           tar -czf "dist/${archive}" -C dist/package .
           rm -rf dist/package
       - uses: actions/upload-artifact@v4
@@ -130,6 +135,11 @@ jobs:
           mkdir -p dist/package
           cp target/release/kea dist/package/kea
           cp LICENSE README.md CHANGELOG.md dist/package/
+          mkdir -p dist/package/licenses
+          cp vendor/gpui/LICENSE-APACHE dist/package/licenses/gpui-LICENSE-APACHE
+          cp vendor/gpui/README.kea.md dist/package/licenses/gpui-patches.md
+          cp vendor/gpui-component/LICENSE-APACHE dist/package/licenses/gpui-component-LICENSE-APACHE
+          cp vendor/gpui-component/README.kea.md dist/package/licenses/gpui-component-patches.md
           tar -czf "dist/${archive}" -C dist/package .
           rm -rf dist/package
       - uses: actions/upload-artifact@v4
@@ -174,6 +184,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/package | Out-Null
           Copy-Item target/release/kea.exe dist/package/kea.exe
           Copy-Item LICENSE,README.md,CHANGELOG.md dist/package/
+          New-Item -ItemType Directory -Force -Path dist/package/licenses | Out-Null
+          Copy-Item vendor/gpui/LICENSE-APACHE dist/package/licenses/gpui-LICENSE-APACHE
+          Copy-Item vendor/gpui/README.kea.md dist/package/licenses/gpui-patches.md
+          Copy-Item vendor/gpui-component/LICENSE-APACHE dist/package/licenses/gpui-component-LICENSE-APACHE
+          Copy-Item vendor/gpui-component/README.kea.md dist/package/licenses/gpui-component-patches.md
           $archive = "dist/kea-$env:GITHUB_REF_NAME-windows-x86_64.zip"
           Compress-Archive -Path dist/package/* -DestinationPath $archive
           Remove-Item -Recurse -Force dist/package
