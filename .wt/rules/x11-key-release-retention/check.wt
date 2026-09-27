@@ -1,0 +1,6 @@
+for m in file.ast_match("rust", "last_key_release = Some($EVENT)") {
+    emit(m.span, "pending-release-overwrite");
+}
+for m in file.ast_match("rust", "key_press.time.saturating_sub(key_release.time)") {
+    emit(m.span, "repeat-timing-heuristic");
+}
