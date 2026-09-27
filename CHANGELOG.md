@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.1-alpha.2 — 2026-09-26
+## 0.0.1-alpha.2 — 2026-09-27
 
 - Add independent terminal tabs with per-tab processes, drafts, history navigation,
   completion, recordings and input ownership; support switching, reordering and
@@ -10,6 +10,10 @@
   wheel-only reading without a selection; explicit Latest resumes following output.
 - Label the shell directory as current only at the explicitly reported local prompt.
 - Add repository invariant rules with reviewed evidence and a checksum-pinned CI tool.
+- Fix X11 key-release delivery in GPUI: preserve consecutive physical releases
+  and use XKB detectable autorepeat so a held Enter cannot confirm submission
+  when synthetic repeat events cross polling batches. X11 servers must support
+  detectable autorepeat; unsupported servers now report an explicit startup error.
 
 - Add opt-in confirmation before forwarding Ctrl-C, with per-terminal overrides
   and protection against stale targets and repeated confirmation keys.

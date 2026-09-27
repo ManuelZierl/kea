@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/kea-core", "crates/kea-alacritty", "crates/kea-pty", "crates/kea-session", "crates/kea-document", "crates/kea-app"]
-exclude = ["vendor/gpui-component"]
+exclude = ["vendor/gpui-component", "vendor/gpui"]
 default-members = ["crates/kea-app"]
 resolver = "2"
 
@@ -20,6 +20,9 @@ alacritty_terminal = "=0.26.0"
 portable-pty = "=0.9.0"
 gpui = "=0.2.2"
 anyhow = "1.0"
+
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

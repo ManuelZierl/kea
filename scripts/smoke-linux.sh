@@ -20,7 +20,7 @@ printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 kea_pid=''; window=''
-cleanup_app() { if [[ -n "$kea_pid" ]]; then kill "$kea_pid" 2>/dev/null || true; wait "$kea_pid" 2>/dev/null || true; kea_pid=''; fi; }
+cleanup_app() { if [[ -n "$kea_pid" ]]; then kill -CONT "$kea_pid" 2>/dev/null || true; kill "$kea_pid" 2>/dev/null || true; wait "$kea_pid" 2>/dev/null || true; kea_pid=''; fi; }
 cleanup() { local code=$?; if [[ "$code" -ne 0 && -n "$window" ]]; then import -window "$window" smoke-artifacts/failure.png 2>/dev/null || true; fi; cleanup_app; rm -rf "$XDG_RUNTIME_DIR"; }
 trap cleanup EXIT
 wait_window() {
@@ -253,7 +253,11 @@ xdotool type --clearmodifiers --delay 10 'guarded'
 xdotool keydown Control_L keydown Return
 sleep .8
 [[ ! -s smoke-artifacts/submit-guard.bin ]] || { echo 'Held submission bypassed confirmation'; exit 1; }
+# Force consecutive releases into one X11 batch. GPUI must preserve both;
+# losing Enter's release leaves the next Submit chord incorrectly latched.
+kill -STOP "$kea_pid"
 xdotool keyup Return keyup Control_L
+kill -CONT "$kea_pid"
 sleep .2
 xdotool type --clearmodifiers 'x'
 key ctrl+a ctrl+c

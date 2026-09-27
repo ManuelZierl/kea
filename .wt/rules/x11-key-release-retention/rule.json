@@ -1,0 +1,39 @@
+{
+  "code": {
+    "capabilities": [
+      "ast.v1"
+    ],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "pending-release-overwrite": {
+      "help": "Use verified XKB detectable autorepeat and forward every key release in order.",
+      "kind": "violation",
+      "message": "Preserve the first X11 key-release event instead of overwriting pending release state."
+    },
+    "repeat-timing-heuristic": {
+      "help": "Use verified XKB detectable autorepeat instead of inferring physical releases from event timing.",
+      "kind": "violation",
+      "message": "Synthetic repeat pairs can cross polling batches; timing cannot reliably identify physical releases."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "x11-key-release-retention",
+  "mode": "enforced",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": [
+      "vendor/gpui/src/platform/linux/x11/client.rs"
+    ],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Preserve physical X11 key releases"
+}
