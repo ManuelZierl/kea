@@ -9,6 +9,8 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
     );
     assert!(Settings::default().font_family.is_none());
     assert!(Settings::default().shift_mouse_selects_locally);
+    assert!(!Settings::default().show_blocks);
+    assert!(Settings::parse("show_blocks = true").unwrap().show_blocks);
 
     let settings = Settings::parse(
         "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\nanimate_logo = false\n",

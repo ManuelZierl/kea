@@ -1,5 +1,8 @@
 use super::{KeybindingEditor, Keymap};
-use gpui::{div, AppContext as _, Context, IntoElement, Render, TestAppContext, Window};
+use gpui::{
+    div, point, px, size, AppContext as _, Context, IntoElement, Render, TestAppContext,
+    VisualTestContext, Window,
+};
 use gpui_component::{input::InputEvent, Root};
 
 struct Empty;
@@ -155,4 +158,34 @@ fn shortcut_capture_waits_for_release_and_escape_preserves_text(cx: &mut TestApp
             });
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn record_button_click_arms_capture_and_captures_a_real_keystroke(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let editor_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let window = cx.add_window({
+        let editor_slot = editor_slot.clone();
+        move |window, cx| {
+            let keymap = Keymap::parse("").unwrap();
+            let editor = cx.new(|cx| KeybindingEditor::from_keymap(&keymap, None, window, cx));
+            *editor_slot.borrow_mut() = Some(editor.clone());
+            Root::new(editor, window, cx)
+        }
+    });
+    let editor = editor_slot.borrow_mut().take().unwrap();
+    let visual = VisualTestContext::from_window(*window, cx).into_mut();
+    visual.draw(point(px(0.), px(0.)), size(px(1000.), px(1600.)), |_, _| {
+        editor.clone()
+    });
+    let bounds = visual
+        .debug_bounds("record-shortcut-0")
+        .expect("Record button rendered");
+    visual.simulate_click(bounds.center(), gpui::Modifiers::none());
+    assert_eq!(visual.update(|_, cx| editor.read(cx).recording), Some(0));
+    visual.simulate_keystrokes("alt-l");
+    assert_eq!(
+        visual.update(|_, cx| editor.read(cx).rows[0].input.read(cx).value().to_string()),
+        "alt-l"
+    );
 }

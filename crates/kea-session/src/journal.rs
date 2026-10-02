@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use kea_alacritty::MouseTracking;
-use kea_core::{write_event, write_header, Event, Recording, Size};
+use kea_core::{write_event, write_header, Event, Recording, Size, MAX_BYTES, MAX_EVENTS};
 use std::{
     fs::OpenOptions,
     io::{BufWriter, Write},
@@ -16,6 +16,8 @@ pub struct Journal {
     sender: Option<SyncSender<Event>>,
     errors: Receiver<String>,
     worker: Option<JoinHandle<()>>,
+    retained_bytes: usize,
+    event_count: usize,
 }
 
 impl Journal {
@@ -70,6 +72,8 @@ impl Journal {
             sender: Some(sender),
             errors,
             worker: Some(worker),
+            retained_bytes: seed.map_or(0, Recording::bytes),
+            event_count: seed.map_or(0, |recording| recording.events().len()),
         })
     }
 
@@ -78,11 +82,18 @@ impl Journal {
     }
 
     pub fn append(&mut self, event: &Event) -> Result<()> {
+        let cost = event.kind.retained_bytes();
+        if self.event_count >= MAX_EVENTS || cost > MAX_BYTES - self.retained_bytes {
+            anyhow::bail!("saved recording limit reached (32 MiB / 100,000 events)");
+        }
         self.sender
             .as_ref()
             .context("recording writer stopped")?
             .try_send(event.clone())
-            .context("recording writer fell behind or closed")
+            .context("recording writer fell behind or closed")?;
+        self.retained_bytes += cost;
+        self.event_count += 1;
+        Ok(())
     }
 
     pub fn error(&self) -> Option<String> {
@@ -107,6 +118,7 @@ impl crate::session::Session {
     }
 
     pub fn start_persistence(&mut self, path: &Path) -> Result<()> {
+        self.flush_output();
         if self.capture_stopped {
             anyhow::bail!(
                 "history retention has already stopped; cannot begin a complete saved session"
@@ -122,6 +134,7 @@ impl crate::session::Session {
     }
 
     pub fn stop_persistence(&mut self) {
+        self.flush_output();
         if let Some(journal) = &mut self.journal {
             journal.stop();
         }

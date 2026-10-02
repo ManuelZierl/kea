@@ -84,3 +84,61 @@ fn output_does_not_return_a_scrolled_reader_to_the_tail() {
     assert!(engine.display_offset() >= before);
     assert_ne!(engine.display_offset(), 0);
 }
+#[test]
+fn frozen_grid_preserves_active_buffer_colors_cursor_and_native_selection() {
+    use crate::TerminalPoint;
+    for alternate in [false, true] {
+        let mut live = Engine::new(Size::new(8, 3).unwrap(), true);
+        if alternate {
+            live.output(b"\x1b[?1049h");
+        }
+        live.output(
+            "\x1b]4;1;rgb:12/34/56\x07\x1b[31mab界e\u{301}XYZ0123\r\nlast\x1b[?25l".as_bytes(),
+        );
+        let before = live.screen();
+        let mut frozen = live.frozen_grid();
+        let actual = frozen.screen();
+        assert_eq!(before.text(), actual.text());
+        assert_eq!(before.cursor, actual.cursor);
+        assert_eq!(before.history_size, actual.history_size);
+        for (expected, actual) in before.cells.iter().zip(&actual.cells) {
+            assert_eq!(expected.foreground, actual.foreground);
+            assert_eq!(expected.background, actual.background);
+            assert_eq!(expected.wide, actual.wide);
+            assert_eq!(expected.spacer, actual.spacer);
+        }
+        for block in [false, true] {
+            let start = TerminalPoint { row: 0, column: 1 };
+            let end = TerminalPoint { row: 1, column: 3 };
+            live.begin_selection_kind(start, block);
+            live.update_selection(end);
+            frozen.begin_selection_kind(start, block);
+            frozen.update_selection(end);
+            assert!(frozen.selection_text().is_some());
+            assert_eq!(frozen.selection_text(), live.selection_text());
+        }
+        let selected = frozen.selection_text();
+        live.output(b"\x1b[2J\x1b[Hchanged\x1b[6n");
+        assert!(!live.drain_replies().is_empty());
+        assert!(frozen.drain_replies().is_empty());
+        assert_eq!(frozen.screen().text(), before.text());
+        assert_eq!(frozen.selection_text(), selected);
+        assert!(!live.screen().text().contains("last"));
+    }
+}
+
+#[test]
+fn frozen_grid_keeps_scrollback_offset_when_live_output_scrolls() {
+    let mut live = Engine::new(Size::new(12, 3).unwrap(), true);
+    live.output(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+    live.scroll_lines(2);
+    let mut frozen = live.frozen_grid();
+    let frame = frozen.screen().text();
+    assert!(frozen.display_offset() > 0);
+    assert_eq!(frozen.display_offset(), live.display_offset());
+    live.output(b"\r\nsix\r\nseven");
+    assert_eq!(frozen.screen().text(), frame);
+    frozen.scroll_bottom();
+    assert!(frozen.screen().text().contains("five"));
+    assert!(!frozen.screen().text().contains("seven"));
+}

@@ -3,15 +3,22 @@ title: Recording format
 nav_order: 11
 ---
 
-# Recording formats v1 and v2
+# Recording formats v1, v2 and v3
 
-The writer emits v2. Readers accept v1 and v2; earlier Kea releases cannot read
-v2 files. All integers are little-endian. Output is opaque bytes, not necessarily
-UTF-8.
+The writer emits v2 for complete prefixes and v3 for automatically trimmed
+history. Readers accept v1, v2 and v3; earlier releases cannot read v3 files.
+All integers are little-endian. Output is opaque bytes, not necessarily UTF-8.
 
 The 12-byte header is magic `4b 45 41 <version> 0d 0a 1a 0a`, followed by
-columns:u16 and rows:u16. Version is `01` or `02`. Dimensions are columns 2..512
+columns:u16 and rows:u16. Version is `01`, `02` or `03`. Dimensions are columns 2..512
 and rows 1..256 inclusive.
+
+Version 3 extends that header with `discarded_events:u64 | start_time_us:u64`.
+The discarded count must be nonzero. Start time is the timestamp of the last
+evicted event; retained events cannot precede it. Dimensions include any evicted
+resizes. These fields declare a missing prefix, not emulator state: replay starts
+empty and cannot reconstruct prior screen content, modes or partial parser input.
+No synthetic terminal output is inserted. Version 3 otherwise uses v2 frames.
 
 Each frame is `body_length:u32 | timestamp_us:u64 | kind:u8 | payload | crc32:u32`.
 The body length includes timestamp, kind and payload, excluding the length prefix
@@ -22,10 +29,10 @@ initial/final complement. It detects corruption, not malicious modification.
 
 | Kind | Versions | Payload |
 | --- | --- | --- |
-| 0: output | 1, 2 | 1 byte to 1 MiB of raw terminal output |
-| 1: resize | 1, 2 | columns:u16, rows:u16 |
-| 2: exit | 1, 2 | code:u32 |
-| 3: submitted input | 2 | id:u64, context_length:u16, context bytes, authored UTF-8 input |
+| 0: output | 1, 2, 3 | 1 byte to 1 MiB of raw terminal output |
+| 1: resize | 1, 2, 3 | columns:u16, rows:u16 |
+| 2: exit | 1, 2, 3 | code:u32 |
+| 3: submitted input | 2, 3 | id:u64, context_length:u16, context bytes, authored UTF-8 input |
 
 Submission context is 1–128 ASCII letters, digits, hyphens, underscores or dots.
 Input is nonempty valid UTF-8, at most 64 KiB, with no NUL. Its length is the
@@ -37,6 +44,10 @@ bounded and counted against recording quotas.
 Timestamps are monotonic session-relative microseconds. Equal timestamps preserve
 file order. No events may follow an exit. Interrupted capture or window closure
 may leave a valid recording without an exit event.
+
+The live recorder groups adjacent reads for up to 50 ms or 64 KiB and timestamps
+each group at its final read. Bytes and order are exact; intra-group timing is
+not retained. Resize, submission and exit events are never merged into output.
 
 Readers reject unknown versions/kinds, invalid lengths/dimensions/UTF-8 metadata,
 backwards timestamps, events after exit, corrupt checksums and quota violations.

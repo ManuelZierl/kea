@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "$KEY.key.eq_ignore_ascii_case(\"c\")") {
+    emit(m.span, "modifier-classification");
+}

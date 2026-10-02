@@ -1,5 +1,11 @@
 //! A one-shot confirmation gate. It stores already encoded input, not signals.
 //! Target identity/focus are checked by the host; generations are checked here.
+/// True only for the classic terminal Ctrl-C control byte. Modifier distinctions
+/// collapsed by the encoder must share the same confirmation policy.
+pub fn is_interrupt_bytes(bytes: &[u8]) -> bool {
+    bytes == [3]
+}
+
 #[derive(Default)]
 pub struct InterruptGuard {
     pending: Option<(u64, Vec<u8>)>,

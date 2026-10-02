@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "if self.session.is_frozen() { cx.stop_propagation(); return; }") {
+    emit(m.span, "swallowed-recovery-shortcut");
+}

@@ -2,7 +2,7 @@ use alacritty_terminal::{
     event::{Event as TerminalEvent, EventListener},
     grid::Dimensions,
     term::Config,
-    vte::ansi::Processor,
+    vte::ansi::{Handler, NamedPrivateMode, Processor},
     Term,
 };
 use kea_core::{Projection, Recording, Size};
@@ -90,6 +90,33 @@ impl Engine {
 
     pub fn size(&self) -> Size {
         self.size
+    }
+
+    /// Copy only the already-rendered terminal grid for an immutable local view.
+    /// This is deliberately not a parser/replay checkpoint and has no live reply
+    /// channel; callers must never feed output or input to the returned engine.
+    pub fn frozen_grid(&self) -> Self {
+        let mut frozen = Self::new(self.size, false);
+        *frozen.terminal.grid_mut() = self.terminal.grid().clone();
+        frozen.terminal.selection = None;
+        if !self
+            .terminal
+            .mode()
+            .contains(alacritty_terminal::term::TermMode::SHOW_CURSOR)
+        {
+            frozen
+                .terminal
+                .unset_private_mode(NamedPrivateMode::ShowCursor.into());
+        }
+        frozen
+            .terminal
+            .set_cursor_style(Some(self.terminal.cursor_style()));
+        for index in 0..alacritty_terminal::term::color::COUNT {
+            if let Some(color) = self.terminal.colors()[index] {
+                frozen.terminal.set_color(index, color);
+            }
+        }
+        frozen
     }
 
     pub fn drain_replies(&mut self) -> Vec<String> {

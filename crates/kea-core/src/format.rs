@@ -11,8 +11,28 @@ pub struct Loaded {
 }
 
 pub fn write_header(mut out: impl Write, size: Size) -> io::Result<()> {
+    write_base_header(&mut out, size, 2)
+}
+
+pub(crate) fn write_retained_header(
+    mut out: impl Write,
+    size: Size,
+    discarded_events: u64,
+    start_time: u64,
+) -> io::Result<()> {
+    if discarded_events == 0 {
+        return Err(invalid("retained header requires discarded events"));
+    }
+    write_base_header(&mut out, size, 3)?;
+    out.write_all(&discarded_events.to_le_bytes())?;
+    out.write_all(&start_time.to_le_bytes())
+}
+
+fn write_base_header(out: &mut impl Write, size: Size, version: u8) -> io::Result<()> {
     Size::new(size.columns, size.rows)?;
-    out.write_all(MAGIC)?;
+    let mut magic = *MAGIC;
+    magic[3] = version;
+    out.write_all(&magic)?;
     out.write_all(&size.columns.to_le_bytes())?;
     out.write_all(&size.rows.to_le_bytes())
 }
@@ -66,14 +86,23 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
     let mut header = [0; 12];
     input.read_exact(&mut header)?;
     let version = header[3];
-    if &header[..3] != b"KEA" || !matches!(version, 1 | 2) || header[4..8] != MAGIC[4..] {
-        return Err(invalid("not a supported Kea v1/v2 recording"));
+    if &header[..3] != b"KEA" || !matches!(version, 1..=3) || header[4..8] != MAGIC[4..] {
+        return Err(invalid("not a supported Kea v1/v2/v3 recording"));
     }
     let initial = Size::new(
         u16::from_le_bytes([header[8], header[9]]),
         u16::from_le_bytes([header[10], header[11]]),
     )?;
     let mut recording = Recording::new(initial)?;
+    if version == 3 {
+        let mut prefix = [0; 16];
+        input.read_exact(&mut prefix)?;
+        recording.discarded_events = u64::from_le_bytes(prefix[..8].try_into().unwrap());
+        recording.start_time = u64::from_le_bytes(prefix[8..].try_into().unwrap());
+        if recording.discarded_events == 0 {
+            return Err(invalid("v3 recording has no discarded prefix"));
+        }
+    }
     loop {
         let mut length = [0; 4];
         let count = read_partial(&mut input, &mut length)?;
@@ -106,6 +135,9 @@ pub fn read_from(mut input: impl Read) -> io::Result<Loaded> {
             return Err(invalid("frame checksum mismatch"));
         }
         let at = u64::from_le_bytes(body[..8].try_into().map_err(|_| invalid("bad timestamp"))?);
+        if version == 3 && at < recording.start_time {
+            return Err(invalid("event precedes retained recording start"));
+        }
         let kind = match body[8] {
             0 => Kind::Output(body[9..].to_vec()),
             1 if length == 13 => Kind::Resize(Size::new(

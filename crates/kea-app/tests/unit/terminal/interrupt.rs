@@ -44,3 +44,10 @@ fn held_enter_and_modifier_release_never_count_as_fresh() {
     latch.release("return");
     assert!(latch.press("enter"));
 }
+
+#[test]
+fn only_the_exact_classic_ctrl_c_byte_is_a_guarded_interrupt() {
+    assert!(is_interrupt_bytes(&[3]));
+    assert!(!is_interrupt_bytes(b"\x1b\x03"));
+    assert!(!is_interrupt_bytes(&[3, 3]));
+}

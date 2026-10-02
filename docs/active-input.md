@@ -168,11 +168,12 @@ never leave an execution queue or stop future input. The current block observer
 is flat, so inner commands may remain untracked while an outer command is active.
 PowerShell supplies success/failure (0/1), rather than exact native exit codes.
 
-The recording writer uses v2; both v1 and v2 remain readable. v2 adds frame type 3
+Complete-prefix recordings use v2; both v1 and v2 remain readable. Trimmed
+suffixes use v3 prefix-loss headers with the same event frames. v2 adds frame type 3
 (timestamp, type, u64 submission ID, u16 UTF-8 context length, context, authored
 UTF-8 input) using the existing length/checksum framing. Raw output is unchanged.
 Terminal replay ignores submission frames; block reconstruction observes them.
-Older Kea releases cannot read v2 files. Retention is bounded and persistence is
+Older Kea releases cannot read v3 files. Retention is bounded and persistence is
 still explicit, plaintext and non-overwriting; authored commands can contain
 secrets. Neither this protocol nor metadata enables execution during replay.
 
