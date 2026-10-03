@@ -1,14 +1,27 @@
 use super::{KeybindingEditor, Keymap};
 use gpui::{
-    div, point, px, size, AppContext as _, Context, IntoElement, Render, TestAppContext,
-    VisualTestContext, Window,
+    div, point, px, size, AppContext as _, Context, IntoElement, ParentElement as _, Render,
+    Styled as _, TestAppContext, VisualTestContext, Window,
 };
-use gpui_component::{input::InputEvent, Root};
+use gpui_component::{
+    input::{Input, InputEvent, InputState},
+    Root,
+};
 
 struct Empty;
 impl Render for Empty {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
+    }
+}
+
+struct ZeroWidthInput {
+    state: gpui::Entity<InputState>,
+}
+
+impl Render for ZeroWidthInput {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(0.)).child(Input::new(&self.state))
     }
 }
 
@@ -184,8 +197,54 @@ fn record_button_click_arms_capture_and_captures_a_real_keystroke(cx: &mut TestA
     visual.simulate_click(bounds.center(), gpui::Modifiers::none());
     assert_eq!(visual.update(|_, cx| editor.read(cx).recording), Some(0));
     visual.simulate_keystrokes("alt-l");
+    visual.update(|window, cx| {
+        editor.update(cx, |this, cx| this.finish_capture("l", window, cx));
+    });
+    visual.draw(point(px(0.), px(0.)), size(px(1000.), px(1600.)), |_, _| {
+        editor.clone()
+    });
     assert_eq!(
         visual.update(|_, cx| editor.read(cx).rows[0].input.read(cx).value().to_string()),
         "alt-l"
+    );
+}
+
+#[gpui::test]
+fn programmatic_value_does_not_scroll_against_a_zero_width_layout(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let state_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let input_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let window = cx.add_window({
+        let state_slot = state_slot.clone();
+        let input_slot = input_slot.clone();
+        move |window, cx| {
+            let state = cx.new(|cx| InputState::new(window, cx).default_value("f10"));
+            let input = cx.new(|_| ZeroWidthInput {
+                state: state.clone(),
+            });
+            *state_slot.borrow_mut() = Some(state);
+            *input_slot.borrow_mut() = Some(input.clone());
+            Root::new(input, window, cx)
+        }
+    });
+    let state = state_slot.borrow_mut().take().unwrap();
+    let input = input_slot.borrow_mut().take().unwrap();
+    let visual = VisualTestContext::from_window(*window, cx).into_mut();
+    visual.draw(point(px(0.), px(0.)), size(px(1000.), px(200.)), |_, _| {
+        input.clone()
+    });
+    visual.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.set_value("alt-f10", window, cx);
+            state.focus(window, cx);
+        });
+    });
+    visual.draw(point(px(0.), px(0.)), size(px(1000.), px(200.)), |_, _| {
+        input.clone()
+    });
+    assert_eq!(
+        visual.update(|_, cx| state.read(cx).scroll_offset_for_test().x),
+        px(0.),
+        "zero-width layout must not scroll a programmatic value out of view"
     );
 }
