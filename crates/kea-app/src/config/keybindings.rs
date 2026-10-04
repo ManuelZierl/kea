@@ -811,6 +811,9 @@ pub(crate) const DEFAULT_SETTINGS_CONF: &str = r#"# Kea settings: one `key = val
 # confirm_ctrl_c = false
 # composer_suggestions = true
 # composer_action_prefix = ::
+# check_for_updates = true
+#   On supported Windows builds, check GitHub Releases once at startup.
+#   Set false to keep startup fully offline; manual checks remain available.
 #   Set false to keep the decorative composer bird still while typing.
 "#;
 
