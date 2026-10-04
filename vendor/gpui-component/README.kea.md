@@ -11,6 +11,8 @@ Kea carries these local changes:
   previous/next navigation may scroll in either direction after manual scrolling.
 - `src/input/state.rs`: mouse-down focuses an input before placing its caret, so
   retained Settings fields receive typed text after a direct click.
+- `src/input/element.rs`: cursor tracking waits for a positive horizontal text
+  viewport instead of scrolling values out of view during zero-width layout.
 - `src/window_border.rs`: resize hit-testing uses the current viewport and
   ignores tiled edges, rather than using maximized/fullscreen restore bounds.
 
