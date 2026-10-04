@@ -56,6 +56,16 @@ fn rejects_large_frames_before_allocation() {
 }
 
 #[test]
+fn rejects_frame_just_over_event_limit_without_truncation() {
+    let mut bytes = Vec::new();
+    write_header(&mut bytes, Size::new(80, 24).unwrap()).unwrap();
+    bytes.extend_from_slice(&((MAX_OUTPUT + 10) as u32).to_le_bytes());
+
+    let loaded = read_from(bytes.as_slice());
+    assert!(loaded.is_err());
+}
+
+#[test]
 fn checksum_matches_standard_vector() {
     assert_eq!(checksum(b"123456789"), 0xcbf43926);
 }
@@ -93,6 +103,48 @@ fn v2_submission_round_trips_without_rewriting_output_and_reads_v1() {
     assert_eq!(
         read_from(bytes.as_slice()).unwrap().recording.events(),
         old.events()
+    );
+}
+
+#[test]
+fn maximum_submission_body_round_trips_in_v2_and_v3() {
+    let event = Event {
+        at: 1,
+        kind: Kind::Submitted {
+            id: 9,
+            context: "c".repeat(128),
+            input: "i".repeat(64 * 1024),
+        },
+    };
+
+    for version in [2, 3] {
+        let mut bytes = Vec::new();
+        if version == 2 {
+            write_header(&mut bytes, Size::new(80, 24).unwrap()).unwrap();
+        } else {
+            write_retained_header(&mut bytes, Size::new(80, 24).unwrap(), 1, 1).unwrap();
+        }
+        write_event(&mut bytes, &event).unwrap();
+
+        let loaded = read_from(bytes.as_slice()).unwrap();
+        assert_eq!(loaded.recording.events(), std::slice::from_ref(&event));
+        assert!(!loaded.truncated_tail);
+    }
+}
+
+#[test]
+fn maximum_output_frame_still_round_trips() {
+    let event = Event {
+        at: 1,
+        kind: Kind::Output(vec![b'x'; MAX_OUTPUT]),
+    };
+    let mut bytes = Vec::new();
+    write_header(&mut bytes, Size::new(80, 24).unwrap()).unwrap();
+    write_event(&mut bytes, &event).unwrap();
+
+    assert_eq!(
+        read_from(bytes.as_slice()).unwrap().recording.events(),
+        &[event]
     );
 }
 

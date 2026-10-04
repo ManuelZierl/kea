@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "frozen-visible-drag-extent",
+  "title": "Local dragging must use the visible clipped terminal extent",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": {
+    "include": ["crates/kea-app/src/app/pointer.rs"],
+    "exclude": [],
+    "require_files": []
+  },
+  "code": {"file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"]},
+  "patterns": {},
+  "diagnostics": {
+    "hidden-snapshot-edge": {
+      "kind": "violation",
+      "message": "A frozen snapshot keeps its old grid size after shrinking the canvas. Its unbounded grid height is not the visible drag/autoscroll edge.",
+      "help": "Use terminal_visible_extent so pointer endpoints and edge scrolling agree with clipped painting, without reflowing the frozen grid."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "tests_file": "tests.json"
+}

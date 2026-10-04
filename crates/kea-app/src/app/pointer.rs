@@ -1,5 +1,6 @@
 use super::rendering::{
     terminal_font_metrics, terminal_point, terminal_scroll_lines, terminal_scroll_units,
+    terminal_visible_extent,
 };
 use super::*;
 use anyhow::Result;
@@ -302,7 +303,9 @@ impl KeaView {
         let lines = selection::edge_scroll_lines(
             gesture.owner,
             f32::from(window.mouse_position().y - bounds.origin.y),
-            f32::from(metrics.line_height) * f32::from(self.session.terminal_size().rows),
+            f32::from(
+                terminal_visible_extent(bounds, &metrics, self.session.terminal_size()).height,
+            ),
             f32::from(metrics.line_height),
         );
         if lines == 0 {

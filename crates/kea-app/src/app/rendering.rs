@@ -1009,6 +1009,25 @@ pub(super) fn playback_track_bounds(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     )
 }
 
+/// Frozen snapshots keep their original grid. Interaction must use the part
+/// actually painted in the canvas, not cropped cells or blank enlarged space.
+pub(super) fn terminal_visible_extent(
+    bounds: Bounds<Pixels>,
+    metrics: &TerminalFontMetrics,
+    terminal_size: kea_core::Size,
+) -> gpui::Size<Pixels> {
+    size(
+        bounds
+            .size
+            .width
+            .min(metrics.cell_width * f32::from(terminal_size.columns)),
+        bounds
+            .size
+            .height
+            .min(metrics.line_height * f32::from(terminal_size.rows)),
+    )
+}
+
 pub(super) fn terminal_point(
     position: Point<Pixels>,
     bounds: Option<Bounds<Pixels>>,
@@ -1021,6 +1040,13 @@ pub(super) fn terminal_point(
     if cell_width <= 0. || line_height <= 0. {
         return None;
     }
+    let visible = terminal_visible_extent(bounds, metrics, terminal_size);
+    if visible.width <= px(0.) || visible.height <= px(0.) {
+        return None;
+    }
+    // A partially painted final cell is still a valid endpoint.
+    let columns = (f32::from(visible.width) / cell_width).ceil() as usize;
+    let rows = (f32::from(visible.height) / line_height).ceil() as usize;
     let column = ((f32::from(position.x) - f32::from(bounds.origin.x)) / cell_width)
         .floor()
         .max(0.) as usize;
@@ -1028,8 +1054,8 @@ pub(super) fn terminal_point(
         .floor()
         .max(0.) as usize;
     Some(TerminalPoint {
-        row: row.min(usize::from(terminal_size.rows).saturating_sub(1)),
-        column: column.min(usize::from(terminal_size.columns).saturating_sub(1)),
+        row: row.min(rows.saturating_sub(1)),
+        column: column.min(columns.saturating_sub(1)),
     })
 }
 
@@ -1172,3 +1198,7 @@ fn paint_screen(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/rendering.rs"]
+mod tests;

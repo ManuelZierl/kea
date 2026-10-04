@@ -101,6 +101,43 @@ PY
   latest_line="$(clipboard)"
   [[ "$latest_line" =~ ^L[0-9]{4}$ ]] && ((10#${latest_line#L} > 250)) || { echo "Unexpected latest line: $latest_line"; exit 1; }
   [[ "$(wc -c < "$capture")" -eq 0 ]] || { echo 'Local navigation reached child'; exit 1; }
+  if [[ "$reporting" == on ]]; then
+    # A frozen grid intentionally retains its old size. Shrinking clips it;
+    # the new visible bottom, not the old bottom behind the composer, must
+    # remain the local drag's edge. The snapshot must not reflow to achieve it.
+    smoke_click "$((WIDTH-150))" 120
+    key Escape
+    xdotool keydown Control_L keydown Shift_L
+    xdotool mousemove --window "$window" 0 190
+    xdotool mousedown 1
+    xdotool mousemove --window "$window" 80 190
+    xdotool mouseup 1
+    xdotool keyup Shift_L keyup Control_L
+    xdotool windowsize --sync "$window" 1050 600
+    sleep .3
+    xdotool mousemove --window "$window" 0 300
+    xdotool mousedown 1
+    xdotool mousemove --window "$window" 80 420
+    xdotool key --delay 50 ctrl+c
+    sleep .1
+    frozen_before="$(clipboard)"
+    before_lines="$(printf '%s\n' "$frozen_before" | wc -l)"
+    for _ in $(seq 1 30); do
+      sleep .1
+      xdotool key --delay 50 ctrl+c
+      frozen_after="$(clipboard)"
+      after_lines="$(printf '%s\n' "$frozen_after" | wc -l)"
+      ((after_lines > before_lines + 3)) && break
+    done
+    xdotool mouseup 1
+    ((after_lines > before_lines + 3)) || { echo 'Frozen drag did not scroll at the clipped visible bottom'; exit 1; }
+    key ctrl+c
+    frozen_released="$(clipboard)"
+    sleep .3
+    key ctrl+c
+    assert_clipboard "$frozen_released"
+    [[ "$(wc -c < "$capture")" -eq 0 ]] || { echo 'Frozen resize/drag reached child'; exit 1; }
+  fi
   cleanup_app
 done
-echo 'Terminal edge autoscroll, release, held-wheel selection and history navigation passed.'
+echo 'Terminal edge autoscroll, release, held-wheel selection, history navigation and clipped frozen dragging passed.'

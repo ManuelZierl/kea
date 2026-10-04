@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "kea-alacritty"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "alacritty_terminal",
  "kea-core",
@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "kea-app"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "anyhow",
  "embed-resource",
@@ -3179,18 +3179,18 @@ dependencies = [
 
 [[package]]
 name = "kea-core"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 
 [[package]]
 name = "kea-document"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "kea-core",
 ]
 
 [[package]]
 name = "kea-pty"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "anyhow",
  "kea-core",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "kea-session"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "anyhow",
  "kea-alacritty",
