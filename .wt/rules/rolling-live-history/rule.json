@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "rolling-live-history",
+  "title": "Keep live history rolling at retention limits",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-session/src/session.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"] },
+  "patterns": {},
+  "diagnostics": {
+    "strict-live-retention": {
+      "kind": "violation",
+      "message": "Live recording must evict old events rather than permanently stop at its quota.",
+      "help": "Use append_retained and rebase presentation/replay indices for discarded events; strict append remains appropriate for imported files."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

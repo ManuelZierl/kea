@@ -14,6 +14,52 @@ fn temp_path(name: &str) -> PathBuf {
 }
 
 #[test]
+fn journal_quota_remains_bounded_when_memory_retention_rolls() {
+    let path = temp_path("quota");
+    let size = Size::new(20, 2).unwrap();
+    let mut recording = Recording::new(size).unwrap();
+    for at in 0..MAX_EVENTS {
+        recording.append(at as u64, Kind::Resize(size)).unwrap();
+    }
+    {
+        let mut journal = Journal::create_from_recording(&path, &recording).unwrap();
+        recording
+            .append_retained(MAX_EVENTS as u64, Kind::Output(b"new".to_vec()))
+            .unwrap();
+        assert!(recording.discarded_events() > 0);
+        assert!(journal.append(recording.events().last().unwrap()).is_err());
+    }
+    let loaded = kea_core::read_from(File::open(&path).unwrap()).unwrap();
+    assert_eq!(loaded.recording.events().len(), MAX_EVENTS);
+    assert!(!loaded.truncated_tail);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn saving_and_closing_flushes_pending_output_groups() {
+    let path = temp_path("pending");
+    let size = Size::new(20, 2).unwrap();
+    {
+        let mut session =
+            crate::session::Session::from_recording(Recording::new(size).unwrap()).unwrap();
+        session.pending_output = Some(crate::observation::PendingOutput::for_test(1, b"before"));
+        session.start_persistence(&path).unwrap();
+        session.pending_output = Some(crate::observation::PendingOutput::for_test(2, b"after"));
+    }
+    let loaded = kea_core::read_from(File::open(&path).unwrap()).unwrap();
+    assert_eq!(loaded.recording.events().len(), 2);
+    assert_eq!(
+        loaded.recording.events()[0].kind,
+        Kind::Output(b"before".to_vec())
+    );
+    assert_eq!(
+        loaded.recording.events()[1].kind,
+        Kind::Output(b"after".to_vec())
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn seeded_journal_contains_history_that_predates_saving() {
     let path = temp_path("seeded");
     let mut recording = Recording::new(Size::new(80, 24).unwrap()).unwrap();

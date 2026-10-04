@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "vertical-only-delegation-loses-shift-wheel",
+      "files": [{
+        "path": "crates/kea-app/src/app/rendering.rs",
+        "content": "fn terminal_scroll_lines(delta: ScrollDelta, line_height: Pixels, remainder: &mut f32) -> i32 { terminal_scroll_units(delta, line_height, remainder, MAX_SCROLL_LINES_PER_EVENT) }\n"
+      }],
+      "expect": [{"path": "crates/kea-app/src/app/rendering.rs", "code": "shift-axis-lost", "kind": "violation"}]
+    },
+    {
+      "name": "local-policy-normalizes-axis",
+      "files": [{
+        "path": "crates/kea-app/src/app/rendering.rs",
+        "content": "fn terminal_scroll_lines(x: f32, y: f32, shift: bool, remainder: &mut f32) -> i32 { accumulate_wheel_delta(local_wheel_axis(x, y, shift), remainder, MAX_SCROLL_LINES_PER_EVENT) }\n"
+      }],
+      "expect": []
+    },
+    {
+      "name": "child-reporting-retains-vertical-only-accumulation",
+      "files": [{
+        "path": "crates/kea-app/src/app/rendering.rs",
+        "content": "fn child_wheel(delta: ScrollDelta, line_height: Pixels, remainder: &mut f32) -> i32 { terminal_scroll_units(delta, line_height, remainder, MAX_MOUSE_WHEEL_REPORTS_PER_EVENT) }\n"
+      }],
+      "expect": []
+    }
+  ]
+}

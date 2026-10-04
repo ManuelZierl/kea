@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "selection::edge_scroll_lines($OWNER, $Y, f32::from($METRICS.line_height) * f32::from($SESSION.terminal_size().rows), $LINE_HEIGHT)") {
+    emit(m.span, "hidden-snapshot-edge");
+}

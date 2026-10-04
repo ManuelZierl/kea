@@ -6,6 +6,30 @@ use crate::{
 use kea_core::{Kind, Projection};
 use kea_pty::{Message, Pty};
 
+// Group short PTY reads into bounded replay frames, without delaying live
+// rendering, metadata observation, or terminal protocol replies.
+const OUTPUT_GROUP_MICROS: u64 = 50_000;
+const OUTPUT_GROUP_BYTES: usize = 64 * 1024;
+
+pub(crate) struct PendingOutput {
+    first_at: u64,
+    at: u64,
+    raw: Vec<u8>,
+    visible: Vec<u8>,
+}
+
+#[cfg(test)]
+impl PendingOutput {
+    pub(crate) fn for_test(at: u64, bytes: &[u8]) -> Self {
+        Self {
+            first_at: at,
+            at,
+            raw: bytes.to_vec(),
+            visible: bytes.to_vec(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Observed {
     Output { at: u64, bytes: Vec<u8> },
@@ -30,12 +54,34 @@ impl Session {
             return false;
         }
         self.live.output(&visible);
-        if self.record_at(at, Kind::Output(raw.clone())) {
-            self.presentation.push(PresentationEvent::Output(visible));
+        if self.pending_output.as_ref().is_some_and(|pending| {
+            at.saturating_sub(pending.first_at) >= OUTPUT_GROUP_MICROS
+                || pending.raw.len() + raw.len() > OUTPUT_GROUP_BYTES
+                || pending.visible.len() + visible.len() > OUTPUT_GROUP_BYTES
+        }) {
+            self.flush_output();
         }
+        let pending = self.pending_output.get_or_insert_with(|| PendingOutput {
+            first_at: at,
+            at,
+            raw: Vec::new(),
+            visible: Vec::new(),
+        });
+        pending.at = at;
+        pending.raw.extend_from_slice(&raw);
+        pending.visible.extend_from_slice(&visible);
         observed.push(Observed::Output { at, bytes: raw });
         self.drain_live_replies();
         true
+    }
+
+    pub(crate) fn flush_output(&mut self) {
+        if let Some(pending) = self.pending_output.take() {
+            if self.record_at(pending.at, Kind::Output(pending.raw)) {
+                self.presentation
+                    .push(PresentationEvent::Output(pending.visible));
+            }
+        }
     }
 
     fn accept_visible(&mut self, bytes: Vec<u8>) -> bool {
@@ -105,6 +151,13 @@ impl Session {
                 }
                 None => break,
             }
+        }
+
+        if self.pending_output.as_ref().is_some_and(|pending| {
+            self.elapsed_micros().saturating_sub(pending.first_at) >= OUTPUT_GROUP_MICROS
+        }) {
+            self.flush_output();
+            result.changed = true;
         }
 
         if let Some(pty) = &mut self.pty {

@@ -100,7 +100,12 @@ impl EntityInputHandler for KeaView {
             // A committed text event is child input, never a local selection
             // command. End local interaction before attempting delivery.
             self.session.clear_terminal_selection();
-            let result = self.session.send(text.as_bytes().to_vec());
+            let bytes = text.as_bytes().to_vec();
+            if kea_app::terminal::interrupt::is_interrupt_bytes(&bytes) {
+                self.request_interrupt(bytes, window, cx);
+                return;
+            }
+            let result = self.session.send(bytes);
             if result.is_ok() {
                 self.session.scroll_bottom();
                 self.session.clear_terminal_selection();

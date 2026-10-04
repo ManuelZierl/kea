@@ -97,7 +97,28 @@ Therefore:
 - with no Kea selection, selection-related keys continue to the child; and
 - copying a child-owned semantic selection remains the child's responsibility.
 
+Child-owned scrolling and Kea scrollback are different. An alternate-screen TUI
+usually redraws cells without adding scrollback. A Shift-owned local drag and
+its edge autoscroll never send synthetic wheel input to that child. Forwarding
+ordinary wheel input can redraw/invalidate a local range; it cannot extend that
+range into off-screen application data. Kea does not stitch screen snapshots by
+matching text: repeated rows, fixed headers, reflow and concurrent changes make
+such reconstruction ambiguous. Selecting beyond the TUI's visible screen needs
+the application's own selection/export or an explicit cooperating integration.
+
 ## 3. Mouse routing
+
+Holding Ctrl+Shift while beginning a left drag freezes the currently displayed
+grid and selects within that immutable view, regardless of mouse reporting or
+the Shift-selection setting. Live output, recording and protocol replies continue
+against the live engine. The frozen grid is a bounded screen copy, not a replay
+checkpoint; resizing clips the view instead of reflowing it. Drag endpoints and
+edge autoscroll use the visible clipped canvas, not hidden snapshot rows/columns;
+enlarging the canvas does not create selectable snapshot content. The header identifies
+the frozen view separately from History. Return live drops it and restores normal
+input; seeking history leaves the frozen view for the selected historical frame.
+No terminal keyboard, paste or pointer input is sent to the child until Return
+live. Ctrl+Shift hover and the complete press/motion/release gesture remain local.
 
 ### 3.1 Child mouse reporting off
 
@@ -113,6 +134,20 @@ selection:
 
 Alt changes the selection shape only when a range is created by dragging. An
 Alt+click without movement follows the ordinary local click rule.
+
+For a local drag, holding the pointer in the first/last terminal row or beyond
+its vertical edge scrolls retained output and extends the range while the
+pointer stays still. Moving further beyond the edge increases speed, within a
+bounded limit. Release stops scrolling, including release over another Kea
+surface. Focus loss, a tab switch, changed canvas geometry, or selection
+invalidation cancels the drag; a plain held click does not start autoscroll.
+Local wheel scrolling during a held drag also updates its endpoint immediately.
+Shift+wheel accepts either scroll axis locally because GPUI converts vertical
+wheel input to horizontal deltas on some platforms without preserving its
+original axis. Ordinary horizontal input is not converted to local vertical
+scrolling, and child wheel reporting is unchanged.
+The header provides **Oldest** (oldest retained output), page-up/page-down, and
+Return to bottom controls without sending child input or clearing a valid range.
 
 ### 3.2 Child mouse reporting on
 

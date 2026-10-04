@@ -5,6 +5,36 @@ fn point(column: usize) -> TerminalPoint {
 }
 
 #[test]
+fn edge_autoscroll_is_local_directional_and_bounded() {
+    for owner in [MouseOwner::LocalSimple, MouseOwner::LocalBlock] {
+        assert_eq!(edge_scroll_lines(owner, 0., 100., 10.), 1);
+        assert_eq!(edge_scroll_lines(owner, 9., 100., 10.), 1);
+        assert_eq!(edge_scroll_lines(owner, 10., 100., 10.), 0);
+        assert_eq!(edge_scroll_lines(owner, 89., 100., 10.), 0);
+        assert_eq!(edge_scroll_lines(owner, 90., 100., 10.), -1);
+        assert_eq!(edge_scroll_lines(owner, -20., 100., 10.), 3);
+        assert_eq!(edge_scroll_lines(owner, 120., 100., 10.), -3);
+        assert_eq!(edge_scroll_lines(owner, -1000., 100., 10.), 8);
+        assert_eq!(edge_scroll_lines(owner, 1000., 100., 10.), -8);
+    }
+    for y in [-1000., 0., 50., 100., 1000.] {
+        assert_eq!(edge_scroll_lines(MouseOwner::Forward, y, 100., 10.), 0);
+    }
+    for (y, height, line_height) in [
+        (0., 10., 10.),
+        (0., 100., 0.),
+        (f32::NAN, 100., 10.),
+        (0., f32::INFINITY, 10.),
+        (0., 100., f32::NAN),
+    ] {
+        assert_eq!(
+            edge_scroll_lines(MouseOwner::LocalSimple, y, height, line_height),
+            0
+        );
+    }
+}
+
+#[test]
 fn ownership_and_drag_phase_are_latched_at_press() {
     assert_eq!(
         mouse_owner(false, false, false, false, true),

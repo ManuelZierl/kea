@@ -788,6 +788,12 @@ impl InputState {
         SharedString::new(self.text.to_string())
     }
 
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn scroll_offset_for_test(&self) -> Point<Pixels> {
+        self.scroll_handle.offset()
+    }
+
     /// Return the value without mask.
     pub fn unmask_value(&self) -> SharedString {
         self.mask_pattern.unmask(&self.text.to_string()).into()

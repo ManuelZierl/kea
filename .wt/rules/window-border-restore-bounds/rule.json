@@ -1,0 +1,28 @@
+{
+  "code": {
+    "capabilities": ["ast.v1"],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "restore-bounds-hit-test": {
+      "help": "Use the current surface viewport for interactive hit-testing; restore bounds describe the saved windowed size.",
+      "kind": "violation",
+      "message": "Do not use window restore bounds for current window-border hit-testing."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "execution": "file",
+  "id": "window-border-restore-bounds",
+  "mode": "enforced",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": ["vendor/gpui-component/src/window_border.rs"],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "Do not use restore bounds for border hit-testing"
+}

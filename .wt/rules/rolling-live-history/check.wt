@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "self.recording.append($AT, $KIND)") {
+    emit(m.span, "strict-live-retention");
+}

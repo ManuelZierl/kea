@@ -16,6 +16,10 @@ Kea's launch directory; Kea never changes its process-wide cwd or guesses a
 remote directory. The initial CLI command and --record path apply only to the
 initial tab. A new terminal does not repeat a command, SSH login or recording.
 
+Initial and subsequent local tabs use the same shell-based labels: Shell,
+PowerShell, or Terminal, followed by a stable tab number. The title bar shows
+the running Kea version.
+
 From composer/chrome, **Ctrl+Tab / Ctrl+Shift+Tab** switch terminals,
 **Ctrl+Shift+W** closes one, and **Ctrl+Shift+PageUp / PageDown** reorder it.
 Tabs also support clicking, close buttons and drag reordering. Shortcuts are

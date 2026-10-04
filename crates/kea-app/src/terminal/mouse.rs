@@ -33,6 +33,19 @@ pub fn accumulate_wheel_delta(delta: f32, remainder: &mut f32, maximum: i32) -> 
     emitted
 }
 
+/// Shift is a terminal-local scrollback override, not horizontal scrolling.
+/// GPUI maps Shift+vertical wheel to the x axis on several platforms. It does
+/// not retain the original axis, so accept either axis for this explicit local
+/// gesture, preferring y when both are present. Unshifted horizontal input is
+/// not silently turned into vertical scrolling.
+pub fn local_wheel_axis(x: f32, y: f32, shift: bool) -> f32 {
+    if shift && y == 0. {
+        x
+    } else {
+        y
+    }
+}
+
 pub fn encode_wheel(
     encoding: MouseEncoding,
     direction: WheelDirection,

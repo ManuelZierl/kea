@@ -120,7 +120,19 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - Drag/motion is forwarded only for the negotiated DECSET 1002/1003 modes.
 - **Shift+drag** selects locally by default. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
 - **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
-- A local selection/caret owns Copy, Esc and navigation/extension keys. Other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
+- **Ctrl+Shift+drag** freezes the displayed grid for stable selection during busy output, even when the Shift override is disabled. The child and recording continue. **Return live** (F9) restores live viewing and input; the frozen view itself cannot send input.
+- A local selection/caret owns Copy, Esc and navigation/extension keys. In the live view, other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
+
+For long shell output, hold a local drag at or beyond the terminal's upper/lower
+edge to scroll and extend the selection without repeatedly moving the pointer.
+Release stops it. **Oldest** and the page arrows in the terminal header navigate
+retained output quickly; scrollback remains bounded to 10,000 visual lines.
+Once a local selection exists, Shift+PageUp/PageDown also extends by pages.
+
+A full-screen TUI's internal history is not Kea scrollback. Shift-selection
+stays local, but Kea cannot reliably join screen redraws into one off-screen
+selection. Use the TUI's own selection/export for that case; local edge dragging
+does not send synthetic scroll input to the child.
 
 Valid selections survive ordinary scrolling output. If selected text changes or
 is discarded, Kea shows a recovery caret instead of silently turning the next
@@ -178,16 +190,17 @@ Default saved-session locations:
 `--record NEW.kea` remains available when an explicit create-new path is desired.
 
 The persistence status distinguishes **Temporary**, **Saving**, and **Saving
-stopped**. A **History stopped** warning separately identifies exhausted retained
-history: the PTY may continue, but replay and saved output are incomplete beyond
-that point. Recordings are unencrypted and bounded; persistence failure never
+stopped**. An **Earlier history trimmed** notice separately identifies evicted
+history: the PTY and recent capture continue, but retained replay lacks the earlier
+prefix. An already-running disk recording keeps its own prefix and quota.
+Recordings are unencrypted and bounded; persistence failure never
 stops the live PTY.
 
 See [session persistence](session-persistence.md).
 
 ## History and replay
 
-Raw terminal output, resize, lifecycle and separate authored-submission metadata form the canonical v2 session history. Optional blocks are observations on top. Existing v1 recordings remain readable; older Kea versions cannot read v2. See the [recording format](recording-format.md).
+Raw terminal output, resize, lifecycle and separate authored-submission metadata form canonical session history. Complete recordings use v2; trimmed suffixes use v3 to identify missing earlier history. Existing v1/v2 recordings remain readable; older Kea versions cannot read v3. Optional blocks are observations on top. See the [recording format](recording-format.md).
 
 History uses a separate silent emulator while the live process continues receiving output. A historical view cannot send input or mutate process state. Returning Live changes only the view; it never rolls the process back.
 
@@ -324,7 +337,7 @@ desktop smoke test pass. The tagged commit must be reachable from `main`.
 
 ## Limits and privacy
 
-The live canonical history is bounded. Recording currently stops retaining new events after 32 MiB of accounted event data/overhead or 100,000 events; the live PTY can continue. Optional block retention has separate bounds (64 KiB command metadata, 4 MiB output per block, 64 MiB aggregate, 10,000 blocks).
+The live canonical history is bounded to 32 MiB of accounted event data/overhead or 100,000 events. Older events are automatically trimmed while new capture continues. Nearby output is grouped into 50 ms / 64 KiB frames; raw bytes stay exact. Trimmed replay is explicitly partial because earlier terminal/parser state is unavailable. Each saved file has an independent quota and visibly stops when full; Save session can start a new file. Optional block retention has separate bounds (64 KiB command metadata, 4 MiB output per block, 64 MiB aggregate, 10,000 blocks).
 
 Saved `.kea` files are create-only and **unencrypted**. Terminal output and submitted command metadata may contain passwords, tokens or private documents. Kea does not add a raw keystroke log.
 

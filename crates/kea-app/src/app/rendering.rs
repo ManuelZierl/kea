@@ -28,11 +28,12 @@ impl Render for KeaView {
             search.set_target(editor, enabled, cx);
         });
         let duration = self.session.recording().duration();
+        let start = self.session.recording().start_time();
         let position = self.session.position();
-        let fraction = if duration == 0 {
+        let fraction = if duration == start {
             0.
         } else {
-            position as f32 / duration as f32
+            position.saturating_sub(start) as f32 / (duration - start) as f32
         };
         let screen = self.session.screen();
         let terminal_display_offset = screen.display_offset;
@@ -110,6 +111,41 @@ impl Render for KeaView {
                                 ElementInputHandler::new(bounds, entity.clone()),
                                 cx,
                             );
+                            // Div's move listener only runs inside its hitbox.
+                            // Keep an already-owned local drag alive over chrome
+                            // and receive its release before another surface.
+                            let drag_entity = entity.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseMoveEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture {
+                                        drag_entity.update(cx, |this, cx| {
+                                            if this.terminal_gesture.is_some_and(|gesture| {
+                                                gesture.owner != selection::MouseOwner::Forward
+                                            }) {
+                                                this.terminal_mouse_move(event, window, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        });
+                                    }
+                                },
+                            );
+                            let release_entity = entity.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseUpEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture
+                                        && event.button == MouseButton::Left
+                                    {
+                                        release_entity.update(cx, |this, cx| {
+                                            if this.terminal_gesture.is_some_and(|gesture| {
+                                                gesture.owner != selection::MouseOwner::Forward
+                                            }) {
+                                                this.terminal_mouse_up(event, window, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        });
+                                    }
+                                },
+                            );
                             paint_screen(&screen, bounds, &paint_metrics, window, cx);
                         }
                     },
@@ -117,7 +153,9 @@ impl Render for KeaView {
                 .size_full(),
             );
 
-        let terminal_mode = if self.session.is_history() {
+        let terminal_mode = if self.session.is_frozen() {
+            "Frozen selection"
+        } else if self.session.is_history() {
             "History"
         } else {
             "Live"
@@ -131,6 +169,8 @@ impl Render for KeaView {
             "Selection changed · local caret retained"
         } else if terminal_local_active {
             "Local selection · arrows move · Shift+arrows extend · Esc clears"
+        } else if self.session.is_frozen() {
+            "Frozen · live output continues · Return live to interact"
         } else if self.session.is_history() {
             "History · select/copy only"
         } else if terminal_mouse_reporting && self.settings.shift_mouse_selects_locally {
@@ -234,6 +274,41 @@ impl Render for KeaView {
                     .disabled(!self.session.input_allowed())
                     .on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx))),
             );
+        if terminal_history_size > 0 {
+            terminal_header = terminal_header
+                .child(
+                    Button::new("terminal-oldest")
+                        .icon(IconName::ArrowUp)
+                        .when(!compact_chrome, |button| button.label("Oldest"))
+                        .tooltip("Jump to oldest retained output (up to 10,000 lines)")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == terminal_history_size)
+                        .on_click(cx.listener(|this, _, _, cx| this.scroll_terminal_oldest(cx))),
+                )
+                .child(
+                    Button::new("terminal-page-up")
+                        .icon(IconName::ChevronUp)
+                        .tooltip("Scroll terminal output up one page")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == terminal_history_size)
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.scroll_terminal_page(true, cx)),
+                        ),
+                )
+                .child(
+                    Button::new("terminal-page-down")
+                        .icon(IconName::ChevronDown)
+                        .tooltip("Scroll terminal output down one page")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == 0)
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.scroll_terminal_page(false, cx)),
+                        ),
+                );
+        }
         if terminal_display_offset > 0 {
             terminal_header = terminal_header.child(
                 Button::new("terminal-bottom")
@@ -357,7 +432,9 @@ impl Render for KeaView {
             });
         let status_is_warning = status_warning.is_some();
         let status = status_warning.or_else(|| self.notice.clone()).unwrap_or_else(|| {
-            if self.session.is_history() {
+            if self.session.is_frozen() {
+                "Frozen terminal view · Return live to interact".into()
+            } else if self.session.is_history() {
                 if compact_chrome {
                     return "Return live".into();
                 }
@@ -384,7 +461,7 @@ impl Render for KeaView {
             (Some(path), false) => format!("Shell directory (last reported): {path}"),
             _ => "Shell directory: not reported".into(),
         };
-        let persistence_status = if self.session.persistence_active() {
+        let mut persistence_status = if self.session.persistence_active() {
             let name = self
                 .session
                 .persistence_path()
@@ -397,7 +474,12 @@ impl Render for KeaView {
         } else {
             "Temporary".into()
         };
-        let shell_state = if self.session.is_history() {
+        if self.session.recording().discarded_events() > 0 {
+            persistence_status.push_str(" · Earlier history trimmed; replay is partial");
+        }
+        let shell_state = if self.session.is_frozen() {
+            "Frozen view"
+        } else if self.session.is_history() {
             "History"
         } else if self.input_context.ready() {
             "Ready"
@@ -635,6 +717,8 @@ impl Render for KeaView {
                     self.control("live", "Return live", Action::GoLive, cx)
                         .into_any_element()
                 });
+        } else if self.session.is_frozen() {
+            toolbar = toolbar.child(self.control("live", "Return live", Action::GoLive, cx));
         } else if self.session.recording().events().len() > 1 {
             toolbar = toolbar.child(if compact_chrome {
                 Button::new("history")
@@ -925,6 +1009,25 @@ pub(super) fn playback_track_bounds(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     )
 }
 
+/// Frozen snapshots keep their original grid. Interaction must use the part
+/// actually painted in the canvas, not cropped cells or blank enlarged space.
+pub(super) fn terminal_visible_extent(
+    bounds: Bounds<Pixels>,
+    metrics: &TerminalFontMetrics,
+    terminal_size: kea_core::Size,
+) -> gpui::Size<Pixels> {
+    size(
+        bounds
+            .size
+            .width
+            .min(metrics.cell_width * f32::from(terminal_size.columns)),
+        bounds
+            .size
+            .height
+            .min(metrics.line_height * f32::from(terminal_size.rows)),
+    )
+}
+
 pub(super) fn terminal_point(
     position: Point<Pixels>,
     bounds: Option<Bounds<Pixels>>,
@@ -937,6 +1040,13 @@ pub(super) fn terminal_point(
     if cell_width <= 0. || line_height <= 0. {
         return None;
     }
+    let visible = terminal_visible_extent(bounds, metrics, terminal_size);
+    if visible.width <= px(0.) || visible.height <= px(0.) {
+        return None;
+    }
+    // A partially painted final cell is still a valid endpoint.
+    let columns = (f32::from(visible.width) / cell_width).ceil() as usize;
+    let rows = (f32::from(visible.height) / line_height).ceil() as usize;
     let column = ((f32::from(position.x) - f32::from(bounds.origin.x)) / cell_width)
         .floor()
         .max(0.) as usize;
@@ -944,17 +1054,30 @@ pub(super) fn terminal_point(
         .floor()
         .max(0.) as usize;
     Some(TerminalPoint {
-        row: row.min(usize::from(terminal_size.rows).saturating_sub(1)),
-        column: column.min(usize::from(terminal_size.columns).saturating_sub(1)),
+        row: row.min(rows.saturating_sub(1)),
+        column: column.min(columns.saturating_sub(1)),
     })
 }
 
 pub(super) fn terminal_scroll_lines(
     delta: ScrollDelta,
     line_height: Pixels,
+    shift: bool,
     remainder: &mut f32,
 ) -> i32 {
-    terminal_scroll_units(delta, line_height, remainder, MAX_SCROLL_LINES_PER_EVENT)
+    let line_height = f32::from(line_height).max(1.);
+    let (x, y) = match delta {
+        ScrollDelta::Pixels(delta) => (
+            f32::from(delta.x) / line_height,
+            f32::from(delta.y) / line_height,
+        ),
+        ScrollDelta::Lines(delta) => (delta.x, delta.y),
+    };
+    terminal_mouse::accumulate_wheel_delta(
+        terminal_mouse::local_wheel_axis(x, y, shift),
+        remainder,
+        MAX_SCROLL_LINES_PER_EVENT,
+    )
 }
 
 pub(super) fn terminal_scroll_units(
@@ -1075,3 +1198,7 @@ fn paint_screen(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/rendering.rs"]
+mod tests;

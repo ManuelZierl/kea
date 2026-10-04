@@ -69,11 +69,7 @@ impl KeaRoot {
             close_allowed: false,
             held_keys: None,
         };
-        let title = if view.read(cx).session.is_running() {
-            "Terminal"
-        } else {
-            "Recording"
-        };
+        let title = terminal_title(view.read(cx).shell, view.read(cx).session.is_running());
         root.attach(view, title.into(), initial_focus, window, cx);
         root
     }
@@ -157,6 +153,7 @@ impl KeaRoot {
             view.dismiss_completion();
             view.terminal_gesture = None;
             view.terminal_gesture_bounds = None;
+            view.terminal_selection_scroll_at = None;
             cx.notify();
             held
         }));
@@ -257,11 +254,7 @@ impl KeaRoot {
                 cx,
             )
         });
-        let label = match shell {
-            Some(ShellFlavor::PowerShell) => "PowerShell",
-            Some(ShellFlavor::Posix) => "Shell",
-            None => "Terminal",
-        };
+        let label = terminal_title(shell, true);
         self.attach(view, label.into(), focus, window, cx);
         self.notice = None;
         self.focus_selected(window, cx);
@@ -420,6 +413,8 @@ impl Render for KeaRoot {
             let context = view.input_context.id();
             let suffix = if !view.session.is_running() {
                 " · ended"
+            } else if view.session.is_frozen() {
+                " · frozen"
             } else if !view.session.input_allowed() {
                 " · history"
             } else {
@@ -501,7 +496,19 @@ impl Render for KeaRoot {
             .text_color(cx.theme().foreground)
             .child(
                 TitleBar::new()
-                    .child(div().font_weight(FontWeight::BOLD).child("Kea"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().font_weight(FontWeight::BOLD).child("Kea"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
+                            ),
+                    )
                     .on_close_window(
                         cx.listener(|this, _, window, cx| this.request_close_window(window, cx)),
                     ),
@@ -538,6 +545,15 @@ impl Render for KeaRoot {
             }))
             .child(body)
             .children(dialog_layer)
+    }
+}
+
+fn terminal_title(shell: Option<ShellFlavor>, running: bool) -> &'static str {
+    match (running, shell) {
+        (false, _) => "Recording",
+        (true, Some(ShellFlavor::PowerShell)) => "PowerShell",
+        (true, Some(ShellFlavor::Posix)) => "Shell",
+        (true, None) => "Terminal",
     }
 }
 

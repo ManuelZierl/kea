@@ -81,6 +81,12 @@ pub(crate) enum Presentation {
 }
 
 impl Presentation {
+    pub(crate) fn discard_prefix(&mut self, count: usize) {
+        if let Self::Filtered(events) = self {
+            events.drain(..count);
+        }
+    }
+
     pub(crate) fn push(&mut self, event: PresentationEvent) {
         if let Self::Filtered(events) = self {
             events.push(event);

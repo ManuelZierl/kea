@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "full-frozen-grid-hides-the-visible-bottom-edge",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn drag() { selection::edge_scroll_lines(gesture.owner, y, f32::from(metrics.line_height) * f32::from(self.session.terminal_size().rows), f32::from(metrics.line_height)); }\n"}],
+      "expect": [{"path": "crates/kea-app/src/app/pointer.rs", "code": "hidden-snapshot-edge", "kind": "violation"}]
+    },
+    {
+      "name": "clipped-visible-edge",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn drag() { selection::edge_scroll_lines(gesture.owner, y, f32::from(terminal_visible_extent(bounds, &metrics, self.session.terminal_size()).height), f32::from(metrics.line_height)); }\n"}],
+      "expect": []
+    },
+    {
+      "name": "grid-dimensions-remain-valid-for-other-uses",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn grid_height() { let height = f32::from(metrics.line_height) * f32::from(self.session.terminal_size().rows); }\n"}],
+      "expect": []
+    }
+  ]
+}

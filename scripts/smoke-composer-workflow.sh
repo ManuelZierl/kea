@@ -80,7 +80,7 @@ start_fixture() {
   window=''
   output="smoke-artifacts/composer-$1.bin"
   local log="smoke-artifacts/composer-$1.log"
-  ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py "$output" >"$log" 2>&1 & kea_pid=$!
+  ./target/debug/kea --direct -- python3 "${2:-scripts/terminal-fixture.py}" "$output" >"$log" 2>&1 & kea_pid=$!
   for _ in $(seq 1 100); do
     kill -0 "$kea_pid" || { cat "$log"; return 1; }
     window=$(xdotool search --onlyvisible --name '^Kea$' 2>/dev/null | tail -1 || true)
@@ -141,6 +141,18 @@ key ctrl+v
 assert_draft 'copy stays local'
 assert_bytes '030d'
 
+# Shift does not distinguish Ctrl-C in classic terminal encoding. It must pass
+# through the same confirmation path rather than leak ETX to the raw child.
+start_fixture interrupt-shift
+key ctrl+l ctrl+shift+c
+assert_bytes ''
+key Escape
+assert_bytes ''
+key ctrl+shift+c
+assert_bytes ''
+hold_enter
+assert_bytes '03'
+
 # Confirm before C has repeated, while C itself remains physically held. A
 # repeated key-down after confirmation must not leak text or arm another gate.
 start_fixture interrupt-trigger
@@ -152,6 +164,43 @@ sleep .2
 assert_bytes '03'
 key Return
 assert_bytes '030d'
+
+# Frozen selection must survive a busy mouse-reporting child even with the
+# ordinary Shift-local override disabled. No press/motion/release or typed input
+# may reach that child until Return live.
+printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
+start_fixture frozen scripts/busy-terminal-fixture.py
+xdotool keydown Control_L keydown Shift_L
+xdotool mousemove --window "$window" 20 172
+sleep .15
+xdotool mousedown 1
+sleep .3
+xdotool mousemove --window "$window" 170 172
+sleep .3
+xdotool mouseup 1
+xdotool keyup Shift_L keyup Control_L
+sleep .2
+key ctrl+c
+frozen=$(timeout 3s xclip -selection clipboard -t UTF8_STRING -o)
+[[ "$frozen" =~ FRAME-[0-9]{6} ]] || { printf 'No frozen frame selected: <%s>\n' "$frozen" >&2; exit 1; }
+tick=$(cat "${output%.bin}.tick")
+sleep .5
+key x ctrl+c
+[[ "$(timeout 3s xclip -selection clipboard -t UTF8_STRING -o)" == "$frozen" ]]
+[[ "$(cat "${output%.bin}.tick")" -gt "$tick" ]]
+assert_bytes ''
+# Go Live restores the established composer focus; switch back to the child.
+# Use the physical F9 code, as in smoke-linux.sh; xdotool's F9 keysym can
+# choose a higher-level XKB mapping instead of the terminal's F9 event.
+xdotool key --clearmodifiers 75
+sleep .2
+key ctrl+l x
+python3 - "$output" <<'PY'
+import sys
+from pathlib import Path
+assert b'x' in Path(sys.argv[1]).read_bytes(), "Return live did not restore child input"
+PY
+printf 'theme = dark\npost_submit_focus = editor\nconfirm_ctrl_c = true\n' > "$KEA_SETTINGS"
 
 # A confirmation key remains owned across a tab switch until physical release.
 # The other draft is harmless even if a regression accidentally submits it.
@@ -172,4 +221,4 @@ xdotool keyup Return
 sleep .2
 assert_draft 'printf untouched'
 assert_bytes '1b5b3230307e677561726465641b5b3230317e0d'
-echo 'Composer literal input, explicit previews, independent sections, held confirmation, protected Ctrl-C, held trigger, tab isolation, cancellation and local Copy passed.'
+echo 'Composer literal input, explicit previews, independent sections, protected Ctrl-C/Ctrl-Shift-C, held confirmation, frozen busy-terminal selection and recovery, tab isolation, cancellation and local Copy passed.'

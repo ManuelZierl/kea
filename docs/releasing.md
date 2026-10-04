@@ -68,6 +68,12 @@ font. It writes diagnostic output to the ignored `smoke-artifacts/` directory.
 Use the [manual checklist](manual-testing.md) for real keyboard, clipboard, IME,
 accessibility and shell/TUI acceptance on release platforms.
 
+With Openbox also installed, `bash scripts/smoke-maximized-clicks.sh` creates its
+own isolated X11 display and checks maximized Add terminal, Save session,
+Settings and shortcut Record/Save using real mouse input. `OPENBOX_BIN` and
+`OPENBOX_RC` can point to a locally extracted Openbox package. This supplements
+the main smoke test; it does not certify GNOME/Mutter or Wayland input/scaling.
+
 ## Tag and publish
 
 Update `[workspace.package].version` in `Cargo.toml` and refresh `Cargo.lock` with

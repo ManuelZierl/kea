@@ -231,10 +231,18 @@ clipboard-manager ownership after application exit varies by desktop.
    on the next Copy.
 4. In a disposable TUI, trigger a redraw or alternate-screen transition while
    locally selected. Check the same recovery behavior.
-5. Drag outside the terminal/window and release, then return the pointer. Check
-   for stuck dragging, unexpected child clicks, or selection that keeps growing
-   after release. Record edge autoscroll availability separately; do not assume
-   drag-past-edge autoscroll is implemented.
+5. Drag to the first/last terminal row and hold still: retained output should
+   autoscroll and extend the selection. Drag further past the edge for faster
+   scrolling. Release over chrome and outside the window, then return the
+   pointer. Check that scrolling stops, with no stuck drag or child clicks.
+   Also switch tabs, lose window focus and resize during a held drag; these
+   cancel it. Repeat with Alt block selection and Shift-local selection while
+   mouse reporting is on. Alternate-screen TUIs with no retained scrollback
+   cannot locally scroll into off-screen application data.
+6. Use Oldest and page-up/page-down in the terminal header on a long traceback.
+   Check reachability of the first retained line and preservation of an existing
+   selection. Retention is still bounded to 10,000 visual lines; Oldest does not
+   recover evicted output. Shift+PageUp extends a local range by pages.
 
 ## 09 — Mouse override and block selection on your desktop
 

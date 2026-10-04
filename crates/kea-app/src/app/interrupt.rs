@@ -3,7 +3,7 @@ use super::*;
 use gpui_component::ActiveTheme as _;
 use kea_app::terminal::{
     input,
-    interrupt::{InterruptGuard, KeyLatch},
+    interrupt::{is_interrupt_bytes, InterruptGuard, KeyLatch},
     selection::{self, LocalKey},
 };
 
@@ -24,11 +24,9 @@ impl InterruptState {
 }
 
 pub(super) fn is_ctrl_c(key: &Keystroke) -> bool {
-    key.key.eq_ignore_ascii_case("c")
-        && key.modifiers.control
-        && !key.modifiers.alt
-        && !key.modifiers.platform
-        && !key.modifiers.function
+    input::encode(key, false, false)
+        .as_deref()
+        .is_some_and(is_interrupt_bytes)
 }
 
 impl KeaView {
@@ -232,3 +230,7 @@ impl KeaView {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/interrupt.rs"]
+mod tests;

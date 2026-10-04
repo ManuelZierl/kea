@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "strict-live-append-stops-on-quota",
+      "files": [{ "path": "crates/kea-session/src/session.rs", "content": "fn record(&mut self, at: u64, kind: Kind) { if let Err(e) = self.recording.append(at, kind) { self.capture_stopped = true; } }" }],
+      "expect": [{ "path": "crates/kea-session/src/session.rs", "code": "strict-live-retention", "kind": "violation" }]
+    },
+    {
+      "name": "live-recording-evicts-old-events",
+      "files": [{ "path": "crates/kea-session/src/session.rs", "content": "fn record(&mut self, at: u64, kind: Kind) { let removed = self.recording.append_retained(at, kind)?; self.presentation.discard_prefix(removed); }" }],
+      "expect": []
+    },
+    {
+      "name": "strict-file-import-remains-valid",
+      "files": [{ "path": "crates/kea-core/src/format.rs", "content": "fn read(&mut self, at: u64, kind: Kind) { self.recording.append(at, kind)?; }" }],
+      "expect": []
+    }
+  ]
+}

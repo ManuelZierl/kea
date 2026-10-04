@@ -13,11 +13,14 @@ pub struct Session {
     pub(crate) presentation: Presentation,
     pub(crate) live: Engine,
     pub(crate) history: Option<(usize, Engine)>,
+    pub(crate) frozen: Option<Engine>,
     pub(crate) pty: Option<Pty>,
     pub(crate) journal: Option<Journal>,
     pub(crate) started: Instant,
     pub(crate) playing: Option<(Instant, u64)>,
     pub(crate) history_position: Option<u64>,
+    pub(crate) history_stale: bool,
+    pub(crate) pending_output: Option<crate::observation::PendingOutput>,
     pub(crate) hidden_echo: Option<EchoFilter>,
     pub(crate) capture_stopped: bool,
     pub(crate) persistence_stopped: bool,
@@ -36,11 +39,14 @@ impl Session {
             presentation: Presentation::Filtered(Vec::new()),
             live: Engine::new(size, true),
             history: None,
+            frozen: None,
             pty: Some(pty),
             journal,
             started,
             playing: None,
             history_position: None,
+            history_stale: false,
+            pending_output: None,
             hidden_echo: None,
             capture_stopped: false,
             persistence_stopped: false,
@@ -59,11 +65,14 @@ impl Session {
             presentation: Presentation::Canonical,
             live,
             history: Some((end, historical)),
+            frozen: None,
             pty: None,
             journal: None,
             started: Instant::now(),
             playing: None,
             history_position: Some(duration),
+            history_stale: false,
+            pending_output: None,
             hidden_echo: None,
             capture_stopped: false,
             persistence_stopped: false,
@@ -106,6 +115,10 @@ impl Session {
         self.history.is_some()
     }
 
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.is_some()
+    }
+
     pub fn is_playing(&self) -> bool {
         self.playing.is_some()
     }
@@ -115,7 +128,7 @@ impl Session {
     }
 
     pub fn input_allowed(&self) -> bool {
-        self.is_running() && !self.is_history()
+        self.is_running() && !self.is_history() && !self.is_frozen()
     }
 
     pub fn end(&self) -> usize {
@@ -132,7 +145,7 @@ impl Session {
             .events()
             .get(self.end().saturating_sub(1))
             .filter(|_| self.end() != 0)
-            .map_or(0, |e| e.at)
+            .map_or(self.recording.start_time(), |e| e.at)
     }
 
     pub fn screen(&self) -> Screen {
@@ -188,6 +201,10 @@ impl Session {
         self.displayed_engine().has_selection()
     }
 
+    pub fn terminal_selection_invalidated(&self) -> bool {
+        self.displayed_engine().selection_invalidated()
+    }
+
     pub fn terminal_local_selection_active(&self) -> bool {
         self.displayed_engine().local_selection_active()
     }
@@ -216,6 +233,14 @@ impl Session {
         self.displayed_engine().size()
     }
 
+    pub fn freeze_display(&mut self) {
+        if self.frozen.is_none() {
+            let frozen = self.displayed_engine().frozen_grid();
+            self.go_live();
+            self.frozen = Some(frozen);
+        }
+    }
+
     pub fn terminal_mouse_reporting(&self) -> bool {
         self.input_allowed() && self.live.mouse_reporting()
     }
@@ -235,12 +260,16 @@ impl Session {
     }
 
     fn displayed_engine(&self) -> &Engine {
-        self.history
+        self.frozen
             .as_ref()
-            .map_or(&self.live, |(_, engine)| engine)
+            .or_else(|| self.history.as_ref().map(|(_, engine)| engine))
+            .unwrap_or(&self.live)
     }
 
     fn displayed_engine_mut(&mut self) -> &mut Engine {
+        if let Some(frozen) = &mut self.frozen {
+            return frozen;
+        }
         self.history
             .as_mut()
             .map_or(&mut self.live, |(_, engine)| engine)
@@ -248,7 +277,7 @@ impl Session {
 
     pub fn send(&self, bytes: Vec<u8>) -> Result<()> {
         if !self.input_allowed() {
-            anyhow::bail!("History is read-only. Return to LIVE before sending input.");
+            anyhow::bail!("This view is read-only. Return to LIVE before sending input.");
         }
         self.pty.as_ref().context("terminal has ended")?.send(bytes)
     }
@@ -257,7 +286,7 @@ impl Session {
     /// terminal-driver echo. The program's actual output is unaffected.
     pub fn send_hidden(&mut self, bytes: Vec<u8>) -> Result<()> {
         if !self.input_allowed() {
-            anyhow::bail!("History is read-only. Return to LIVE before sending input.");
+            anyhow::bail!("This view is read-only. Return to LIVE before sending input.");
         }
         if self.hidden_echo.is_some() {
             anyhow::bail!("previous hidden terminal input has not been echoed yet");
@@ -316,12 +345,15 @@ impl Session {
     }
 
     pub fn go_live(&mut self) {
+        self.frozen = None;
         self.history = None;
+        self.history_stale = false;
         self.playing = None;
         self.history_position = None;
     }
 
     pub fn seek(&mut self, end: usize) -> Result<()> {
+        self.frozen = None;
         self.playing = None;
         self.seek_inner(end)?;
         self.history_position = Some(self.event_position(end));
@@ -333,7 +365,7 @@ impl Session {
             anyhow::bail!("seek outside recording");
         }
         if let Some((previous, engine)) = &mut self.history {
-            if end >= *previous {
+            if !self.history_stale && end >= *previous {
                 for index in *previous..end {
                     self.presentation.apply(&self.recording, index, engine)?;
                 }
@@ -342,6 +374,7 @@ impl Session {
             }
         }
         self.history = Some((end, self.historical_at(end)?));
+        self.history_stale = false;
         Ok(())
     }
 
@@ -366,8 +399,9 @@ impl Session {
     }
 
     pub fn seek_time(&mut self, at: u64) -> Result<()> {
+        self.frozen = None;
         self.playing = None;
-        let at = at.min(self.recording.duration());
+        let at = at.clamp(self.recording.start_time(), self.recording.duration());
         self.seek_inner(self.recording.end_at(at))?;
         self.history_position = Some(at);
         Ok(())
@@ -391,20 +425,33 @@ impl Session {
             .events()
             .get(end.saturating_sub(1))
             .filter(|_| end != 0)
-            .map_or(0, |event| event.at)
+            .map_or(self.recording.start_time(), |event| event.at)
     }
 
     pub(crate) fn record_at(&mut self, at: u64, kind: Kind) -> bool {
+        self.flush_output();
         if self.capture_stopped {
             return false;
         }
-        if let Err(error) = self.recording.append(at, kind) {
-            self.capture_stopped = true;
-            self.warning = Some(format!("HISTORY STOPPED: {error}. Live terminal continues; retained history is incomplete."));
-            if let Some(journal) = &mut self.journal {
-                journal.stop();
+        match self.recording.append_retained(at, kind) {
+            Ok(removed) if removed > 0 => {
+                self.presentation.discard_prefix(removed);
+                if let Some((end, _)) = &mut self.history {
+                    // Preserve the reader's displayed frame, but never reuse its
+                    // old index/state as a replay checkpoint after prefix loss.
+                    *end = end.saturating_sub(removed);
+                    self.history_stale = true;
+                }
+                self.playing = None;
+                self.warning = Some("Older history trimmed; recent output continues recording. Retained replay starts without earlier terminal state.".into());
             }
-            return false;
+            Ok(_) => {}
+            Err(error) => {
+                self.capture_stopped = true;
+                self.warning = Some(format!("HISTORY STOPPED: {error}. Live terminal continues; retained history is incomplete."));
+                self.stop_persistence();
+                return false;
+            }
         }
         if !self.persistence_stopped {
             if let (Some(journal), Some(event)) =
@@ -420,6 +467,13 @@ impl Session {
             }
         }
         true
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // A close can happen between the final PTY read and the batching timer.
+        self.flush_output();
     }
 }
 
