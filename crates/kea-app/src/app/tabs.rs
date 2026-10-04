@@ -157,6 +157,7 @@ impl KeaRoot {
             view.dismiss_completion();
             view.terminal_gesture = None;
             view.terminal_gesture_bounds = None;
+            view.terminal_selection_scroll_at = None;
             cx.notify();
             held
         }));

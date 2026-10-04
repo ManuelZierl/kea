@@ -122,6 +122,17 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
 - A local selection/caret owns Copy, Esc and navigation/extension keys. Other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
 
+For long shell output, hold a local drag at or beyond the terminal's upper/lower
+edge to scroll and extend the selection without repeatedly moving the pointer.
+Release stops it. **Oldest** and the page arrows in the terminal header navigate
+retained output quickly; scrollback remains bounded to 10,000 visual lines.
+Once a local selection exists, Shift+PageUp/PageDown also extends by pages.
+
+A full-screen TUI's internal history is not Kea scrollback. Shift-selection
+stays local, but Kea cannot reliably join screen redraws into one off-screen
+selection. Use the TUI's own selection/export for that case; local edge dragging
+does not send synthetic scroll input to the child.
+
 Valid selections survive ordinary scrolling output. If selected text changes or
 is discarded, Kea shows a recovery caret instead of silently turning the next
 Copy chord into child input. See [terminal text selection](terminal-text-selection.md).

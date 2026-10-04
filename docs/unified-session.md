@@ -132,6 +132,11 @@ PTY rows/columns are derived from the actual laid-out terminal canvas instead of
 
 The primary terminal screen retains up to 10,000 visual scrollback lines. Scrolling changes the emulator viewport without pausing the PTY or replay timeline. New output follows normally at the tail; while the reader is above the tail it stays there until **Return to bottom** or new terminal input explicitly returns it. Drag selection is viewport-aware, and selection copy never falls back to copying the whole screen.
 
+Hold a local drag at or beyond the terminal's upper/lower edge to autoscroll and
+extend through retained output. **Oldest** and page controls in the header make
+long traces easier to navigate without repeated wheel input. These controls do
+not scroll a TUI's internal document or recover evicted scrollback.
+
 Ordinary local selection and scrollback apply when the child has not requested mouse reporting. While reporting is active, vertical wheel input is forwarded with the negotiated legacy, UTF-8 or SGR encoding; Shift+wheel remains local scrollback. Primary-button gestures latch ownership at press. Shift+drag selects locally by default, including suppressing Shift-modified hover while the pointer is positioned; `shift_mouse_selects_locally = false` forwards that pointer input. Select text (header button or F4 outside terminal focus) provides explicit entry. Alt-drag creates a block selection when locally owned. Unreserved child motion follows DECSET 1002/1003 and current modifiers. Forwarded hover reports preserve local selection and reading position.
 
 Ordinary output preserves retained selections. If selected text changes or the

@@ -110,6 +110,41 @@ impl Render for KeaView {
                                 ElementInputHandler::new(bounds, entity.clone()),
                                 cx,
                             );
+                            // Div's move listener only runs inside its hitbox.
+                            // Keep an already-owned local drag alive over chrome
+                            // and receive its release before another surface.
+                            let drag_entity = entity.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseMoveEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture {
+                                        drag_entity.update(cx, |this, cx| {
+                                            if this.terminal_gesture.is_some_and(|gesture| {
+                                                gesture.owner != selection::MouseOwner::Forward
+                                            }) {
+                                                this.terminal_mouse_move(event, window, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        });
+                                    }
+                                },
+                            );
+                            let release_entity = entity.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseUpEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture
+                                        && event.button == MouseButton::Left
+                                    {
+                                        release_entity.update(cx, |this, cx| {
+                                            if this.terminal_gesture.is_some_and(|gesture| {
+                                                gesture.owner != selection::MouseOwner::Forward
+                                            }) {
+                                                this.terminal_mouse_up(event, window, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        });
+                                    }
+                                },
+                            );
                             paint_screen(&screen, bounds, &paint_metrics, window, cx);
                         }
                     },
@@ -234,6 +269,41 @@ impl Render for KeaView {
                     .disabled(!self.session.input_allowed())
                     .on_click(cx.listener(|this, _, _, cx| this.paste_terminal(cx))),
             );
+        if terminal_history_size > 0 {
+            terminal_header = terminal_header
+                .child(
+                    Button::new("terminal-oldest")
+                        .icon(IconName::ArrowUp)
+                        .when(!compact_chrome, |button| button.label("Oldest"))
+                        .tooltip("Jump to oldest retained output (up to 10,000 lines)")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == terminal_history_size)
+                        .on_click(cx.listener(|this, _, _, cx| this.scroll_terminal_oldest(cx))),
+                )
+                .child(
+                    Button::new("terminal-page-up")
+                        .icon(IconName::ChevronUp)
+                        .tooltip("Scroll terminal output up one page")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == terminal_history_size)
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.scroll_terminal_page(true, cx)),
+                        ),
+                )
+                .child(
+                    Button::new("terminal-page-down")
+                        .icon(IconName::ChevronDown)
+                        .tooltip("Scroll terminal output down one page")
+                        .ghost()
+                        .small()
+                        .disabled(terminal_display_offset == 0)
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.scroll_terminal_page(false, cx)),
+                        ),
+                );
+        }
         if terminal_display_offset > 0 {
             terminal_header = terminal_header.child(
                 Button::new("terminal-bottom")
@@ -952,9 +1022,22 @@ pub(super) fn terminal_point(
 pub(super) fn terminal_scroll_lines(
     delta: ScrollDelta,
     line_height: Pixels,
+    shift: bool,
     remainder: &mut f32,
 ) -> i32 {
-    terminal_scroll_units(delta, line_height, remainder, MAX_SCROLL_LINES_PER_EVENT)
+    let line_height = f32::from(line_height).max(1.);
+    let (x, y) = match delta {
+        ScrollDelta::Pixels(delta) => (
+            f32::from(delta.x) / line_height,
+            f32::from(delta.y) / line_height,
+        ),
+        ScrollDelta::Lines(delta) => (delta.x, delta.y),
+    };
+    terminal_mouse::accumulate_wheel_delta(
+        terminal_mouse::local_wheel_axis(x, y, shift),
+        remainder,
+        MAX_SCROLL_LINES_PER_EVENT,
+    )
 }
 
 pub(super) fn terminal_scroll_units(

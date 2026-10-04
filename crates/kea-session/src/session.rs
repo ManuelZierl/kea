@@ -188,6 +188,10 @@ impl Session {
         self.displayed_engine().has_selection()
     }
 
+    pub fn terminal_selection_invalidated(&self) -> bool {
+        self.displayed_engine().selection_invalidated()
+    }
+
     pub fn terminal_local_selection_active(&self) -> bool {
         self.displayed_engine().local_selection_active()
     }

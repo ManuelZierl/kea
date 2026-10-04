@@ -32,6 +32,28 @@ pub fn hover_is_local(reporting: bool, shift_local: bool, explicit: bool, shift:
     mouse_owner(reporting, shift_local, explicit, shift, false) != MouseOwner::Forward
 }
 
+/// Lines per 50 ms tick for a local drag in the first/last visual row.
+/// Distance beyond the edge accelerates scrolling, but remains bounded. Child
+/// gestures never acquire local autoscroll, even if modifiers change mid-drag.
+pub fn edge_scroll_lines(owner: MouseOwner, y: f32, height: f32, line_height: f32) -> i32 {
+    if owner == MouseOwner::Forward
+        || !y.is_finite()
+        || !height.is_finite()
+        || !line_height.is_finite()
+        || line_height <= 0.
+        || height < line_height * 2.
+    {
+        return 0;
+    }
+    if y < line_height {
+        (1. + (-y / line_height).max(0.)).clamp(1., 8.) as i32
+    } else if y >= height - line_height {
+        -((1. + ((y - height) / line_height).max(0.)).clamp(1., 8.) as i32)
+    } else {
+        0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Gesture {
     pub start: TerminalPoint,
