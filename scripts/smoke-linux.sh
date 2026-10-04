@@ -125,6 +125,11 @@ settings_transition() {
   return 1
 }
 
+if [[ "${1:-}" == --terminal-scrollback ]]; then
+  source scripts/smoke-terminal-scrollback.sh
+  exit 0
+fi
+
 # A read-only recording has no child; chrome shortcuts can be used here.
 ./target/debug/kea --demo >smoke-artifacts/demo.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/demo.log
@@ -709,6 +714,7 @@ assert (b'36', b'M') in reports, actual
 PY
 cleanup_app
 
+source scripts/smoke-terminal-scrollback.sh
 printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
 ./target/debug/kea -- bash --noprofile --norc >smoke-artifacts/document.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/document.log

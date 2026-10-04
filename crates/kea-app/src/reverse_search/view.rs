@@ -997,6 +997,9 @@ impl Render for ReverseSearchView {
         };
         let panel = div()
             .id("reverse-search-overlay")
+            // This floating panel covers a live terminal. Block all pointer
+            // input behind it, including wheel input during confirmation.
+            .occlude()
             .key_context("KeaReverseSearch")
             .track_focus(&self.focus)
             .w(width)

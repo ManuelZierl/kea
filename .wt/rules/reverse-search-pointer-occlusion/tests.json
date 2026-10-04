@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "transparent-popup-hitbox",
+      "files": [{
+        "path": "crates/kea-app/src/reverse_search/view.rs",
+        "content": "fn panel() { let panel = div().id(\"reverse-search-overlay\").key_context(\"KeaReverseSearch\").bg(background); }\n"
+      }],
+      "expect": [{"path": "crates/kea-app/src/reverse_search/view.rs", "code": "pointer-click-through", "kind": "violation"}]
+    },
+    {
+      "name": "occluded-popup",
+      "files": [{
+        "path": "crates/kea-app/src/reverse_search/view.rs",
+        "content": "fn panel() { let panel = div().id(\"reverse-search-overlay\").occlude().key_context(\"KeaReverseSearch\").bg(background); }\n"
+      }],
+      "expect": []
+    },
+    {
+      "name": "ordinary-terminal-keeps-native-pointer-routing",
+      "files": [{
+        "path": "crates/kea-app/src/reverse_search/view.rs",
+        "content": "fn terminal() { let terminal = div().id(\"terminal-surface\").key_context(\"KeaTerminal\"); }\n"
+      }],
+      "expect": []
+    }
+  ]
+}

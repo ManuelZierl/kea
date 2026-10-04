@@ -132,6 +132,7 @@ impl KeaView {
                             _ => {}
                         }
                         this.pump_session(cx);
+                        this.autoscroll_terminal_selection(window, cx);
                         this.validate_workflow(window, cx);
                         if !this.focus.is_focused(window) {
                             this.session.terminal_selection_focus_lost();
@@ -176,6 +177,7 @@ impl KeaView {
             terminal_mouse_scroll_remainder: 0.,
             terminal_gesture: None,
             terminal_gesture_bounds: None,
+            terminal_selection_scroll_at: None,
             timeline_track_bounds: None,
             timeline_hovered: false,
             prompt_line: PromptLineTracker::default(),

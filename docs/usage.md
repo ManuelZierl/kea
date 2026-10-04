@@ -123,6 +123,17 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - **Ctrl+Shift+drag** freezes the displayed grid for stable selection during busy output, even when the Shift override is disabled. The child and recording continue. **Return live** (F9) restores live viewing and input; the frozen view itself cannot send input.
 - A local selection/caret owns Copy, Esc and navigation/extension keys. In the live view, other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
 
+For long shell output, hold a local drag at or beyond the terminal's upper/lower
+edge to scroll and extend the selection without repeatedly moving the pointer.
+Release stops it. **Oldest** and the page arrows in the terminal header navigate
+retained output quickly; scrollback remains bounded to 10,000 visual lines.
+Once a local selection exists, Shift+PageUp/PageDown also extends by pages.
+
+A full-screen TUI's internal history is not Kea scrollback. Shift-selection
+stays local, but Kea cannot reliably join screen redraws into one off-screen
+selection. Use the TUI's own selection/export for that case; local edge dragging
+does not send synthetic scroll input to the child.
+
 Valid selections survive ordinary scrolling output. If selected text changes or
 is discarded, Kea shows a recovery caret instead of silently turning the next
 Copy chord into child input. See [terminal text selection](terminal-text-selection.md).

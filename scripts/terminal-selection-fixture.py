@@ -11,6 +11,17 @@ row = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 def paint(*_):
     columns, rows = os.get_terminal_size(1)
+    if "--scrollback" in sys.argv[2:]:
+        # Unique lines expose overlap/endpoint mistakes. Rebuild on resize.
+        # Reset rather than erase: erase can itself retain the previous screen
+        # in scrollback, adding duplicate rows on the startup resize.
+        prefix = b"\x1bc"
+        if "--mouse" in sys.argv[2:]:
+            prefix += b"\x1b[?1002h\x1b[?1006h"
+        os.write(1, prefix + b"\r\n".join(
+            f"L{line:04d}".encode() for line in range(300)
+        ))
+        return
     output = bytearray(b"\x1b[2J")
     for line in range(1, rows + 1):
         output.extend(f"\x1b[{line};1H".encode() + row[:columns])
