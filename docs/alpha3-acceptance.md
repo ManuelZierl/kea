@@ -53,6 +53,20 @@ history popup isolation), with the frozen/clipped interaction correction below.
 - A suspected maximum-submission serialization defect was disproved:
   `MAX_OUTPUT` is 1 MiB, not 64 KiB. New boundary tests pass against the original
   format implementation; no speculative serializer change was retained.
+- One final smoke run selected only 40 lines before its deadline during concurrent
+  release compilation. Three bounded diagnostic passes succeeded without load.
+  Controlled 12-worker runs selected 52 and 47 lines before the old deadline;
+  instrumentation showed correct coordinates, continued timer progress and no
+  cancellation. Maximum-speed dragging plus a longer bounded observation reached
+  the unchanged size threshold, then exposed a stale clipboard baseline at the
+  wheel/navigation boundary. Copy-dispatch logging distinguished the phases:
+  release stability passed at 63 lines, the wheel selection was 19 lines, but the
+  test read the older 63-line clipboard value before wheel Copy completed. Fresh
+  sentinels now cover wheel/frozen growth and release/stability copies; the smoke
+  also waits for the painted drag indicator to acknowledge release before taking
+  its baseline. The original size, continuity, release and zero-child-input
+  assertions remain intact; temporary diagnostics and all speculative production
+  timing changes were excluded.
 
 ## Outstanding acceptance, not claimed passed
 
