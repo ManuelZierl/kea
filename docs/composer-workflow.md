@@ -24,6 +24,11 @@ Ctrl-C cannot queue, replace or confirm an interrupt. Confirmation keys and thei
 held repeats are consumed by Kea. The original encoded terminal input is retained;
 confirmation does not send a second Enter or replace input with an OS kill signal.
 
+The guard follows terminal encoding: Ctrl+Shift+C also requires confirmation
+when it encodes to the same `0x03` byte as Ctrl+C. A platform text commit of that
+single control byte follows the same guard. Copy retains its local selection
+policy; explicit clipboard paste remains a separate operation.
+
 Confirmation is bound to its original terminal, focus and reported input-context
 generation. Switching tabs, losing focus/window activation, replay, process exit
 or a new context report cancels it. Streaming output without a context change

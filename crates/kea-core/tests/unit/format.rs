@@ -1,4 +1,5 @@
 use super::*;
+use crate::{replay, Projection, MAX_EVENTS};
 
 fn recording() -> Recording {
     Recording::new(Size::new(80, 24).unwrap()).unwrap()
@@ -121,4 +122,66 @@ fn submission_metadata_is_bounded_and_never_replayed_as_input_or_output() {
         )
         .is_err());
     assert!(r.events().is_empty());
+}
+
+#[test]
+fn retained_recording_uses_v3_and_round_trips_partial_suffix() {
+    let mut r = recording();
+    r.append(1, Kind::Resize(Size::new(100, 30).unwrap()))
+        .unwrap();
+    for at in 0..(MAX_EVENTS - 1) as u64 {
+        r.append(at + 2, Kind::Output(vec![b'x'])).unwrap();
+    }
+    let removed = r
+        .append_retained(MAX_EVENTS as u64 + 2, Kind::Output(vec![b'y']))
+        .unwrap();
+    assert!(removed > 0);
+    assert_eq!(r.initial_size(), Size::new(100, 30).unwrap());
+    let mut bytes = Vec::new();
+    r.write_to(&mut bytes).unwrap();
+    assert_eq!(bytes[3], 3);
+    let loaded = read_from(bytes.as_slice()).unwrap();
+    assert_eq!(loaded.recording.events(), r.events());
+    assert_eq!(loaded.recording.initial_size(), r.initial_size());
+    assert_eq!(loaded.recording.discarded_events(), r.discarded_events());
+    assert_eq!(loaded.recording.start_time(), r.start_time());
+    struct Noop;
+    impl Projection for Noop {
+        fn output(&mut self, _: &[u8]) {}
+        fn resize(&mut self, _: Size) {}
+    }
+    replay(
+        &loaded.recording,
+        loaded.recording.events().len(),
+        &mut Noop,
+    )
+    .unwrap();
+    assert!(!loaded.truncated_tail);
+
+    bytes.pop();
+    let truncated = read_from(bytes.as_slice()).unwrap();
+    assert!(truncated.truncated_tail);
+    assert_eq!(truncated.recording.discarded_events(), r.discarded_events());
+}
+
+#[test]
+fn v3_rejects_invalid_prefix_metadata_and_events_before_start() {
+    let mut r = recording();
+    for at in 0..MAX_EVENTS as u64 {
+        r.append(at, Kind::Output(vec![b'x'])).unwrap();
+    }
+    r.append_retained(MAX_EVENTS as u64, Kind::Output(vec![b'y']))
+        .unwrap();
+    let mut bytes = Vec::new();
+    r.write_to(&mut bytes).unwrap();
+    let mut zero_count = bytes.clone();
+    zero_count[12..20].fill(0);
+    assert!(read_from(zero_count.as_slice()).is_err());
+    let mut early_event = bytes;
+    let body_len = u32::from_le_bytes(early_event[28..32].try_into().unwrap()) as usize;
+    early_event[32..40].copy_from_slice(&0u64.to_le_bytes());
+    let checksum_at = 32 + body_len;
+    let crc = checksum(&early_event[32..checksum_at]);
+    early_event[checksum_at..checksum_at + 4].copy_from_slice(&crc.to_le_bytes());
+    assert!(read_from(early_event.as_slice()).is_err());
 }

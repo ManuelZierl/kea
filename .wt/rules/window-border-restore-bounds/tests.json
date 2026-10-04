@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "restore-size-is-not-current-hit-test-size",
+      "files": [
+        {
+          "path": "vendor/gpui-component/src/window_border.rs",
+          "content": "fn hit_test(window: &Window) { let size = window.window_bounds().get_bounds().size; }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "vendor/gpui-component/src/window_border.rs",
+          "code": "restore-bounds-hit-test",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "current-viewport-is-used-for-hit-testing",
+      "files": [
+        {
+          "path": "vendor/gpui-component/src/window_border.rs",
+          "content": "fn hit_test(window: &Window) { let size = window.viewport_size(); }\n"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "same-expression-outside-window-border-is-out-of-scope",
+      "files": [
+        {
+          "path": "vendor/gpui-component/src/dialog.rs",
+          "content": "fn current(window: &Window) { let size = window.window_bounds().get_bounds().size; }\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

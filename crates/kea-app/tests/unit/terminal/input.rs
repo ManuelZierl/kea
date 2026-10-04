@@ -39,6 +39,25 @@ fn modified_enter_respects_keyboard_protocol_negotiation() {
         encode(&Keystroke::parse("ctrl-c").unwrap(), false, false).unwrap(),
         vec![3]
     );
+    // Shift is not represented by the classic control-byte protocol. This
+    // chord is still Ctrl-C and must follow the interrupt policy.
+    assert_eq!(
+        encode(&Keystroke::parse("ctrl-shift-c").unwrap(), false, false).unwrap(),
+        vec![3]
+    );
+    assert_eq!(
+        encode(&Keystroke::parse("ctrl-c").unwrap(), false, true).unwrap(),
+        vec![3]
+    );
+    assert_eq!(
+        encode(&Keystroke::parse("ctrl-shift-c").unwrap(), false, true).unwrap(),
+        vec![3]
+    );
+    // Alt adds ESC, so this is a distinct encoded sequence, not byte 0x03.
+    assert_eq!(
+        encode(&Keystroke::parse("ctrl-alt-c").unwrap(), false, false).unwrap(),
+        b"\x1b\x03"
+    );
     assert_eq!(
         encode(&Keystroke::parse("tab").unwrap(), false, false).unwrap(),
         b"\t"
@@ -86,6 +105,9 @@ fn paste_cannot_inject_a_bracket_terminator() {
         paste("a\x1b[201~b", true).unwrap(),
         b"\x1b[200~a[201~b\x1b[201~"
     );
+    // Explicit paste preserves control bytes as clipboard data; it is not a
+    // physical Ctrl-C keystroke and does not enter the interrupt guard.
+    assert_eq!(paste("\x03", true).unwrap(), b"\x1b[200~\x03\x1b[201~");
 }
 
 #[test]

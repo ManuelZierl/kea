@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Automatically trim older terminal history at its retention limit and group nearby
+  output reads into bounded frames while live rendering continues immediately.
+  Trimmed recordings use v3 to declare missing earlier state; complete recordings
+  remain v2 and v1/v2 imports remain supported. Older releases cannot read v3.
+- Keep saved-file quotas independent of rolling in-memory history.
+- Apply enabled Ctrl-C confirmation to Ctrl+Shift+C when both encode to `0x03`,
+  and to platform text commits of that single control byte.
+- Use consistent shell-based names for initial and new tabs, and show the running
+  version in the title bar.
+- Freeze a read-only grid for Ctrl+Shift-drag selection while live output, recording
+  and terminal protocol replies continue. Return live resumes ordinary interaction.
+- Correct Linux client-decoration resize hit-testing after maximization and on
+  tiled edges, preventing content clicks from being mistaken for resize gestures.
+
 ## 0.0.1-alpha.2 — 2026-09-27
 
 - Add independent terminal tabs with per-tab processes, drafts, history navigation,

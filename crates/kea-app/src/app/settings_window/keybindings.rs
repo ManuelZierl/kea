@@ -195,12 +195,19 @@ impl Render for KeybindingEditor {
             .child(Button::new("save-keybindings").label("Save keybindings").primary()
                 .on_click(cx.listener(|this, _, _, cx| this.save(cx))))
             .children(self.rows.iter().enumerate().map(|(index, row)| {
+                let record_button = Button::new(("record-shortcut", index)).small()
+                    .label(if self.recording == Some(index) { "Press shortcut…" } else { "Record" })
+                    .on_click(cx.listener(move |this, _, window, cx| this.begin_recording(index, window, cx)));
+                #[cfg(test)]
+                let record_button = div()
+                    .debug_selector(move || format!("record-shortcut-{index}"))
+                    .child(record_button);
+                #[cfg(not(test))]
+                let record_button = record_button;
                 div().w_full().min_w_0().flex().flex_col().gap_1().pb_2()
                     .child(div().flex().items_center().justify_between()
                         .child(row.label)
-                        .child(Button::new(("record-shortcut", index)).small()
-                            .label(if self.recording == Some(index) { "Press shortcut…" } else { "Record" })
-                            .on_click(cx.listener(move |this, _, window, cx| this.begin_recording(index, window, cx))))
+                        .child(record_button)
                     )
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child(row.name))
                     .child(Input::new(&row.input).small().w_full())

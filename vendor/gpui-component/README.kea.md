@@ -5,12 +5,14 @@ Apache-2.0 license. Kea pins this component because the editor's selection,
 composition, undo, read-only selection and search behavior are application
 contracts.
 
-Kea carries two local changes:
+Kea carries these local changes:
 
 - `src/input/search.rs`: changing a search query reveals the active match, and
   previous/next navigation may scroll in either direction after manual scrolling.
 - `src/input/state.rs`: mouse-down focuses an input before placing its caret, so
   retained Settings fields receive typed text after a direct click.
+- `src/window_border.rs`: resize hit-testing uses the current viewport and
+  ignores tiled edges, rather than using maximized/fullscreen restore bounds.
 
 These stay inside the component so Kea does not duplicate editor state or patch
 focus behavior at each call site.

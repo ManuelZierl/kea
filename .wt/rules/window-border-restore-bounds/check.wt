@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "window.window_bounds().get_bounds().size") {
+    emit(m.span, "restore-bounds-hit-test");
+}

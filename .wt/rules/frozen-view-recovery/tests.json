@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "blanket-stop-swallows-go-live",
+      "files": [{ "path": "crates/kea-app/src/app/actions.rs", "content": "fn key(&mut self) { if self.session.is_frozen() { cx.stop_propagation(); return; } }" }],
+      "expect": [{ "path": "crates/kea-app/src/app/actions.rs", "code": "swallowed-recovery-shortcut", "kind": "violation" }]
+    },
+    {
+      "name": "skip-child-encoding-but-allow-chrome",
+      "files": [{ "path": "crates/kea-app/src/app/actions.rs", "content": "fn key(&mut self) { if self.session.is_frozen() { return; } encode_input(); }" }],
+      "expect": []
+    }
+  ]
+}

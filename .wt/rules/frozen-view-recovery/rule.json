@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "frozen-view-recovery",
+  "title": "Keep frozen-view recovery shortcuts reachable",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/app/actions.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"] },
+  "patterns": {},
+  "diagnostics": {
+    "swallowed-recovery-shortcut": {
+      "kind": "violation",
+      "message": "Stopping all frozen-view key propagation also swallows Go Live.",
+      "help": "Return before terminal encoding while allowing chrome actions; Session::input_allowed guards child input."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}
