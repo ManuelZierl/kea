@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "fn terminal_scroll_lines($$$PARAMS) -> i32 { terminal_scroll_units($$$ARGS) }") {
+    emit(m.span, "shift-axis-lost");
+}

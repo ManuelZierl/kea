@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "reverse-search-pointer-occlusion",
+  "title": "The history popup must occlude the terminal beneath it",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": {
+    "include": ["crates/kea-app/src/reverse_search/view.rs"],
+    "exclude": [],
+    "require_files": []
+  },
+  "code": {
+    "file": "check.wt",
+    "language": "wt-rule-1",
+    "capabilities": ["ast.v1"]
+  },
+  "patterns": {},
+  "diagnostics": {
+    "pointer-click-through": {
+      "kind": "violation",
+      "message": "A history popup with a transparent hitbox leaks pointer input to the live terminal, stealing focus and potentially sending child input.",
+      "help": "Occlude the reverse-search panel before assigning its key context. Keep outside-click dismissal separate."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "tests_file": "tests.json"
+}

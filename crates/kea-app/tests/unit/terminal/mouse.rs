@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn shift_scrollback_accepts_the_platform_swapped_axis_only_locally() {
+    assert_eq!(local_wheel_axis(3., 0., true), 3.);
+    assert_eq!(local_wheel_axis(-3., 0., true), -3.);
+    assert_eq!(local_wheel_axis(0., 3., true), 3.);
+    assert_eq!(local_wheel_axis(0., -3., true), -3.);
+    assert_eq!(local_wheel_axis(3., 2., true), 2.);
+    assert_eq!(local_wheel_axis(3., 0., false), 0.);
+    assert_eq!(local_wheel_axis(3., 2., false), 2.);
+    let mut remainder = 0.;
+    assert_eq!(
+        accumulate_wheel_delta(local_wheel_axis(0.6, 0., true), &mut remainder, 32),
+        0
+    );
+    assert_eq!(
+        accumulate_wheel_delta(local_wheel_axis(0.6, 0., true), &mut remainder, 32),
+        1
+    );
+}
+
+#[test]
 fn sgr_wheel_uses_one_based_coordinates_and_modifiers() {
     let point = TerminalPoint { row: 4, column: 9 };
     assert_eq!(

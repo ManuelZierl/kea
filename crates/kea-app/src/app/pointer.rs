@@ -57,6 +57,7 @@ impl KeaView {
         );
         self.terminal_gesture = Some(gesture);
         self.terminal_gesture_bounds = self.terminal_bounds;
+        self.terminal_selection_scroll_at = None;
         match owner {
             MouseOwner::LocalSimple | MouseOwner::LocalBlock => {
                 if gesture.shift_extend {
@@ -99,7 +100,13 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) {
         if let Some(mut gesture) = self.terminal_gesture {
+            if gesture.owner != MouseOwner::Forward && !self.local_drag_is_current(window) {
+                self.cancel_local_terminal_gesture();
+                cx.notify();
+                return;
+            }
             if !event.dragging() {
+                self.cancel_local_terminal_gesture();
                 return;
             }
             let metrics = terminal_font_metrics(window, cx);
@@ -198,6 +205,10 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.local_drag_is_current(window) {
+            self.cancel_local_terminal_gesture();
+        }
+        self.terminal_selection_scroll_at = None;
         if let Some(mut gesture) = self.terminal_gesture.take() {
             let bounds = self.terminal_gesture_bounds.take().or(self.terminal_bounds);
             let metrics = terminal_font_metrics(window, cx);
@@ -243,6 +254,104 @@ impl KeaView {
             self.session.set_terminal_selection_block(true);
         }
         self.session.update_terminal_selection(point);
+    }
+
+    fn cancel_local_terminal_gesture(&mut self) {
+        if self
+            .terminal_gesture
+            .is_some_and(|gesture| gesture.owner != MouseOwner::Forward)
+        {
+            self.terminal_gesture = None;
+            self.terminal_gesture_bounds = None;
+            self.terminal_selection_scroll_at = None;
+        }
+    }
+
+    fn local_drag_is_current(&self, window: &Window) -> bool {
+        self.visible
+            && window.is_window_active()
+            && self.focus.is_focused(window)
+            && self.terminal_gesture_bounds == self.terminal_bounds
+            && self.session.terminal_local_selection_active()
+            && !self.session.terminal_selection_invalidated()
+    }
+
+    pub(super) fn autoscroll_terminal_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(gesture) = self.terminal_gesture else {
+            return;
+        };
+        if gesture.owner == MouseOwner::Forward {
+            return;
+        }
+        if !self.local_drag_is_current(window) {
+            self.cancel_local_terminal_gesture();
+            cx.notify();
+            return;
+        }
+        if !gesture.moved {
+            return;
+        }
+        let Some(bounds) = self.terminal_gesture_bounds else {
+            return;
+        };
+        let metrics = terminal_font_metrics(window, cx);
+        let lines = selection::edge_scroll_lines(
+            gesture.owner,
+            f32::from(window.mouse_position().y - bounds.origin.y),
+            f32::from(metrics.line_height) * f32::from(self.session.terminal_size().rows),
+            f32::from(metrics.line_height),
+        );
+        if lines == 0 {
+            self.terminal_selection_scroll_at = None;
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .terminal_selection_scroll_at
+            .is_some_and(|next| now < next)
+        {
+            return;
+        }
+        self.terminal_selection_scroll_at = Some(now + std::time::Duration::from_millis(50));
+        let before = self.session.display_offset();
+        self.session.scroll_lines(lines);
+        if self.session.display_offset() != before {
+            self.extend_drag_at_pointer(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn extend_drag_at_pointer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.local_drag_is_current(window) {
+            self.cancel_local_terminal_gesture();
+            return;
+        }
+        let Some(mut gesture) = self.terminal_gesture else {
+            return;
+        };
+        if gesture.owner == MouseOwner::Forward {
+            return;
+        }
+        let metrics = terminal_font_metrics(window, cx);
+        if let Some(point) = terminal_point(
+            window.mouse_position(),
+            self.terminal_gesture_bounds,
+            &metrics,
+            self.session.terminal_size(),
+        ) {
+            // A stationary viewport coordinate identifies different text after
+            // scrolling. Do not mistake it for an unmoved initial press.
+            if !gesture.moved && gesture.potential_block {
+                self.session.set_terminal_selection_block(true);
+            }
+            gesture.moved = true;
+            self.session.update_terminal_selection(point);
+            self.terminal_gesture = Some(gesture);
+        }
     }
 
     fn forward_pointer(
@@ -346,10 +455,15 @@ impl KeaView {
         let lines = terminal_scroll_lines(
             event.delta,
             metrics.line_height,
+            event.modifiers.shift,
             &mut self.terminal_scroll_remainder,
         );
         if lines != 0 {
+            // Establish the press-time anchor before moving an empty range's
+            // viewport; then extend again against the newly visible text.
+            self.extend_drag_at_pointer(window, cx);
             self.session.scroll_lines(lines);
+            self.extend_drag_at_pointer(window, cx);
             self.notice = None;
             cx.notify();
         }

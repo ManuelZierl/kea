@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "terminal-shift-wheel-axis",
+  "title": "Local Shift wheel must handle platform axis conversion",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": {
+    "include": ["crates/kea-app/src/app/rendering.rs"],
+    "exclude": [],
+    "require_files": []
+  },
+  "code": {
+    "file": "check.wt",
+    "language": "wt-rule-1",
+    "capabilities": ["ast.v1"]
+  },
+  "patterns": {},
+  "diagnostics": {
+    "shift-axis-lost": {
+      "kind": "violation",
+      "message": "Local scrollback cannot reuse vertical-only child wheel accumulation: GPUI maps Shift+vertical wheel to the horizontal axis.",
+      "help": "Pass Shift state to local wheel normalization and accept the platform-swapped axis without changing child forwarding."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "tests_file": "tests.json"
+}

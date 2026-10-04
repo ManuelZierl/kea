@@ -81,6 +81,52 @@ fn scrolling_preserves_and_extends_a_scrollback_selection() {
 }
 
 #[test]
+fn stationary_edge_drag_extends_through_multiple_pages_in_both_directions() {
+    let mut engine = Engine::new(Size::new(8, 4).unwrap(), false);
+    engine.output(b"L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8\r\nL9");
+    engine.begin_selection(TerminalPoint { row: 3, column: 1 });
+    engine.update_selection(TerminalPoint { row: 0, column: 0 });
+    for _ in 0..6 {
+        engine.scroll_lines(1);
+        engine.update_selection(TerminalPoint { row: 0, column: 0 });
+    }
+    assert_eq!(engine.display_offset(), 6);
+    assert_eq!(
+        engine.selection_text().as_deref(),
+        Some("L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9")
+    );
+
+    engine.begin_selection(TerminalPoint { row: 0, column: 0 });
+    engine.update_selection(TerminalPoint { row: 3, column: 1 });
+    for _ in 0..6 {
+        engine.scroll_lines(-1);
+        engine.update_selection(TerminalPoint { row: 3, column: 1 });
+    }
+    assert_eq!(engine.display_offset(), 0);
+    assert_eq!(
+        engine.selection_text().as_deref(),
+        Some("L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9")
+    );
+}
+
+#[test]
+fn oldest_and_page_navigation_preserve_the_existing_selection() {
+    let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
+    engine.output(b"L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6");
+    engine.begin_selection(TerminalPoint { row: 2, column: 0 });
+    engine.update_selection(TerminalPoint { row: 2, column: 1 });
+    engine.scroll_lines(engine.history_size() as i32);
+    assert_eq!(engine.display_offset(), engine.history_size());
+    assert!(engine.screen().text().starts_with("L0"));
+    engine.scroll_lines(-3);
+    assert_eq!(engine.display_offset(), 1);
+    assert_eq!(engine.selection_text().as_deref(), Some("L6"));
+    engine.scroll_bottom();
+    assert_eq!(engine.display_offset(), 0);
+    assert_eq!(engine.selection_text().as_deref(), Some("L6"));
+}
+
+#[test]
 fn block_selection_and_local_caret_are_distinct() {
     let mut engine = Engine::new(Size::new(8, 3).unwrap(), false);
     engine.output(b"abcd\r\nefgh");

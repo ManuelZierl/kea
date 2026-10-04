@@ -161,6 +161,20 @@ impl KeaView {
         cx.notify();
     }
 
+    pub(super) fn scroll_terminal_page(&mut self, up: bool, cx: &mut Context<Self>) {
+        let lines = i32::from(self.session.terminal_size().rows).max(1);
+        self.session.scroll_lines(if up { lines } else { -lines });
+        self.terminal_scroll_remainder = 0.;
+        cx.notify();
+    }
+
+    pub(super) fn scroll_terminal_oldest(&mut self, cx: &mut Context<Self>) {
+        self.session
+            .scroll_lines(self.session.history_size() as i32);
+        self.terminal_scroll_remainder = 0.;
+        cx.notify();
+    }
+
     pub(super) fn note_forwarded_terminal_input(&mut self) {
         self.interrupt.cancel();
         self.session.scroll_bottom();

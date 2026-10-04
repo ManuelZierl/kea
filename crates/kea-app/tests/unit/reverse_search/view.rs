@@ -1,13 +1,139 @@
 use super::*;
 use crate::{config::settings::Settings, editor::command};
-use gpui::{Focusable, KeyContext, Keystroke, TestAppContext};
+use gpui::{
+    point, size, Focusable, KeyContext, Keystroke, MouseButton, ScrollWheelEvent, TestAppContext,
+    VisualTestContext,
+};
 use gpui_component::Root;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 struct Empty;
 impl Render for Empty {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
     }
+}
+
+struct SearchLayerFixture {
+    search: Entity<ReverseSearchView>,
+    background_presses: usize,
+    background_scrolls: usize,
+    background_focus: FocusHandle,
+}
+
+impl Render for SearchLayerFixture {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("terminal-behind-popup")
+            .size_full()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, _| {
+                    this.background_presses += 1;
+                    window.focus(&this.background_focus);
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.background_scrolls += 1))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(8.))
+                    .top(px(500.))
+                    .child(self.search.clone()),
+            )
+    }
+}
+
+#[gpui::test]
+fn search_popup_occludes_terminal_pointer_input_and_retains_focus(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        command::register_languages();
+        install(cx);
+    });
+    let fixture_slot = Rc::new(RefCell::new(None));
+    let window = cx.add_window({
+        let fixture_slot = fixture_slot.clone();
+        move |window, cx| {
+            let draft = command::new_draft(None, &Settings::default(), "scratch", window, cx);
+            let search = cx.new(|cx| {
+                ReverseSearchView::with_worker(Worker::start(None, false), false, window, cx)
+            });
+            search.update(cx, |search, cx| {
+                search.record("scratch".into(), InputKind::Application, None, cx);
+                search.set_target(draft, true, cx);
+                search.open(None, InputKind::Application, window, cx);
+                settle_search(search, window, cx);
+            });
+            let fixture = cx.new(|cx| SearchLayerFixture {
+                search,
+                background_presses: 0,
+                background_scrolls: 0,
+                background_focus: cx.focus_handle(),
+            });
+            *fixture_slot.borrow_mut() = Some(fixture.clone());
+            Root::new(fixture, window, cx)
+        }
+    });
+    let fixture = fixture_slot.borrow_mut().take().unwrap();
+    let visual = VisualTestContext::from_window(*window.deref(), cx).into_mut();
+    visual.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+        fixture.clone()
+    });
+    let search = visual.update(|_, cx| fixture.read(cx).search.clone());
+    // Bottom-left anchored panel ends at y=500. Its footer is blank here: a
+    // real pointer click must not focus the terminal behind that visible panel.
+    visual.simulate_mouse_move(point(px(320.), px(480.)), None, Default::default());
+    visual.simulate_click(point(px(320.), px(480.)), Default::default());
+    visual.update(|window, cx| {
+        assert_eq!(
+            fixture.read(cx).background_presses,
+            0,
+            "popup click leaked to terminal"
+        );
+        assert!(search.read(cx).focus.contains_focused(window, cx));
+    });
+    // Verify the same boundary while awaiting destructive confirmation. A
+    // wheel event over the popup must not scroll/send input to the terminal.
+    visual.update(|window, cx| {
+        search.update(cx, |search, cx| {
+            settle_search(search, window, cx);
+            search.show_actions(window, cx);
+            search.item_action(ItemAction::Forget, window, cx);
+            assert!(search.open, "fixture popup must remain open");
+            assert!(
+                matches!(search.mode, Mode::ConfirmDelete { .. }),
+                "fixture must reach confirmation"
+            );
+        })
+    });
+    visual.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+        fixture.clone()
+    });
+    visual.simulate_event(ScrollWheelEvent {
+        position: point(px(320.), px(480.)),
+        delta: ScrollDelta::Lines(point(0., 1.)),
+        ..Default::default()
+    });
+    visual.update(|_, cx| {
+        assert_eq!(
+            fixture.read(cx).background_scrolls,
+            0,
+            "popup wheel leaked to terminal"
+        );
+        assert!(matches!(search.read(cx).mode, Mode::ConfirmDelete { .. }));
+        assert!(search.read(cx).pending_operation.is_none());
+    });
+    visual.simulate_mouse_move(point(px(700.), px(50.)), None, Default::default());
+    visual.simulate_click(point(px(700.), px(50.)), Default::default());
+    visual.update(|window, cx| {
+        assert!(
+            !search.read(cx).open,
+            "outside click must still dismiss the popup"
+        );
+        assert!(fixture.read(cx).background_presses > 0);
+        assert!(fixture.read(cx).background_focus.is_focused(window));
+    });
 }
 
 #[gpui::test]

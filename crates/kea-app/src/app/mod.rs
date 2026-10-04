@@ -81,6 +81,7 @@ struct KeaView {
     terminal_gesture: Option<selection::Gesture>,
     // Keep the press-time canvas mapping stable if layout changes mid-gesture.
     terminal_gesture_bounds: Option<Bounds<Pixels>>,
+    terminal_selection_scroll_at: Option<Instant>,
     timeline_track_bounds: Option<Bounds<Pixels>>,
     timeline_hovered: bool,
     prompt_line: PromptLineTracker,
