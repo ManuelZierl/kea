@@ -176,6 +176,29 @@ jobs:
           python scripts/verify-windows-icon.py target/release/kea.exe
       - name: Verify Windows GUI subsystem
         run: python scripts/verify-windows-subsystem.py target/release/kea.exe
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+      - name: Build Windows current-user installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { throw "makensis.exe not found at $makensis" }
+          $version = $env:GITHUB_REF_NAME
+          if ([string]::IsNullOrWhiteSpace($version) -or -not $version.StartsWith('v')) {
+            $version = (cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'kea-app' | Select-Object -ExpandProperty version
+          } else {
+            $version = $version.Substring(1)
+          }
+          $source = (Resolve-Path target/release/kea.exe).Path
+          $license = (Resolve-Path LICENSE).Path
+          $icon = (Resolve-Path assets/windows/kea.ico).Path
+          $out = Join-Path (Resolve-Path dist).Path "kea-v$version-windows-x86_64-setup.exe"
+          & $makensis "/DVERSION=$version" "/DSOURCE_EXE=$source" "/DLICENSE_FILE=$license" "/DICON_FILE=$icon" "/DOUTFILE=$out" packaging/windows/kea.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path $out)) { throw "installer was not produced" }
       - name: Package Windows release binary
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -196,7 +219,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: kea-release-windows-x86_64
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -237,7 +262,7 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: dist
-        run: sha256sum *.tar.gz *.zip > SHA256SUMS
+        run: sha256sum *.tar.gz *.zip *.exe > SHA256SUMS
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
