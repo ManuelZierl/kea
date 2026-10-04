@@ -28,7 +28,11 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
 #[test]
 fn update_checks_default_on_and_can_be_disabled() {
     assert!(Settings::default().check_for_updates);
-    assert!(!Settings::parse("check_for_updates = false").unwrap().check_for_updates);
+    assert!(
+        !Settings::parse("check_for_updates = false")
+            .unwrap()
+            .check_for_updates
+    );
     assert!(Settings::parse("check_for_updates = maybe").is_err());
 }
 

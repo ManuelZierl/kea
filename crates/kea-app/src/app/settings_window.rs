@@ -4,7 +4,10 @@ use gpui_component::{
     button::Button, dialog::Dialog, switch::Switch, ActiveTheme as _, Selectable as _,
     Sizable as _, WindowExt as _,
 };
-use kea_app::{config::settings::{Appearance, PostSubmitFocus, Settings}, update};
+use kea_app::{
+    config::settings::{Appearance, PostSubmitFocus, Settings},
+    update,
+};
 
 mod keybindings;
 

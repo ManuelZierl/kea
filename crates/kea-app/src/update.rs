@@ -10,7 +10,7 @@ use sha2::{Digest as _, Sha256};
 use std::{
     fs::{self, File},
     io::{Read as _, Write as _},
-    path::{Path, PathBuf},
+    path::Path,
     sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
@@ -217,7 +217,7 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let current = std::env::current_exe().context("cannot locate the running Kea executable")?;
     let local_app_data = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
+        .map(std::path::PathBuf::from)
         .context("LOCALAPPDATA is unavailable")?;
     let installed = local_app_data.join("Programs").join("Kea").join("kea.exe");
     let script = format!(
