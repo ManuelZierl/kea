@@ -3173,8 +3173,11 @@ dependencies = [
  "kea-session",
  "serde",
  "serde_json",
+ "semver",
+ "sha2 0.10.9",
  "tempfile",
  "tree-sitter-bash",
+ "zed-reqwest",
 ]
 
 [[package]]
@@ -7845,6 +7848,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
