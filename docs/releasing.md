@@ -94,11 +94,18 @@ git push origin v0.0.1-alpha.1
 
 The tag push runs the complete CI matrix, builds unsigned archives for Linux
 x86_64, macOS (the hosted runner's architecture, included in the filename) and
-Windows x86_64, and publishes a GitHub release only if all
-required jobs pass. Version and `main` ancestry are checked before publication.
-Versions containing a hyphen are marked **prerelease** and do not become Latest.
-Archives include the executable, README, license and release notes. `SHA256SUMS`
-uses archive basenames so it can be verified from the download directory:
+Windows x86_64, plus a no-elevation Windows current-user NSIS installer. It
+publishes a GitHub release only if all required jobs pass. Version and `main`
+ancestry are checked before publication. Versions containing a hyphen are marked
+**prerelease** and do not become Latest.
+
+The Windows installer is named `kea-v<version>-windows-x86_64-setup.exe`, installs
+to `%LOCALAPPDATA%\\Programs\\Kea`, and is also the artifact consumed by Kea's
+in-app updater. The updater requires GitHub's release-asset `sha256:` digest and
+verifies the downloaded installer before handing it to the silent current-user
+installer. This is integrity checking, not Authenticode signing. Archives include
+the executable, README, license and release notes. `SHA256SUMS` uses artifact
+basenames so it can be verified from the download directory:
 
 ```sh
 sha256sum -c SHA256SUMS
@@ -106,7 +113,8 @@ sha256sum -c SHA256SUMS
 
 All archives must be downloaded for that command to check the complete manifest.
 Inspect the release assets and test extracted binaries on their target platforms.
-These are unsigned binaries, not native installers or a cross-platform certification.
+The binaries and installer are unsigned for Authenticode purposes; the Windows
+installer is native but is not a cross-platform certification.
 Never move a published release tag; fix problems in a new version. Re-running a
 failed publication can replace assets for the same tag, so avoid rerunning a
 successful published release without a specific reason.

@@ -220,7 +220,9 @@ Configuration directories:
 - macOS: `~/Library/Application Support/Kea/`
 - Windows: `%APPDATA%\Kea\`
 
-`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files.
+`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files. On supported Windows
+builds, `check_for_updates = false` disables the once-per-startup GitHub Release
+check without disabling manual checks.
 
 Use the Settings button in the main toolbar to change appearance, composer and
 workflow preferences. Choices are saved automatically to `settings.conf`; theme,
@@ -320,9 +322,27 @@ cargo run --locked --release -- --demo
 
 On Windows, `kea.exe` uses the GUI subsystem and does not intentionally allocate a companion console window. Development builds remain unsigned.
 
-Version tags named exactly `v<workspace-version>` publish unsigned Linux, macOS
-and Windows archives through GitHub Actions after the cross-platform CI and Linux
-desktop smoke test pass. The tagged commit must be reachable from `main`.
+Version tags named exactly `v<workspace-version>` publish unsigned Linux and macOS
+archives, a portable Windows archive, and a current-user Windows installer through
+GitHub Actions after the cross-platform CI and Linux desktop smoke test pass. The
+tagged commit must be reachable from `main`.
+
+## Windows installation and updates
+
+The Windows installer is fixed to `%LOCALAPPDATA%\\Programs\\Kea` and does not
+request elevation. The portable ZIP remains available without installation.
+
+Windows x86_64 builds check GitHub Releases once when the initial Kea window starts
+unless `check_for_updates = false` is set. The toolbar always allows an explicit
+check. An offered update is downloaded to a temporary file, verified against the
+SHA-256 digest attached to that GitHub Release asset, and installed silently only
+after the running Kea process exits. Kea then restarts the installed copy. A
+portable build can use the same action; a successful update moves future launches
+to the per-user installed copy while leaving the original portable files untouched.
+
+This verifies release-asset integrity but does not provide Windows publisher
+identity. Release executables and installers remain unsigned for
+Authenticode/SmartScreen purposes.
 
 ## Architecture
 
