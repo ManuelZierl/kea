@@ -171,11 +171,11 @@ assert_bytes '030d'
 printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
 start_fixture frozen scripts/busy-terminal-fixture.py
 xdotool keydown Control_L keydown Shift_L
-xdotool mousemove --window "$window" 20 142
+xdotool mousemove --window "$window" 20 172
 sleep .15
 xdotool mousedown 1
 sleep .3
-xdotool mousemove --window "$window" 170 142
+xdotool mousemove --window "$window" 170 172
 sleep .3
 xdotool mouseup 1
 xdotool keyup Shift_L keyup Control_L

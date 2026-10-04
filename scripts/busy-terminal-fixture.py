@@ -13,7 +13,9 @@ with path.open("wb", buffering=0) as output:
     counter = 0
     while True:
         counter += 1
-        os.write(1, f"\x1b[H   FRAME-{counter:06d}\x1b[K".encode())
+        # Keep the sample off the first/last visual row: edge dragging is a
+        # deliberate scrollback gesture, not a stationary selection probe.
+        os.write(1, f"\x1b[3;1H   FRAME-{counter:06d}\x1b[K".encode())
         counter_path.write_text(str(counter))
         ready, _, _ = select.select([0], [], [], 0.05)
         if ready:

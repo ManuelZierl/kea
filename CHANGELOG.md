@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.1-alpha.3 — 2026-10-04
 
 - Automatically trim older terminal history at its retention limit and group nearby
   output reads into bounded frames while live rendering continues immediately.
@@ -15,6 +15,33 @@
   and terminal protocol replies continue. Return live resumes ordinary interaction.
 - Correct Linux client-decoration resize hit-testing after maximization and on
   tiled edges, preventing content clicks from being mistaken for resize gestures.
+- Keep recorded shortcuts visible when an input field temporarily has zero-width
+  layout during recording, refocus or redraw.
+- Add bounded edge autoscroll and held-wheel extension for local terminal selection,
+  plus Oldest and page controls for navigating retained output without child input.
+- Normalize platform-swapped Shift-wheel axes for local scrollback.
+- Prevent history popup clicks and wheel events from reaching the covered terminal,
+  preserving focus and explicit Forget confirmation.
+- Clip frozen-selection pointer endpoints and autoscroll to the visible canvas
+  after shrinking, without reflowing the immutable snapshot.
+
+### Validation and known limits
+
+- Combined PR checks include portable and application/component tests, Clippy,
+  Watchtower invariants, and isolated Linux graphical acceptance for tabs, guarded
+  composer actions, selection, history, replay and maximized-window controls.
+- Interactive isolated Linux QA exercised shell submission/cwd, long-output
+  navigation, frozen-view resizing and shortcut recording. See the
+  [alpha.3 acceptance record](docs/alpha3-acceptance.md) for scope and limitations.
+- Real Wayland/Mutter, Windows/macOS desktop interaction, physical keyboard/AltGr,
+  IME candidates and assistive technology remain unverified. Hosted compilation
+  and tests are not certification of those platforms.
+- TUI off-screen selection still requires application-owned export/selection or a
+  cooperating integration; Kea does not reconstruct internal documents by matching
+  redraws. Visual scrollback remains bounded to 10,000 lines.
+- Archives remain unsigned, without native installers. Recordings, history and
+  saved memories are bounded and unencrypted; v3 trimmed recordings are unreadable
+  by older releases and do not contain complete emulator checkpoints.
 
 ## 0.0.1-alpha.2 — 2026-09-27
 
