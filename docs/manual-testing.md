@@ -417,3 +417,25 @@ Current contracts: [interaction](unified-session.md),
 [terminal selection](terminal-text-selection.md),
 [platform/editor integration](editor-integration.md), and
 [terminal compatibility](terminal-compatibility-alpha.md).
+
+
+## Windows updater / no-elevation acceptance
+
+Run this on a normal non-administrator Windows account with two disposable release
+versions.
+
+1. Install the older `*-windows-x86_64-setup.exe`. Confirm Windows does not request
+   elevation and `kea.exe` is under `%LOCALAPPDATA%\Programs\Kea`.
+2. Launch Kea and use **Updates**. With a newer eligible GitHub Release present,
+   confirm the toolbar offers its semantic version.
+3. Choose the update. Kea must stay open while the installer downloads and its
+   GitHub SHA-256 digest is verified, then close, run the current-user installer
+   silently, and restart on the newer version.
+4. Confirm the Start-menu shortcut and Apps/Installed apps entry still work and
+   show the newer version. No UAC prompt should have appeared.
+5. In a test harness, serve altered installer bytes while retaining the original
+   expected digest. Kea must report a digest mismatch and must not exit or run it.
+6. Set `check_for_updates = false`, restart, and confirm no automatic check occurs;
+   the toolbar's manual check must still work.
+7. Repeat from the portable ZIP. A successful update may migrate execution to the
+   per-user install; the original portable directory must not be deleted or modified.
