@@ -75,8 +75,9 @@ the library/component tests; `--lib` intentionally runs only the latter.
 
 Raw terminal output is never replaced by rendered text or fabricated metadata
 bytes. Ordered `Submitted` events hold authored shell submissions separately
-from output, resize and lifecycle events. The writer emits v2; the reader retains
-v1 compatibility. Terminal replay ignores `Submitted`; `kea-document` observes
+from output, resize and lifecycle events. Complete-prefix recordings use v2;
+trimmed suffixes use v3 prefix-loss headers. The reader retains v1/v2 compatibility.
+Terminal replay ignores `Submitted`; `kea-document` observes
 it. Recordings contain no raw keystroke stream.
 
 The bounded OSC 779 parser owns live input context. Each complete report is a
@@ -149,9 +150,9 @@ No selection state is recorded and historical interaction cannot send PTY input.
 
 Live and historical emulators are separate. Live output/protocol replies continue while an older screen is inspected. Historical emulators cannot send input, issue replies, mutate the clipboard, open URLs or change windows. Returning to LIVE changes only the view.
 
-Terminal history is currently bounded to 32 MiB of accounted data/overhead or 100,000 events. Structured retention is bounded separately. Reaching a block/document limit may truncate optional structure but never stops the PTY or command execution.
+Terminal history is bounded to 32 MiB of accounted data/overhead or 100,000 events; oldest events are evicted in batches while recent capture continues. Output reads are grouped into frames of up to 50 ms or 64 KiB without delaying live rendering or observers. Structural events flush output groups. Structured retention is bounded separately. Reaching a block/document limit may truncate optional structure but never stops the PTY or command execution.
 
-Disk recording is explicit, create-only, bounded and unencrypted. Backward seeks currently replay from zero; future checkpoints must capture complete parser/emulator state, not only the visible grid.
+Disk recording is explicit, create-only, independently bounded and unencrypted. Saved trimmed suffixes use v3 prefix-loss metadata; complete recordings still use v2. Backward seeks replay the retained suffix from an empty emulator and explicitly report missing earlier state. This is partial replay, not a checkpoint. Future checkpoints must capture complete parser/emulator state, not only the visible grid.
 
 ## Platform validation
 

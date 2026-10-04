@@ -28,11 +28,12 @@ impl Render for KeaView {
             search.set_target(editor, enabled, cx);
         });
         let duration = self.session.recording().duration();
+        let start = self.session.recording().start_time();
         let position = self.session.position();
-        let fraction = if duration == 0 {
+        let fraction = if duration == start {
             0.
         } else {
-            position as f32 / duration as f32
+            position.saturating_sub(start) as f32 / (duration - start) as f32
         };
         let screen = self.session.screen();
         let terminal_display_offset = screen.display_offset;
@@ -117,7 +118,9 @@ impl Render for KeaView {
                 .size_full(),
             );
 
-        let terminal_mode = if self.session.is_history() {
+        let terminal_mode = if self.session.is_frozen() {
+            "Frozen selection"
+        } else if self.session.is_history() {
             "History"
         } else {
             "Live"
@@ -131,6 +134,8 @@ impl Render for KeaView {
             "Selection changed · local caret retained"
         } else if terminal_local_active {
             "Local selection · arrows move · Shift+arrows extend · Esc clears"
+        } else if self.session.is_frozen() {
+            "Frozen · live output continues · Return live to interact"
         } else if self.session.is_history() {
             "History · select/copy only"
         } else if terminal_mouse_reporting && self.settings.shift_mouse_selects_locally {
@@ -357,7 +362,9 @@ impl Render for KeaView {
             });
         let status_is_warning = status_warning.is_some();
         let status = status_warning.or_else(|| self.notice.clone()).unwrap_or_else(|| {
-            if self.session.is_history() {
+            if self.session.is_frozen() {
+                "Frozen terminal view · Return live to interact".into()
+            } else if self.session.is_history() {
                 if compact_chrome {
                     return "Return live".into();
                 }
@@ -384,7 +391,7 @@ impl Render for KeaView {
             (Some(path), false) => format!("Shell directory (last reported): {path}"),
             _ => "Shell directory: not reported".into(),
         };
-        let persistence_status = if self.session.persistence_active() {
+        let mut persistence_status = if self.session.persistence_active() {
             let name = self
                 .session
                 .persistence_path()
@@ -397,7 +404,12 @@ impl Render for KeaView {
         } else {
             "Temporary".into()
         };
-        let shell_state = if self.session.is_history() {
+        if self.session.recording().discarded_events() > 0 {
+            persistence_status.push_str(" · Earlier history trimmed; replay is partial");
+        }
+        let shell_state = if self.session.is_frozen() {
+            "Frozen view"
+        } else if self.session.is_history() {
             "History"
         } else if self.input_context.ready() {
             "Ready"
@@ -635,6 +647,8 @@ impl Render for KeaView {
                     self.control("live", "Return live", Action::GoLive, cx)
                         .into_any_element()
                 });
+        } else if self.session.is_frozen() {
+            toolbar = toolbar.child(self.control("live", "Return live", Action::GoLive, cx));
         } else if self.session.recording().events().len() > 1 {
             toolbar = toolbar.child(if compact_chrome {
                 Button::new("history")

@@ -42,6 +42,18 @@ pub struct Event {
     pub kind: Kind,
 }
 
+impl Kind {
+    /// Payload plus per-event bookkeeping used by recording and journal quotas.
+    pub fn retained_bytes(&self) -> usize {
+        let payload = match self {
+            Self::Output(bytes) => bytes.len(),
+            Self::Resize(_) | Self::Exit(_) => 4,
+            Self::Submitted { context, input, .. } => context.len() + input.len() + 10,
+        };
+        payload.saturating_add(64)
+    }
+}
+
 pub(crate) fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }

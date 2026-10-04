@@ -116,9 +116,10 @@ execution; Escape dismisses. Editing, cursor changes and blur invalidate results
 
 ## Recording and trust
 
-New recordings use v2: raw terminal output, resizes and lifecycle retain their
+Complete recordings use v2: raw terminal output, resizes and lifecycle retain their
 order and exact bytes; authored shell submissions are separate metadata events.
-Both v1 and v2 are readable. Earlier releases cannot read v2. Terminal replay
+Trimmed suffixes use v3 header metadata to declare missing earlier state; v1 and
+v2 remain readable. Earlier releases cannot read v3. Terminal replay
 ignores submission events; the block observer may use them to reconstruct blocks.
 
 Markers are interoperability, not authentication. Terminal programs can forge

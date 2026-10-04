@@ -25,6 +25,7 @@ tree-sitter-bash = "=0.23.3"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+gpui-component = { path = "../../vendor/gpui-component", version = "=0.5.1", default-features = false, features = ["test-support"] }
 
 [lints]
 workspace = true

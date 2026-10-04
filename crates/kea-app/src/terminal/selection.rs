@@ -10,6 +10,10 @@ pub enum MouseOwner {
     Forward,
 }
 
+pub fn frozen_drag(control: bool, shift: bool) -> bool {
+    control && shift
+}
+
 pub fn mouse_owner(
     reporting: bool,
     shift_local: bool,

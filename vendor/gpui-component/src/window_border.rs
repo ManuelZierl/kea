@@ -3,7 +3,8 @@
 use gpui::{
     AnyElement, App, Bounds, CursorStyle, Decorations, Edges, HitboxBehavior, Hsla,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement, Pixels, Point, RenderOnce,
-    ResizeEdge, Size, Styled as _, Window, canvas, div, point, prelude::FluentBuilder as _, px,
+    ResizeEdge, Size, Styled as _, Tiling, Window, canvas, div, point, prelude::FluentBuilder as _,
+    px,
 };
 
 use crate::ActiveTheme;
@@ -79,17 +80,15 @@ impl RenderOnce for WindowBorder {
                         canvas(
                             |_bounds, window, _| {
                                 window.insert_hitbox(
-                                    Bounds::new(
-                                        point(px(0.0), px(0.0)),
-                                        window.window_bounds().get_bounds().size,
-                                    ),
+                                    Bounds::new(point(px(0.0), px(0.0)), window.viewport_size()),
                                     HitboxBehavior::Normal,
                                 )
                             },
                             move |_bounds, hitbox, window, _| {
                                 let mouse = window.mouse_position();
-                                let size = window.window_bounds().get_bounds().size;
-                                let Some(edge) = resize_edge(mouse, SHADOW_SIZE, size) else {
+                                let size = window.viewport_size();
+                                let Some(edge) = resize_edge(mouse, SHADOW_SIZE, size, tiling)
+                                else {
                                     return;
                                 };
                                 window.set_cursor_style(
@@ -125,10 +124,10 @@ impl RenderOnce for WindowBorder {
                     .when(!tiling.left, |div| div.pl(SHADOW_SIZE))
                     .when(!tiling.right, |div| div.pr(SHADOW_SIZE))
                     .on_mouse_down(MouseButton::Left, move |_, window, _| {
-                        let size = window.window_bounds().get_bounds().size;
+                        let size = window.viewport_size();
                         let pos = window.mouse_position();
 
-                        match resize_edge(pos, SHADOW_SIZE, size) {
+                        match resize_edge(pos, SHADOW_SIZE, size, tiling) {
                             Some(edge) => window.start_window_resize(edge),
                             None => {}
                         };
@@ -175,25 +174,109 @@ impl RenderOnce for WindowBorder {
     }
 }
 
-fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> Option<ResizeEdge> {
-    let edge = if pos.y < shadow_size && pos.x < shadow_size {
-        ResizeEdge::TopLeft
-    } else if pos.y < shadow_size && pos.x > size.width - shadow_size {
-        ResizeEdge::TopRight
-    } else if pos.y < shadow_size {
-        ResizeEdge::Top
-    } else if pos.y > size.height - shadow_size && pos.x < shadow_size {
-        ResizeEdge::BottomLeft
-    } else if pos.y > size.height - shadow_size && pos.x > size.width - shadow_size {
-        ResizeEdge::BottomRight
-    } else if pos.y > size.height - shadow_size {
-        ResizeEdge::Bottom
-    } else if pos.x < shadow_size {
-        ResizeEdge::Left
-    } else if pos.x > size.width - shadow_size {
-        ResizeEdge::Right
-    } else {
-        return None;
-    };
-    Some(edge)
+fn resize_edge(
+    pos: Point<Pixels>,
+    shadow_size: Pixels,
+    size: Size<Pixels>,
+    tiling: Tiling,
+) -> Option<ResizeEdge> {
+    let top = !tiling.top && pos.y < shadow_size;
+    let bottom = !tiling.bottom && pos.y > size.height - shadow_size;
+    let left = !tiling.left && pos.x < shadow_size;
+    let right = !tiling.right && pos.x > size.width - shadow_size;
+
+    match (top, bottom, left, right) {
+        (true, _, true, _) => Some(ResizeEdge::TopLeft),
+        (true, _, _, true) => Some(ResizeEdge::TopRight),
+        (_, true, true, _) => Some(ResizeEdge::BottomLeft),
+        (_, true, _, true) => Some(ResizeEdge::BottomRight),
+        (true, _, _, _) => Some(ResizeEdge::Top),
+        (_, true, _, _) => Some(ResizeEdge::Bottom),
+        (_, _, true, _) => Some(ResizeEdge::Left),
+        (_, _, _, true) => Some(ResizeEdge::Right),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RESIZE_BORDER: Pixels = px(12.0);
+
+    #[test]
+    fn resized_content_does_not_use_the_old_restore_width_as_a_resize_edge() {
+        let current_size = Size {
+            width: px(1440.0),
+            height: px(900.0),
+        };
+        let point_inside_current_content_beyond_old_width = point(px(1200.0), px(400.0));
+
+        assert_eq!(
+            resize_edge(
+                point_inside_current_content_beyond_old_width,
+                RESIZE_BORDER,
+                current_size,
+                Tiling::default(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn maximized_and_individually_tiled_edges_do_not_request_resize() {
+        let current_size = Size {
+            width: px(1440.0),
+            height: px(900.0),
+        };
+
+        assert_eq!(
+            resize_edge(
+                point(px(1438.0), px(450.0)),
+                RESIZE_BORDER,
+                current_size,
+                Tiling::tiled(),
+            ),
+            None
+        );
+        assert_eq!(
+            resize_edge(
+                point(px(1438.0), px(450.0)),
+                RESIZE_BORDER,
+                current_size,
+                Tiling {
+                    right: true,
+                    ..Tiling::default()
+                },
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn available_normal_window_edges_still_request_resize() {
+        let current_size = Size {
+            width: px(1440.0),
+            height: px(900.0),
+        };
+
+        assert_eq!(
+            resize_edge(
+                point(px(1438.0), px(450.0)),
+                RESIZE_BORDER,
+                current_size,
+                Tiling::default(),
+            ),
+            Some(ResizeEdge::Right)
+        );
+        assert_eq!(
+            resize_edge(
+                point(px(1.0), px(1.0)),
+                RESIZE_BORDER,
+                current_size,
+                Tiling::default(),
+            ),
+            Some(ResizeEdge::TopLeft)
+        );
+    }
 }

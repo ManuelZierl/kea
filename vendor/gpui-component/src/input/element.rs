@@ -175,17 +175,28 @@ impl TextElement {
         {
             let selection_changed = state.last_selected_range != Some(selected_range);
             if selection_changed && !is_selected_all {
-                scroll_offset.x = if scroll_offset.x + cursor_pos.x
-                    > (bounds.size.width - line_number_width - RIGHT_MARGIN)
-                {
-                    // cursor is out of right
-                    bounds.size.width - line_number_width - RIGHT_MARGIN - cursor_pos.x
-                } else if scroll_offset.x + cursor_pos.x < px(0.) {
-                    // cursor is out of left
-                    scroll_offset.x - cursor_pos.x
-                } else {
-                    scroll_offset.x
-                };
+                let horizontal_viewport = bounds.size.width - line_number_width - RIGHT_MARGIN;
+                if horizontal_viewport > px(0.) {
+                    scroll_offset.x = if scroll_offset.x + cursor_pos.x > horizontal_viewport {
+                        // cursor is out of right
+                        horizontal_viewport - cursor_pos.x
+                    } else if scroll_offset.x + cursor_pos.x < px(0.) {
+                        // cursor is out of left
+                        scroll_offset.x - cursor_pos.x
+                    } else {
+                        scroll_offset.x
+                    };
+
+                    if state.selection_reversed {
+                        if scroll_offset.x + cursor_start.x < px(0.) {
+                            // selection start is out of left
+                            scroll_offset.x = -cursor_start.x;
+                        }
+                    } else if scroll_offset.x + cursor_end.x <= px(0.) {
+                        // selection end is out of left
+                        scroll_offset.x = -cursor_end.x;
+                    }
+                }
 
                 // If we change the scroll_offset.y, GPUI will render and trigger the next run loop.
                 // So, here we just adjust offset by `line_height` for move smooth.
@@ -201,19 +212,11 @@ impl TextElement {
                     };
 
                 if state.selection_reversed {
-                    if scroll_offset.x + cursor_start.x < px(0.) {
-                        // selection start is out of left
-                        scroll_offset.x = -cursor_start.x;
-                    }
                     if scroll_offset.y + cursor_start.y < px(0.) {
                         // selection start is out of top
                         scroll_offset.y = -cursor_start.y;
                     }
                 } else {
-                    if scroll_offset.x + cursor_end.x <= px(0.) {
-                        // selection end is out of left
-                        scroll_offset.x = -cursor_end.x;
-                    }
                     if scroll_offset.y + cursor_end.y <= px(0.) {
                         // selection end is out of top
                         scroll_offset.y = -cursor_end.y;

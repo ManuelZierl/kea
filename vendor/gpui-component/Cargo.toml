@@ -42,6 +42,7 @@ inspector = [
     "gpui/inspector",
     "wry/devtools",
 ]
+test-support = []
 tree-sitter-languages = [
     "dep:tree-sitter-bash",
     "dep:tree-sitter-c",

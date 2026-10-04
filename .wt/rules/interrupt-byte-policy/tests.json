@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "modifier-based-c-classification-is-flagged",
+      "files": [{
+        "path": "crates/kea-app/src/app/interrupt.rs",
+        "content": "fn is_ctrl_c(key: &Keystroke) -> bool { key.key.eq_ignore_ascii_case(\"c\") && key.modifiers.control && !key.modifiers.shift }\n"
+      }],
+      "expect": [{
+        "path": "crates/kea-app/src/app/interrupt.rs",
+        "code": "modifier-classification",
+        "kind": "review"
+      }]
+    },
+    {
+      "name": "encoded-byte-classification-is-not-flagged",
+      "files": [{
+        "path": "crates/kea-app/src/app/interrupt.rs",
+        "content": "fn is_ctrl_c(key: &Keystroke) -> bool { input::encode(key, false, false).as_deref().is_some_and(is_interrupt_bytes) }\n"
+      }],
+      "expect": []
+    }
+  ]
+}

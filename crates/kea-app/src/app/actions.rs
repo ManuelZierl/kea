@@ -194,13 +194,31 @@ impl KeaView {
         ) else {
             return;
         };
-        let at = playback::micros_at_fraction(fraction, self.session.recording().duration());
+        let recording = self.session.recording();
+        let at = recording.start_time()
+            + playback::micros_at_fraction(fraction, recording.duration() - recording.start_time());
         let result = self.session.seek_time(at);
         window.focus(&self.focus);
         self.result(result, cx);
     }
 
     pub(super) fn invoke(&mut self, event: &Invoke, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.is_frozen()
+            && matches!(
+                event.action,
+                Action::GoLive
+                    | Action::PreviousEvent
+                    | Action::NextEvent
+                    | Action::BackFiveSeconds
+                    | Action::ForwardFiveSeconds
+                    | Action::PlayPause
+            )
+        {
+            // A drag begun on a snapshot must not resume on a different grid if
+            // a keyboard action changes views before the mouse is released.
+            self.terminal_gesture = None;
+            self.terminal_gesture_bounds = None;
+        }
         let terminal_focused = self.focus.is_focused(window);
         match event.action {
             Action::Copy if terminal_focused => self.copy_terminal_selection(cx),
@@ -337,6 +355,11 @@ impl KeaView {
             }
             LocalKey::Forward => {}
         }
+        if self.session.is_frozen() {
+            // Keep read-only chrome actions (especially Go Live) reachable.
+            // Session input and the platform text bridge remain guarded.
+            return;
+        }
         self.session.clear_terminal_selection();
         cx.notify();
         if let Some(bytes) = input::encode(
@@ -345,7 +368,7 @@ impl KeaView {
             self.session.terminal_extended_keyboard(),
         ) {
             if self.session.input_allowed() {
-                if interrupt::is_ctrl_c(&event.keystroke) {
+                if kea_app::terminal::interrupt::is_interrupt_bytes(&bytes) {
                     self.request_interrupt(bytes, window, cx);
                     cx.stop_propagation();
                     return;

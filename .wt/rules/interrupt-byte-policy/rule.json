@@ -1,0 +1,28 @@
+{
+  "code": {
+    "capabilities": ["ast.v1"],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "modifier-classification": {
+      "help": "Classify terminal interrupts from the exact encoded bytes so collapsed modifiers cannot bypass the guard.",
+      "kind": "review",
+      "message": "Ctrl-C policy must follow the exact terminal byte, not an incomplete modifier predicate."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "execution": "file",
+  "id": "interrupt-byte-policy",
+  "mode": "advisory",
+  "patterns": {},
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": ["crates/kea-app/src/app/interrupt.rs"],
+    "require_files": []
+  },
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "Interrupt policy follows encoded terminal bytes"
+}
