@@ -10,6 +10,7 @@ mod shell_metadata;
 mod startup;
 mod tabs;
 mod terminal_input;
+mod updater;
 use tabs::{KeaRoot, WorkspaceEvent};
 mod workspace;
 
@@ -24,6 +25,7 @@ use kea_app::{
     editor::{command as command_editor, completion, provider::Providers},
     reverse_search::view::ReverseSearchView,
     shell::ShellFlavor,
+    update,
     terminal::{context::InputContext, input, recovery::PromptLineTracker, selection},
 };
 use kea_document::Document;
@@ -102,6 +104,9 @@ struct KeaView {
     completion_providers: Providers,
     completion_source: String,
     completion_bounds: Vec<Option<Bounds<Pixels>>>,
+    update_available: Option<update::UpdateInfo>,
+    update_rx: Option<Receiver<update::WorkerResult>>,
+    update_action: Option<updater::UpdateAction>,
     editor: Entity<InputState>,
     reverse_search: Entity<ReverseSearchView>,
     document_ui: document_view::DocumentUi,

@@ -131,6 +131,7 @@ impl KeaView {
                             }
                             _ => {}
                         }
+                        this.poll_update(cx);
                         this.pump_session(cx);
                         this.autoscroll_terminal_selection(window, cx);
                         this.validate_workflow(window, cx);
@@ -198,6 +199,9 @@ impl KeaView {
             completion_providers,
             completion_source: String::new(),
             completion_bounds: Vec::new(),
+            update_available: None,
+            update_rx: None,
+            update_action: None,
             editor,
             reverse_search,
             document_ui,

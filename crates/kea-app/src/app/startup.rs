@@ -192,6 +192,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             };
             if let Err(error) = cx.open_window(options, |window, cx| {
                 rendering::apply_appearance(&settings, window, cx);
+                let check_for_updates = settings.check_for_updates;
                 let view = cx.new(|cx| {
                     KeaView::new(
                         session,
@@ -212,6 +213,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                             window.focus(&view.focus);
                         } else {
                             view.focus_editor(window, cx);
+                        }
+                        if check_for_updates {
+                            view.begin_update_check(false, cx);
                         }
                     });
                 });
