@@ -40,6 +40,7 @@ pub enum Observed {
 pub struct PumpResult {
     pub changed: bool,
     pub observed: Vec<Observed>,
+    pub clipboard_stores: Vec<String>,
 }
 
 impl Session {
@@ -141,6 +142,9 @@ impl Session {
                         &mut sink
                     };
                     result.changed |= self.accept_output(at, bytes, visible, observed);
+                    result
+                        .clipboard_stores
+                        .extend(self.live.drain_clipboard_stores());
                 }
                 Some(Message::Error(error)) => {
                     self.warning = Some(error);
@@ -170,6 +174,9 @@ impl Session {
                         .map(EchoFilter::finish)
                         .unwrap_or_default();
                     result.changed |= self.accept_visible(pending.clone());
+                    result
+                        .clipboard_stores
+                        .extend(self.live.drain_clipboard_stores());
                     if self.record_at(at, Kind::Exit(code)) {
                         self.presentation.push(PresentationEvent::Exit(pending));
                     }
