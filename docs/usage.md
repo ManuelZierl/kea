@@ -268,6 +268,7 @@ theme = system
 post_submit_focus = editor
 persist_history = false
 history_persistence = false
+check_for_updates = true
 shift_mouse_selects_locally = true
 animate_logo = true
 show_blocks = false
@@ -333,12 +334,16 @@ The Windows installer is fixed to `%LOCALAPPDATA%\\Programs\\Kea` and does not
 request elevation. The portable ZIP remains available without installation.
 
 Windows x86_64 builds check GitHub Releases once when the initial Kea window starts
-unless `check_for_updates = false` is set. The toolbar always allows an explicit
-check. An offered update is downloaded to a temporary file, verified against the
-SHA-256 digest attached to that GitHub Release asset, and installed silently only
-after the running Kea process exits. Kea then restarts the installed copy. A
-portable build can use the same action; a successful update moves future launches
-to the per-user installed copy while leaving the original portable files untouched.
+unless `check_for_updates = false` is set. The title bar always allows an explicit
+check. Update state belongs to the window rather than an individual terminal tab.
+Choosing **Update v…** downloads the installer to a temporary file and verifies it
+against the SHA-256 digest attached to that GitHub Release asset while Kea keeps
+running. The control then changes to **Restart for v…**. Restart requires an
+explicit confirmation because every terminal process and unsaved transient state
+will be closed. After acceptance, the verified current-user installer runs silently
+and Kea restarts the installed copy. A portable build can use the same action; a
+successful update moves future launches to the per-user installed copy while
+leaving the original portable files untouched.
 
 This verifies release-asset integrity but does not provide Windows publisher
 identity. Release executables and installers remain unsigned for
