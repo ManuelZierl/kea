@@ -519,14 +519,25 @@ impl KeaRoot {
             self.remove_tab(id, window, cx);
             return;
         }
-        let name = tab.title.clone();
+        let (title, message) = match &tab.backing {
+            TerminalBacking::Process => (
+                format!("Close {}?", tab.title),
+                "Closing ends this terminal's process and discards its draft and temporary history. Saved recordings remain on disk. Other terminals keep running.".to_string(),
+            ),
+            TerminalBacking::Tmux { session_name } => (
+                format!("Detach from tmux session {session_name}?"),
+                format!(
+                    "Closing ends only this Kea tmux client. The persistent tmux session {session_name} keeps running and can be attached again from the tmux manager."
+                ),
+            ),
+        };
         let weak = cx.entity().downgrade();
         let restore = weak.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let restore = restore.clone();
-            dialog.title(format!("Close {name}?"))
-                .child("Closing ends this terminal's process and discards its draft and temporary history. Saved recordings remain on disk. Other terminals keep running.")
+            dialog.title(title.clone())
+                .child(message.clone())
                 .confirm()
                 .on_ok(move |_, window, cx| {
                     let _ = weak.update(cx, |this, cx| this.remove_tab(id, window, cx));
@@ -582,13 +593,21 @@ impl KeaRoot {
             window.remove_window();
             return;
         }
+        let has_tmux = self.tabs.iter().any(|(_, tab)| {
+            matches!(&tab.backing, TerminalBacking::Tmux { .. })
+        });
+        let message = if has_tmux {
+            "All Kea terminal client processes will end and drafts/temporary history will be discarded. Attached tmux sessions keep running; kill them explicitly from the tmux manager if that is what you intend."
+        } else {
+            "All terminal processes will end. Drafts and temporary session history will be discarded; saved recordings remain on disk."
+        };
         let weak = cx.entity().downgrade();
         let restore = weak.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let restore = restore.clone();
             dialog.title("Close all Kea terminals?")
-                .child("All terminal processes will end. Drafts and temporary session history will be discarded; saved recordings remain on disk.")
+                .child(message)
                 .confirm()
                 .on_ok(move |_, window, cx| {
                     let _ = weak.update(cx, |this, _| this.close_allowed = true);
