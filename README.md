@@ -35,6 +35,8 @@ See [Terminal tabs](docs/terminal-tabs.md) for creation, switching, reordering a
   memories. Recall never executes automatically.
 - **Inspect output.** Select and copy terminal text, browse bounded scrollback,
   or save and replay a session. Command blocks are optional.
+- **Manage tmux visually.** List local tmux sessions, attach them as Kea tabs,
+  and explicitly kill persistent sessions without remembering tmux commands.
 - **Choose what persists.** Sessions start temporary. Saving is explicit;
   recordings and persisted history are unencrypted and may contain secrets.
 
