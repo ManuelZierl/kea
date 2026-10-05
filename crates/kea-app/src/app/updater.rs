@@ -116,11 +116,7 @@ impl KeaRoot {
         cx.notify();
     }
 
-    pub(super) fn request_update_restart(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn request_update_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.has_active_dialog(cx) {
             return;
         }
