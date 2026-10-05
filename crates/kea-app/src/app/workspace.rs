@@ -333,6 +333,8 @@ impl KeaView {
         let previous_context = self.input_context.generation();
         let was_prompt_ready = self.input_context.ready();
         let pump = self.session.pump_observed();
+        let pump_changed = pump.changed;
+        let clipboard_store = pump.clipboard_stores.into_iter().last();
         let mut changed = false;
         for event in pump.observed {
             changed |= match event {
@@ -346,6 +348,11 @@ impl KeaView {
                     self.document.finish(at)
                 }
             };
+        }
+        if self.visible {
+            if let Some(text) = clipboard_store {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
         }
         if previous_context != self.input_context.generation() {
             self.pending_run = None;
@@ -367,7 +374,7 @@ impl KeaView {
         if changed {
             self.document_ui.dirty = true;
         }
-        if pump.changed || changed {
+        if pump_changed || changed {
             cx.notify();
         }
         prompt_arrived
