@@ -138,6 +138,7 @@ fn validate_session_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
+
 fn no_server_running(stderr: &str) -> bool {
     let stderr = stderr.to_ascii_lowercase();
     stderr.contains("no server running")
