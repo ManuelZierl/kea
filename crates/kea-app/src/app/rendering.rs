@@ -13,7 +13,6 @@ use kea_app::{
     },
     history::playback,
     terminal::mouse as terminal_mouse,
-    update,
 };
 
 const FALLBACK_CELL_WIDTH_EM: f32 = 0.6;
@@ -635,50 +634,6 @@ impl Render for KeaView {
             .on_click(cx.listener(|this, _, _, cx| this.save_session(cx)))
             .into_any_element()
         };
-        let update_control = update::supported().then(|| {
-            let (label, tooltip, disabled, install) = match self.update_action {
-                Some(updater::UpdateAction::Checking { .. }) => (
-                    "Checking…".to_string(),
-                    "Checking GitHub Releases for a newer Kea version".to_string(),
-                    true,
-                    false,
-                ),
-                Some(updater::UpdateAction::Installing) => (
-                    "Updating…".to_string(),
-                    "Downloading and verifying the Kea update".to_string(),
-                    true,
-                    false,
-                ),
-                None => match &self.update_available {
-                    Some(info) => (
-                        format!("Update v{}", info.version),
-                        format!("Install Kea v{} and restart", info.version),
-                        false,
-                        true,
-                    ),
-                    None => (
-                        "Updates".to_string(),
-                        "Check GitHub Releases for a newer Kea version".to_string(),
-                        false,
-                        false,
-                    ),
-                },
-            };
-            Button::new("updates")
-                .when(compact_chrome, |button| button.icon(IconName::ArrowDown))
-                .when(!compact_chrome, |button| button.label(label))
-                .tooltip(tooltip)
-                .ghost()
-                .small()
-                .disabled(disabled)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if install {
-                        this.begin_update_install(cx);
-                    } else {
-                        this.begin_update_check(true, cx);
-                    }
-                }))
-        });
         let mut toolbar = div()
             .h(toolbar_height)
             .flex_shrink_0()
@@ -714,11 +669,7 @@ impl Render for KeaView {
                 cx,
             ))
             .child(div().flex_1());
-        if let Some(update_control) = update_control {
-            toolbar = toolbar.child(update_control);
-        }
-        toolbar = toolbar
-            .child(
+        toolbar = toolbar.child(
                 Button::new("settings")
                     .icon(IconName::Settings)
                     .tooltip("Open settings")

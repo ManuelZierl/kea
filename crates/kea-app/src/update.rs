@@ -2,7 +2,7 @@
 //!
 //! Kea never trusts a download URL by itself. A candidate installer must be an
 //! asset of a GitHub Release and carry GitHub's SHA-256 asset digest; the staged
-//! installer is hashed again before the application agrees to restart.
+//! installer is hashed again before the application offers to restart.
 use anyhow::{Context as _, Result};
 use semver::Version;
 use serde::Deserialize;
@@ -10,14 +10,13 @@ use sha2::{Digest as _, Sha256};
 use std::{
     fs::{self, File},
     io::{Read as _, Write as _},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
 };
 
-const RELEASES_URL: &str =
-    "https://api.github.com/repos/ManuelZierl/kea/releases?per_page=20";
+const RELEASES_URL: &str = "https://api.github.com/repos/ManuelZierl/kea/releases?per_page=20";
 const MAX_INSTALLER_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,10 +27,16 @@ pub struct UpdateInfo {
     size: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StagedUpdate {
+    pub version: Version,
+    installer_path: PathBuf,
+}
+
 #[derive(Debug)]
 pub enum WorkerResult {
     Checked(std::result::Result<Option<UpdateInfo>, String>),
-    InstallReady(std::result::Result<(), String>),
+    Staged(std::result::Result<StagedUpdate, String>),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -63,11 +68,11 @@ pub fn check_in_background() -> Receiver<WorkerResult> {
     rx
 }
 
-pub fn install_in_background(update: UpdateInfo) -> Receiver<WorkerResult> {
+pub fn stage_in_background(update: UpdateInfo) -> Receiver<WorkerResult> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let result = prepare_update(&update).map_err(|error| format!("{error:#}"));
-        let _ = tx.send(WorkerResult::InstallReady(result));
+        let _ = tx.send(WorkerResult::Staged(result));
     });
     rx
 }
@@ -110,9 +115,11 @@ fn select_update(current: &Version, releases: &[GithubRelease]) -> Option<Update
                 return None;
             }
 
-            let expected_name =
-                format!("kea-{}-windows-x86_64-setup.exe", release.tag_name);
-            let asset = release.assets.iter().find(|asset| asset.name == expected_name)?;
+            let expected_name = format!("kea-{}-windows-x86_64-setup.exe", release.tag_name);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == expected_name)?;
             if asset.size == 0 || asset.size > MAX_INSTALLER_BYTES {
                 return None;
             }
@@ -133,7 +140,7 @@ fn parse_sha256(value: &str) -> Option<String> {
         .then(|| digest.to_ascii_lowercase())
 }
 
-fn prepare_update(update: &UpdateInfo) -> Result<()> {
+fn prepare_update(update: &UpdateInfo) -> Result<StagedUpdate> {
     anyhow::ensure!(supported(), "self-update is not supported on this platform");
     anyhow::ensure!(
         update.size <= MAX_INSTALLER_BYTES,
@@ -182,16 +189,15 @@ fn prepare_update(update: &UpdateInfo) -> Result<()> {
         "update digest does not match the GitHub release asset"
     );
 
-    let (file, staged_path) = staged
+    let (file, installer_path) = staged
         .keep()
         .map_err(|error| error.error)
         .context("cannot retain the staged Kea update")?;
     drop(file);
-    if let Err(error) = spawn_install_helper(&staged_path) {
-        let _ = fs::remove_file(&staged_path);
-        return Err(error);
-    }
-    Ok(())
+    Ok(StagedUpdate {
+        version: update.version.clone(),
+        installer_path,
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -210,6 +216,15 @@ fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+pub fn launch_staged_update(staged: &StagedUpdate) -> Result<()> {
+    anyhow::ensure!(supported(), "self-update is not supported on this platform");
+    anyhow::ensure!(
+        staged.installer_path.is_file(),
+        "the staged update installer is no longer available"
+    );
+    spawn_install_helper(&staged.installer_path)
+}
+
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn spawn_install_helper(staged: &Path) -> Result<()> {
     use std::{os::windows::process::CommandExt as _, process::Command};
@@ -217,7 +232,7 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let current = std::env::current_exe().context("cannot locate the running Kea executable")?;
     let local_app_data = std::env::var_os("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .context("LOCALAPPDATA is unavailable")?;
     let installed = local_app_data.join("Programs").join("Kea").join("kea.exe");
     let script = format!(

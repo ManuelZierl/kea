@@ -25,8 +25,8 @@ use kea_app::{
     editor::{command as command_editor, completion, provider::Providers},
     reverse_search::view::ReverseSearchView,
     shell::ShellFlavor,
-    update,
     terminal::{context::InputContext, input, recovery::PromptLineTracker, selection},
+    update,
 };
 use kea_document::Document;
 use kea_session::Session;
@@ -104,9 +104,6 @@ struct KeaView {
     completion_providers: Providers,
     completion_source: String,
     completion_bounds: Vec<Option<Bounds<Pixels>>>,
-    update_available: Option<update::UpdateInfo>,
-    update_rx: Option<Receiver<update::WorkerResult>>,
-    update_action: Option<updater::UpdateAction>,
     editor: Entity<InputState>,
     reverse_search: Entity<ReverseSearchView>,
     document_ui: document_view::DocumentUi,

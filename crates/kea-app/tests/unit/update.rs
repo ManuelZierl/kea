@@ -9,8 +9,7 @@ fn release(tag: &str, prerelease: bool, with_digest: bool) -> GithubRelease {
             name: format!("kea-{tag}-windows-x86_64-setup.exe"),
             browser_download_url: format!("https://example.invalid/{tag}.exe"),
             digest: with_digest.then(|| {
-                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                    .into()
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()
             }),
             size: 1024,
         }],
