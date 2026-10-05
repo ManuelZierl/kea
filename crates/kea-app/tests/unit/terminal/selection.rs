@@ -35,6 +35,15 @@ fn edge_autoscroll_is_local_directional_and_bounded() {
 }
 
 #[test]
+fn local_shift_drag_freezes_without_overriding_forwarded_shift() {
+    for owner in [MouseOwner::LocalSimple, MouseOwner::LocalBlock] {
+        assert!(local_shift_drag_freezes(true, owner));
+        assert!(!local_shift_drag_freezes(false, owner));
+    }
+    assert!(!local_shift_drag_freezes(true, MouseOwner::Forward));
+}
+
+#[test]
 fn ownership_and_drag_phase_are_latched_at_press() {
     assert_eq!(
         mouse_owner(false, false, false, false, true),
