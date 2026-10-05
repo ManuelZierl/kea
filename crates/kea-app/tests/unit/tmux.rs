@@ -2,10 +2,7 @@ use super::*;
 
 #[test]
 fn parses_and_sorts_tmux_sessions() {
-    let sessions = parse_sessions(
-        b"$8\trml\t1\t0\n$2\tqaiva\t3\t2\n",
-    )
-    .unwrap();
+    let sessions = parse_sessions(b"$8\trml\t1\t0\n$2\tqaiva\t3\t2\n").unwrap();
 
     assert_eq!(
         sessions,
@@ -35,7 +32,9 @@ fn rejects_malformed_session_ids_and_counts() {
 
 #[test]
 fn recognizes_normal_empty_server_errors() {
-    assert!(no_server_running("no server running on /tmp/tmux-1000/default"));
+    assert!(no_server_running(
+        "no server running on /tmp/tmux-1000/default"
+    ));
     assert!(no_server_running("failed to connect to server"));
     assert!(no_server_running("no sessions"));
     assert!(!no_server_running("permission denied"));
