@@ -536,7 +536,8 @@ impl KeaRoot {
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let restore = restore.clone();
-            dialog.title(title.clone())
+            dialog
+                .title(title.clone())
                 .child(message.clone())
                 .confirm()
                 .on_ok(move |_, window, cx| {
@@ -593,9 +594,10 @@ impl KeaRoot {
             window.remove_window();
             return;
         }
-        let has_tmux = self.tabs.iter().any(|(_, tab)| {
-            matches!(&tab.backing, TerminalBacking::Tmux { .. })
-        });
+        let has_tmux = self
+            .tabs
+            .iter()
+            .any(|(_, tab)| matches!(&tab.backing, TerminalBacking::Tmux { .. }));
         let message = if has_tmux {
             "All Kea terminal client processes will end and drafts/temporary history will be discarded. Attached tmux sessions keep running; kill them explicitly from the tmux manager if that is what you intend."
         } else {
@@ -606,7 +608,8 @@ impl KeaRoot {
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let restore = restore.clone();
-            dialog.title("Close all Kea terminals?")
+            dialog
+                .title("Close all Kea terminals?")
                 .child(message)
                 .confirm()
                 .on_ok(move |_, window, cx| {
@@ -618,7 +621,9 @@ impl KeaRoot {
                     let restore = restore.clone();
                     window.defer(cx, move |window, cx| {
                         let _ = restore.update(cx, |this, cx| {
-                            if !this.close_allowed { this.focus_selected(window, cx); }
+                            if !this.close_allowed {
+                                this.focus_selected(window, cx);
+                            }
                         });
                     });
                 })
@@ -930,9 +935,7 @@ impl Render for KeaRoot {
                             .ghost()
                             .small()
                             .selected(self.tmux_open)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.toggle_tmux_manager(cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_tmux_manager(cx))),
                     )
                     .child(
                         Button::new("new-terminal")
