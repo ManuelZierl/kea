@@ -61,6 +61,36 @@ fn output_grouping_respects_time_size_and_metadata_boundaries() {
     assert_eq!(session.screen().size, size);
 }
 
+
+#[cfg(unix)]
+#[test]
+fn live_osc52_store_is_exposed_by_the_session_pump() {
+    use kea_core::Size;
+    use std::time::Instant;
+
+    let mut session = Session::spawn(
+        &[
+            "sh".into(),
+            "-c".into(),
+            "printf '\\033]52;c;S0VBLU9TQzUyX1RFU1Q=\\007'".into(),
+        ],
+        Size::new(80, 24).unwrap(),
+        None,
+    )
+    .unwrap();
+
+    let start = Instant::now();
+    let mut clipboard_stores = Vec::new();
+    while session.is_running() {
+        let pump = session.pump_observed();
+        clipboard_stores.extend(pump.clipboard_stores);
+        assert!(start.elapsed().as_secs() < 10);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    assert_eq!(clipboard_stores, vec!["KEA_OSC52_TEST".to_string()]);
+}
+
 #[cfg(unix)]
 #[test]
 fn live_capture_continues_during_rewind_and_blocks_input() {
