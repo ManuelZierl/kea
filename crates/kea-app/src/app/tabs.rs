@@ -682,8 +682,10 @@ impl Render for KeaRoot {
             };
             let label = if !context.is_empty() && context != "local" {
                 format!("{} · {context}{suffix}", tab.title)
-            } else {
+            } else if matches!(&tab.backing, TerminalBacking::Process) {
                 format!("{} {}{suffix}", tab.title, id.0 + 1)
+            } else {
+                format!("{}{suffix}", tab.title)
             };
             let drag = DraggedTab {
                 id,
@@ -739,8 +741,148 @@ impl Render for KeaRoot {
                 "No terminals open. Use + or the New terminal shortcut to open a local shell.",
             )
         };
+
+        let tmux_manager = self.tmux_open.then(|| {
+            let mut panel = div()
+                .id("tmux-manager")
+                .absolute()
+                .top(px(72.))
+                .right(px(8.))
+                .w(px(430.))
+                .max_h(px(420.))
+                .overflow_y_scroll()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .font_weight(FontWeight::BOLD)
+                                .child("Local tmux sessions"),
+                        )
+                        .child(
+                            Button::new("refresh-tmux")
+                                .label("Refresh")
+                                .ghost()
+                                .small()
+                                .disabled(self.tmux_loading)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_tmux(cx))),
+                        )
+                        .child(
+                            Button::new("close-tmux-manager")
+                                .icon(IconName::Close)
+                                .tooltip("Close tmux manager")
+                                .ghost()
+                                .small()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.tmux_open = false;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("tmux is the source of truth. Closing a Kea tab detaches only Kea; Kill ends the persistent session for all clients."),
+                );
+
+            if self.tmux_loading {
+                panel = panel.child(
+                    div()
+                        .py_2()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Refreshing local tmux sessions…"),
+                );
+            } else if self.tmux_sessions.is_empty() {
+                panel = panel.child(
+                    div()
+                        .py_2()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("No local tmux sessions are running."),
+                );
+            } else {
+                for (index, tmux_session) in self.tmux_sessions.clone().into_iter().enumerate() {
+                    let open_session = tmux_session.clone();
+                    let kill_session = tmux_session.clone();
+                    let window_label = if tmux_session.windows() == 1 {
+                        "window"
+                    } else {
+                        "windows"
+                    };
+                    let attached_label = if tmux_session.attached_clients() == 1 {
+                        "client"
+                    } else {
+                        "clients"
+                    };
+                    panel = panel.child(
+                        div()
+                            .id(("tmux-session", index))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .py_2()
+                            .px_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(tmux_session.name().to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(format!(
+                                                "{} {window_label} · {} attached {attached_label}",
+                                                tmux_session.windows(),
+                                                tmux_session.attached_clients()
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                Button::new(("open-tmux-session", index))
+                                    .label("Open")
+                                    .ghost()
+                                    .small()
+                                    .disabled(self.tabs.is_full())
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_tmux_session(open_session.clone(), window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(("kill-tmux-session", index))
+                                    .label("Kill")
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.request_kill_tmux(kill_session.clone(), window, cx);
+                                    })),
+                            ),
+                    );
+                }
+            }
+            panel
+        });
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .key_context("KeaChrome")
@@ -782,6 +924,17 @@ impl Render for KeaRoot {
                     .border_color(cx.theme().border)
                     .child(strip)
                     .child(
+                        Button::new("tmux-manager-button")
+                            .label("tmux")
+                            .tooltip("Manage local tmux sessions")
+                            .ghost()
+                            .small()
+                            .selected(self.tmux_open)
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_tmux_manager(cx)),
+                            ),
+                    )
+                    .child(
                         Button::new("new-terminal")
                             .icon(IconName::Plus)
                             .ghost()
@@ -804,6 +957,7 @@ impl Render for KeaRoot {
                     .child(notice)
             }))
             .child(body)
+            .children(tmux_manager)
             .children(dialog_layer)
     }
 }
