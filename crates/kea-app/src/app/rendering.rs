@@ -319,15 +319,24 @@ impl Render for KeaView {
                     .on_click(cx.listener(|this, _, _, cx| this.return_terminal_to_bottom(cx))),
             );
         }
+        let terminal_body = div()
+            .relative()
+            .flex()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .child(terminal)
+            .child(self.interrupt_controls(cx));
         let terminal_panel = div()
             .flex()
             .flex_col()
             .flex_1()
+            .min_h_0()
             .min_w_0()
             .h_full()
             .child(terminal_header)
-            .child(self.interrupt_controls(cx))
-            .child(terminal);
+            .child(terminal_body);
 
         let output = if self.show_blocks {
             let inspector = div()
