@@ -14,6 +14,10 @@ pub fn frozen_drag(control: bool, shift: bool) -> bool {
     control && shift
 }
 
+pub fn local_shift_drag_freezes(shift: bool, owner: MouseOwner) -> bool {
+    shift && owner != MouseOwner::Forward
+}
+
 pub fn mouse_owner(
     reporting: bool,
     shift_local: bool,
