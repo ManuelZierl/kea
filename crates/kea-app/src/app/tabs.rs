@@ -69,9 +69,7 @@ impl KeaRoot {
         let update_poll = cx.spawn_in(window, async move |this, cx| loop {
             Timer::after(std::time::Duration::from_millis(250)).await;
             let disconnected = cx
-                .update(|_, cx| {
-                    this.update(cx, |this, cx| this.poll_update(cx)).is_err()
-                })
+                .update(|_, cx| this.update(cx, |this, cx| this.poll_update(cx)).is_err())
                 .unwrap_or(true);
             if disconnected {
                 break;
