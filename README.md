@@ -42,8 +42,9 @@ See [Terminal tabs](docs/terminal-tabs.md) for creation, switching, reordering a
 
 Windows releases provide a **current-user installer** under
 `%LOCALAPPDATA%\\Programs\\Kea`; it does not require administrator privileges.
-Installed Windows builds can check GitHub Releases from the toolbar, verify the
-release asset's SHA-256 digest, install the update, and restart Kea. The portable
+Installed Windows builds can check GitHub Releases from the title bar, verify the
+release asset's SHA-256 digest, download the update while Kea keeps running, then
+restart into it only after explicit confirmation. The portable
 Windows ZIP remains available for manual use. Linux and macOS continue to use
 standalone release archives. Release binaries are not Authenticode/code-signed
 yet, so Windows may still show a SmartScreen warning on the initial download.
