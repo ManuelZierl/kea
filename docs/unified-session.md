@@ -36,6 +36,8 @@ When the editor or a read-only text component is focused, GPUI Component/platfor
 
 When the live terminal is focused, Kea masks semantic accelerators including user overrides, except the configurable `focus_editor` switch key. With no local selection/caret, representable Ctrl combinations, Tab, modified Enter and function keys reach the terminal encoder; plain Ctrl+V therefore reaches the child as `0x16`. Explicit clipboard paste into the live terminal uses Ctrl+Shift+V (Cmd+V on macOS) or the terminal Paste button and sends bracketed-paste bytes when supported. A visible Kea selection/caret temporarily owns Copy, Esc and navigation/extension; other input clears it and follows normal terminal routing. Composed text uses GPUI's platform text-input handler and is forwarded only after commit. Active composition owns its candidate navigation/cancellation keys.
 
+Live terminal output may request a system-clipboard write with OSC 52. Kea surfaces only the live engine's system-clipboard store events to the platform clipboard, so remote applications can copy through SSH or tmux. Clipboard-load/read requests and primary-selection stores are not exposed as host effects, and historical/replayed output can never mutate the clipboard.
+
 “Pass all keys to the TUI” has a protocol boundary: terminal programs receive encoded bytes/sequences, not raw physical keyboard events. Classic terminal protocols intentionally collapse some combinations (for example Tab and Ctrl+I); the OS/window manager may reserve others; newer distinctions require extended keyboard protocols. Beyond the documented host escape and local text commands, Kea preserves every distinction exposed by the platform + negotiated terminal protocol.
 
 ## One submission action
