@@ -76,7 +76,7 @@ fn replay_is_silent_and_resize_is_replayed() {
 #[test]
 fn live_engine_surfaces_clipboard_stores_but_not_primary_selection() {
     let mut live = Engine::new(Size::new(40, 6).unwrap(), true);
-    live.output(b"\x1b]52;c;S0VBLU9TQzUyX1RFU1Q=\x07");
+    live.output(b"\x1b]52;c;S0VBX09TQzUyX1RFU1Q=\x07");
     assert_eq!(
         live.drain_clipboard_stores(),
         vec!["KEA_OSC52_TEST".to_string()]
