@@ -29,7 +29,11 @@ fn shift_modified_ctrl_c_is_not_consumed_as_selection_copy() {
 }
 
 fn make_view(window: &mut Window, cx: &mut Context<KeaView>) -> KeaView {
-    let session = Session::demo().unwrap();
+    #[cfg(unix)]
+    let command = vec!["sh".into()];
+    #[cfg(windows)]
+    let command = vec!["cmd.exe".into(), "/Q".into()];
+    let session = Session::spawn(&command, kea_core::Size::new(90, 22).unwrap(), None).unwrap();
     let document = Document::from_recording(session.recording());
     KeaView::new(
         session,
