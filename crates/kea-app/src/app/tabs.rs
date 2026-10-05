@@ -345,6 +345,162 @@ impl KeaRoot {
         self.focus_selected(window, cx);
     }
 
+    fn next_tmux_generation(&mut self) -> u64 {
+        self.tmux_generation = self.tmux_generation.saturating_add(1);
+        self.tmux_generation
+    }
+
+    fn refresh_tmux(&mut self, cx: &mut Context<Self>) {
+        let generation = self.next_tmux_generation();
+        let tx = self.tmux_tx.clone();
+        self.tmux_loading = true;
+        std::thread::spawn(move || {
+            let sessions = tmux::list_sessions()
+                .map_err(|error| format!("Could not list local tmux sessions: {error:#}"));
+            let _ = tx.send(TmuxUiResult {
+                generation,
+                notice: None,
+                sessions,
+            });
+        });
+        cx.notify();
+    }
+
+    fn toggle_tmux_manager(&mut self, cx: &mut Context<Self>) {
+        self.tmux_open = !self.tmux_open;
+        if self.tmux_open {
+            self.refresh_tmux(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn open_tmux_session(
+        &mut self,
+        tmux_session: TmuxSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        if self.tabs.is_full() {
+            self.notice = Some(format!(
+                "At most {MAX_TERMINALS} terminals can be open. Close one before attaching tmux."
+            ));
+            cx.notify();
+            return;
+        }
+        let command = match tmux::attach_command(tmux_session.id()) {
+            Ok(command) => command,
+            Err(error) => {
+                self.notice = Some(format!("Could not attach tmux: {error:#}"));
+                cx.notify();
+                return;
+            }
+        };
+        let (session, shell) = match startup::spawn_terminal(command, None) {
+            Ok(value) => value,
+            Err(error) => {
+                self.notice = Some(format!(
+                    "Could not attach tmux session {}: {error:#}",
+                    tmux_session.name()
+                ));
+                cx.notify();
+                return;
+            }
+        };
+
+        self.suspend_active(window, cx);
+        command_editor::activate_tab_history(self.tabs.next_id().0, cx);
+        let document = Document::from_recording(session.recording());
+        let focus = InitialFocus::Terminal;
+        let view = cx.new(|cx| {
+            KeaView::new(
+                session,
+                document,
+                shell,
+                self.keymap.clone(),
+                self.settings.clone(),
+                focus,
+                None,
+                window,
+                cx,
+            )
+        });
+        let title = format!("tmux · {}", tmux_session.name());
+        let backing = TerminalBacking::Tmux {
+            session_name: tmux_session.name().into(),
+        };
+        self.attach(view, title, backing, focus, window, cx);
+        self.tmux_open = false;
+        self.notice = None;
+        self.focus_selected(window, cx);
+    }
+
+    fn kill_tmux_session(&mut self, tmux_session: TmuxSession, cx: &mut Context<Self>) {
+        let generation = self.next_tmux_generation();
+        let tx = self.tmux_tx.clone();
+        let id = tmux_session.id().to_string();
+        let name = tmux_session.name().to_string();
+        self.tmux_loading = true;
+        std::thread::spawn(move || {
+            let (notice, sessions) = match tmux::kill_session(&id) {
+                Ok(()) => match tmux::list_sessions() {
+                    Ok(sessions) => (
+                        Some(format!("Killed tmux session {name}.")),
+                        Ok(sessions),
+                    ),
+                    Err(error) => (
+                        None,
+                        Err(format!(
+                            "Killed tmux session {name}, but could not refresh the session list: {error:#}"
+                        )),
+                    ),
+                },
+                Err(error) => (
+                    None,
+                    Err(format!("Could not kill tmux session {name}: {error:#}")),
+                ),
+            };
+            let _ = tx.send(TmuxUiResult {
+                generation,
+                notice,
+                sessions,
+            });
+        });
+        cx.notify();
+    }
+
+    fn request_kill_tmux(
+        &mut self,
+        tmux_session: TmuxSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let name = tmux_session.name().to_string();
+        let weak = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            let tmux_session = tmux_session.clone();
+            dialog
+                .title(format!("Kill tmux session {name}?"))
+                .child(
+                    "This ends the persistent tmux session for every attached client. Closing a Kea tmux tab only detaches Kea and does not do this.",
+                )
+                .confirm()
+                .on_ok(move |_, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.kill_tmux_session(tmux_session.clone(), cx);
+                    });
+                    true
+                })
+        });
+    }
+
     fn needs_confirmation(tab: &TerminalTab, cx: &App) -> bool {
         let view = tab.view.read(cx);
         view.session.is_running()
