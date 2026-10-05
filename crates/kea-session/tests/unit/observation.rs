@@ -71,7 +71,7 @@ fn live_osc52_store_is_exposed_by_the_session_pump() {
         &[
             "sh".into(),
             "-c".into(),
-            "printf '\\033]52;c;S0VBLU9TQzUyX1RFU1Q=\\007'".into(),
+            "printf '\\033]52;c;S0VBX09TQzUyX1RFU1Q=\\007'".into(),
         ],
         Size::new(80, 24).unwrap(),
         None,
