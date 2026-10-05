@@ -178,6 +178,16 @@ done
 : > "$KEA_KEYBINDINGS"
 echo 'Default, explicit-default and remapped bidirectional focus switch passed without child leakage.'
 
+# A live child can request a local system-clipboard write with OSC 52. This is
+# the compatibility path used by remote TUIs through SSH/tmux; Kea must apply
+# the store locally rather than dropping Alacritty's ClipboardStore event.
+put_clipboard kea-osc52-sentinel
+./target/debug/kea --direct -- sh -c "printf '\\033]52;c;S0VBLU9TQzUyX1RFU1Q=\\007'; sleep 5" >smoke-artifacts/osc52.log 2>&1 & kea_pid=$!
+wait_window smoke-artifacts/osc52.log
+assert_clipboard KEA_OSC52_TEST
+cleanup_app
+echo 'Live OSC 52 system-clipboard store reached the desktop clipboard.'
+
 # Settings must render above the workspace, save through the app-owned path, and
 # leave the current editor entity/draft intact while presentation changes live.
 printf 'theme = dark\n' > "$KEA_SETTINGS"
