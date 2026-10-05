@@ -204,10 +204,23 @@ impl KeaView {
     }
 
     pub(super) fn interrupt_controls(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div().id("interrupt-controls").flex_shrink_0().when(self.interrupt.gate.is_pending(), |row| {
-            row.px_2().py_1().text_sm().text_color(cx.theme().danger)
-                .child("Send Ctrl-C to this terminal? This may interrupt the current operation. Enter: send · Escape: cancel. Nothing has been sent.")
-        })
+        div()
+            .id("interrupt-controls")
+            .absolute()
+            .left(px(8.))
+            .right(px(8.))
+            .top(px(8.))
+            .when(self.interrupt.gate.is_pending(), |row| {
+                row.px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().danger)
+                    .bg(cx.theme().background)
+                    .text_sm()
+                    .text_color(cx.theme().danger)
+                    .child("Send Ctrl-C to this terminal? Enter: send · Escape: cancel · Nothing sent yet.")
+            })
     }
 
     pub(super) fn interrupt_toggle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
