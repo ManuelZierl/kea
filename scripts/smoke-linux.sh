@@ -182,7 +182,7 @@ echo 'Default, explicit-default and remapped bidirectional focus switch passed w
 # the compatibility path used by remote TUIs through SSH/tmux; Kea must apply
 # the store locally rather than dropping Alacritty's ClipboardStore event.
 put_clipboard kea-osc52-sentinel
-./target/debug/kea --direct -- sh -c "printf '\\033]52;c;S0VBLU9TQzUyX1RFU1Q=\\007'; sleep 5" >smoke-artifacts/osc52.log 2>&1 & kea_pid=$!
+./target/debug/kea --direct -- sh -c "printf '\\033]52;c;S0VBX09TQzUyX1RFU1Q=\\007'; sleep 5" >smoke-artifacts/osc52.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/osc52.log
 assert_clipboard KEA_OSC52_TEST
 cleanup_app
