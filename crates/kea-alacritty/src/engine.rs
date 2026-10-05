@@ -1,7 +1,7 @@
 use alacritty_terminal::{
     event::{Event as TerminalEvent, EventListener},
     grid::Dimensions,
-    term::Config,
+    term::{ClipboardType, Config},
     vte::ansi::{Handler, NamedPrivateMode, Processor},
     Term,
 };
@@ -10,20 +10,36 @@ use std::sync::{Arc, Mutex};
 
 use crate::TERMINAL_SCROLLBACK_LINES;
 
+const MAX_PENDING_TERMINAL_EVENTS: usize = 256;
+
 #[derive(Clone, Default)]
 pub(crate) struct Listener {
     replies: Option<Arc<Mutex<Vec<String>>>>,
+    clipboard_stores: Option<Arc<Mutex<Vec<String>>>>,
+}
+
+fn push_bounded(queue: &Option<Arc<Mutex<Vec<String>>>>, value: String) {
+    let Some(queue) = queue else {
+        return;
+    };
+    let mut queue = queue.lock().unwrap_or_else(|e| e.into_inner());
+    if queue.len() < MAX_PENDING_TERMINAL_EVENTS {
+        queue.push(value);
+    }
 }
 
 impl EventListener for Listener {
     fn send_event(&self, event: TerminalEvent) {
-        // No title changes, clipboard access, bell, URL opening, or PTY resize
-        // requests are executed. Only live terminal protocol replies are allowed.
-        if let (Some(replies), TerminalEvent::PtyWrite(text)) = (&self.replies, event) {
-            let mut replies = replies.lock().unwrap_or_else(|e| e.into_inner());
-            if replies.len() < 256 {
-                replies.push(text);
+        // Live engines may return protocol replies and request writes to the
+        // platform clipboard. Clipboard reads, title changes, bells, URL
+        // opening and PTY resize requests remain ignored. Historical engines
+        // have no event queues, so replay cannot perform either live effect.
+        match event {
+            TerminalEvent::PtyWrite(text) => push_bounded(&self.replies, text),
+            TerminalEvent::ClipboardStore(ClipboardType::Clipboard, text) => {
+                push_bounded(&self.clipboard_stores, text);
             }
+            _ => {}
         }
     }
 }
@@ -48,6 +64,7 @@ pub struct Engine {
     pub(crate) terminal: Term<Listener>,
     pub(crate) parser: Processor,
     replies: Option<Arc<Mutex<Vec<String>>>>,
+    clipboard_stores: Option<Arc<Mutex<Vec<String>>>>,
     pub(crate) size: Size,
     pub(crate) selection_anchor: Option<alacritty_terminal::index::Point>,
     pub(crate) selection_head: Option<alacritty_terminal::index::Point>,
@@ -59,8 +76,10 @@ pub struct Engine {
 impl Engine {
     pub fn new(size: Size, live: bool) -> Self {
         let replies = live.then(|| Arc::new(Mutex::new(Vec::new())));
+        let clipboard_stores = live.then(|| Arc::new(Mutex::new(Vec::new())));
         let listener = Listener {
             replies: replies.clone(),
+            clipboard_stores: clipboard_stores.clone(),
         };
         let config = Config {
             scrolling_history: TERMINAL_SCROLLBACK_LINES,
@@ -73,6 +92,7 @@ impl Engine {
             terminal: Term::new(config, &Geometry(size), listener),
             parser: Processor::new(),
             replies,
+            clipboard_stores,
             size,
             selection_anchor: None,
             selection_head: None,
@@ -121,6 +141,13 @@ impl Engine {
 
     pub fn drain_replies(&mut self) -> Vec<String> {
         self.replies
+            .as_ref()
+            .map(|q| std::mem::take(&mut *q.lock().unwrap_or_else(|e| e.into_inner())))
+            .unwrap_or_default()
+    }
+
+    pub fn drain_clipboard_stores(&mut self) -> Vec<String> {
+        self.clipboard_stores
             .as_ref()
             .map(|q| std::mem::take(&mut *q.lock().unwrap_or_else(|e| e.into_inner())))
             .unwrap_or_default()
