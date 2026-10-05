@@ -118,9 +118,9 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - Legacy, UTF-8 and SGR mouse-wheel reports are forwarded when requested.
 - Primary mouse press/release is forwarded when mouse reporting is active.
 - Drag/motion is forwarded only for the negotiated DECSET 1002/1003 modes.
-- **Shift+drag** selects locally by default. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
+- **Shift+drag** selects locally by default and freezes the displayed grid so busy output cannot move the text underneath the selection. The child and recording continue. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. **Return live** (F9) restores live viewing and input. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
 - **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
-- **Ctrl+Shift+drag** freezes the displayed grid for stable selection during busy output, even when the Shift override is disabled. The child and recording continue. **Return live** (F9) restores live viewing and input; the frozen view itself cannot send input.
+- **Ctrl+Shift+drag** forces the same frozen local selection even when the Shift override is disabled.
 - A local selection/caret owns Copy, Esc and navigation/extension keys. In the live view, other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
 
 For long shell output, hold a local drag at or beyond the terminal's upper/lower
