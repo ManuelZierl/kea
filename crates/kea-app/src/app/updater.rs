@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::WindowExt as _;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum UpdateAction {

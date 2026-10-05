@@ -8,7 +8,7 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
