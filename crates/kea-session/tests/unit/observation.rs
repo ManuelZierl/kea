@@ -61,7 +61,6 @@ fn output_grouping_respects_time_size_and_metadata_boundaries() {
     assert_eq!(session.screen().size, size);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn live_osc52_store_is_exposed_by_the_session_pump() {
