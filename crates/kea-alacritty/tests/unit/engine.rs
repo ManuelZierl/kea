@@ -66,10 +66,24 @@ fn replay_is_silent_and_resize_is_replayed() {
         .unwrap();
     let mut replay = Engine::at(&log, 2).unwrap();
     assert!(replay.drain_replies().is_empty());
+    assert!(replay.drain_clipboard_stores().is_empty());
     assert_eq!(replay.screen().size, Size::new(20, 4).unwrap());
     let mut live = Engine::new(log.initial_size(), true);
     live.output(b"\x1b[6n");
     assert!(!live.drain_replies().is_empty());
+}
+
+#[test]
+fn live_engine_surfaces_clipboard_stores_but_not_primary_selection() {
+    let mut live = Engine::new(Size::new(40, 6).unwrap(), true);
+    live.output(b"\x1b]52;c;S0VBLU9TQzUyX1RFU1Q=\x07");
+    assert_eq!(
+        live.drain_clipboard_stores(),
+        vec!["KEA_OSC52_TEST".to_string()]
+    );
+
+    live.output(b"\x1b]52;p;cHJpbWFyeQ==\x07");
+    assert!(live.drain_clipboard_stores().is_empty());
 }
 
 #[test]
@@ -121,6 +135,7 @@ fn frozen_grid_preserves_active_buffer_colors_cursor_and_native_selection() {
         live.output(b"\x1b[2J\x1b[Hchanged\x1b[6n");
         assert!(!live.drain_replies().is_empty());
         assert!(frozen.drain_replies().is_empty());
+        assert!(frozen.drain_clipboard_stores().is_empty());
         assert_eq!(frozen.screen().text(), before.text());
         assert_eq!(frozen.selection_text(), selected);
         assert!(!live.screen().text().contains("last"));
