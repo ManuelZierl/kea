@@ -669,7 +669,8 @@ impl Render for KeaView {
                 cx,
             ))
             .child(div().flex_1());
-        toolbar = toolbar.child(
+        toolbar = toolbar
+            .child(
                 Button::new("settings")
                     .icon(IconName::Settings)
                     .tooltip("Open settings")
