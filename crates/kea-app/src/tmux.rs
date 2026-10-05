@@ -10,8 +10,7 @@ use std::{
     process::{Command, Output},
 };
 
-const LIST_FORMAT: &str =
-    "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}";
+const LIST_FORMAT: &str = "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}";
 const MAX_SESSIONS: usize = 256;
 const MAX_ROW_BYTES: usize = 4096;
 
@@ -134,10 +133,33 @@ fn parse_sessions(bytes: &[u8]) -> Result<Vec<TmuxSession>> {
 }
 
 fn validate_session_id(id: &str) -> Result<()> {
-    if id.len() < 2
-        || !id.starts_with('$')
-        || !id.as_bytes()[1..].iter().all(u8::is_ascii_digit)
-    {
+    if id.len() < 2 || !id.starts_with('
+        bail!("invalid tmux session id")
+    }
+    Ok(())
+}
+
+fn no_server_running(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("no server running")
+        || stderr.contains("failed to connect to server")
+        || stderr.contains("no sessions")
+}
+
+fn command_error(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let message = stderr.trim();
+    if message.is_empty() {
+        format!("exit status {}", output.status)
+    } else {
+        message.into()
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/tmux.rs"]
+mod tests;
+) || !id.as_bytes()[1..].iter().all(u8::is_ascii_digit) {
         bail!("invalid tmux session id")
     }
     Ok(())
