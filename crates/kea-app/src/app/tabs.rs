@@ -5,7 +5,14 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, TitleBar,
     WindowExt as _,
 };
-use kea_app::tabs::{TabId, Tabs, MAX_TERMINALS};
+use kea_app::{
+    tabs::{TabId, Tabs, MAX_TERMINALS},
+    tmux::{self, TmuxSession},
+};
+use std::{
+    sync::mpsc::{self, Sender},
+    time::Duration,
+};
 
 mod held_keys;
 use held_keys::HeldWorkflowKeys;
@@ -16,12 +23,25 @@ pub(super) enum WorkspaceEvent {
 }
 impl EventEmitter<WorkspaceEvent> for KeaView {}
 
+#[derive(Clone)]
+enum TerminalBacking {
+    Process,
+    Tmux { session_name: String },
+}
+
 struct TerminalTab {
     view: Entity<KeaView>,
     title: String,
+    backing: TerminalBacking,
     last_focus: InitialFocus,
     _events: Subscription,
     _changes: Subscription,
+}
+
+struct TmuxUiResult {
+    generation: u64,
+    notice: Option<String>,
+    sessions: Result<Vec<TmuxSession>, String>,
 }
 
 pub(super) struct KeaRoot {
@@ -33,6 +53,12 @@ pub(super) struct KeaRoot {
     notice: Option<String>,
     close_allowed: bool,
     held_keys: Option<HeldWorkflowKeys>,
+    tmux_open: bool,
+    tmux_loading: bool,
+    tmux_sessions: Vec<TmuxSession>,
+    tmux_generation: u64,
+    tmux_tx: Sender<TmuxUiResult>,
+    _tmux_pump: Task<()>,
 }
 
 #[derive(Clone)]
@@ -59,6 +85,43 @@ impl KeaRoot {
         } else {
             InitialFocus::Editor
         };
+        let (tmux_tx, tmux_rx) = mpsc::channel::<TmuxUiResult>();
+        let tmux_pump = cx.spawn_in(window, async move |this, cx| loop {
+            Timer::after(Duration::from_millis(50)).await;
+            let disconnected = cx
+                .update(|_, cx| {
+                    this.update(cx, |this, cx| {
+                        let mut changed = false;
+                        while let Ok(result) = tmux_rx.try_recv() {
+                            if result.generation != this.tmux_generation {
+                                continue;
+                            }
+                            this.tmux_loading = false;
+                            match result.sessions {
+                                Ok(sessions) => {
+                                    this.tmux_sessions = sessions;
+                                    if let Some(notice) = result.notice {
+                                        this.notice = Some(notice);
+                                    }
+                                }
+                                Err(error) => {
+                                    this.tmux_sessions.clear();
+                                    this.notice = Some(error);
+                                }
+                            }
+                            changed = true;
+                        }
+                        if changed {
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                })
+                .unwrap_or(true);
+            if disconnected {
+                break;
+            }
+        });
         let mut root = Self {
             tabs: Tabs::default(),
             keymap,
@@ -68,9 +131,22 @@ impl KeaRoot {
             notice: None,
             close_allowed: false,
             held_keys: None,
+            tmux_open: false,
+            tmux_loading: false,
+            tmux_sessions: Vec::new(),
+            tmux_generation: 0,
+            tmux_tx,
+            _tmux_pump: tmux_pump,
         };
         let title = terminal_title(view.read(cx).shell, view.read(cx).session.is_running());
-        root.attach(view, title.into(), initial_focus, window, cx);
+        root.attach(
+            view,
+            title.into(),
+            TerminalBacking::Process,
+            initial_focus,
+            window,
+            cx,
+        );
         root
     }
 
@@ -78,6 +154,7 @@ impl KeaRoot {
         &mut self,
         view: Entity<KeaView>,
         title: String,
+        backing: TerminalBacking,
         last_focus: InitialFocus,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -113,6 +190,7 @@ impl KeaRoot {
         let tab = TerminalTab {
             view,
             title,
+            backing,
             last_focus,
             _events: events,
             _changes: changes,
@@ -255,7 +333,14 @@ impl KeaRoot {
             )
         });
         let label = terminal_title(shell, true);
-        self.attach(view, label.into(), focus, window, cx);
+        self.attach(
+            view,
+            label.into(),
+            TerminalBacking::Process,
+            focus,
+            window,
+            cx,
+        );
         self.notice = None;
         self.focus_selected(window, cx);
     }
