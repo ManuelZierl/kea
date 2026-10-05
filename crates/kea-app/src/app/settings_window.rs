@@ -308,7 +308,7 @@ fn build_dialog(
                         ),
                         toggle_row(
                             "shift-local-selection",
-                            "Shift-drag selects terminal text locally",
+                            "Shift-drag freezes and selects terminal text locally",
                             "Turn off to forward Shift pointer gestures to mouse-aware terminal apps.",
                             settings.shift_mouse_selects_locally,
                             SettingsChange::ShiftMouseSelectsLocally,
