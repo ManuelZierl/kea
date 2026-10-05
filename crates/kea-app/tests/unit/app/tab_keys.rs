@@ -1,4 +1,4 @@
-use super::KeaRoot;
+use super::{KeaRoot, TerminalBacking};
 use crate::app::{InitialFocus, KeaView};
 use gpui::{App, AppContext as _, Entity, TestAppContext, Window};
 use gpui_component::Root;
@@ -46,6 +46,7 @@ fn tab_switch_and_close_transfer_held_keys_but_not_interrupts(cx: &mut TestAppCo
             this.attach(
                 second.clone(),
                 "Second".into(),
+                TerminalBacking::Process,
                 InitialFocus::Editor,
                 window,
                 cx,
@@ -75,6 +76,7 @@ fn tab_switch_and_close_transfer_held_keys_but_not_interrupts(cx: &mut TestAppCo
             this.attach(
                 third.clone(),
                 "Third".into(),
+                TerminalBacking::Process,
                 InitialFocus::Editor,
                 window,
                 cx,
