@@ -133,12 +133,11 @@ fn parse_sessions(bytes: &[u8]) -> Result<Vec<TmuxSession>> {
 }
 
 fn validate_session_id(id: &str) -> Result<()> {
-    if id.len() < 2 || !id.starts_with('
+    if id.len() < 2 || !id.starts_with('$') || !id.as_bytes()[1..].iter().all(u8::is_ascii_digit) {
         bail!("invalid tmux session id")
     }
     Ok(())
 }
-
 fn no_server_running(stderr: &str) -> bool {
     let stderr = stderr.to_ascii_lowercase();
     stderr.contains("no server running")
