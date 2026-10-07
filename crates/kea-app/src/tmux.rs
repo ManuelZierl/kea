@@ -6,10 +6,16 @@
 
 use anyhow::{bail, Context as _, Result};
 #[cfg(unix)]
+use nix::{
+    sys::signal::{killpg, Signal},
+    unistd::Pid,
+};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::{
     io::{self, Read},
     process::{Child, Command, Output, Stdio},
+    sync::mpsc::{self, Receiver},
     thread,
     time::{Duration, Instant},
 };
@@ -223,43 +229,55 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setpgid(0, 0) == -1 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
+    command.process_group(0);
     let mut child = command.spawn()?;
     let stdout = child.stdout.take().context("capturing command stdout")?;
     let stderr = child.stderr.take().context("capturing command stderr")?;
-    let stdout_reader = thread::spawn(move || read_capped(stdout));
-    let stderr_reader = thread::spawn(move || read_capped(stderr));
+    let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
+    let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = stdout_tx.send(read_capped(stdout));
+    });
+    thread::spawn(move || {
+        let _ = stderr_tx.send(read_capped(stderr));
+    });
     let deadline = Instant::now() + timeout;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
+    loop {
+        if stdout.is_none() {
+            stdout = poll_output(&stdout_rx)?;
+        }
+        if stderr.is_none() {
+            stderr = poll_output(&stderr_rx)?;
+        }
+        if stdout
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() > MAX_COMMAND_OUTPUT)
+            || stderr
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() > MAX_COMMAND_OUTPUT)
+        {
+            terminate_child(&mut child)?;
+            bail!("command output exceeds {MAX_COMMAND_OUTPUT} bytes")
+        }
+        if status.is_none() {
+            status = child.try_wait()?;
+        }
+        if status.is_some() && stdout.is_some() && stderr.is_some() {
+            return Ok(Output {
+                status: status.take().expect("status checked above"),
+                stdout: stdout.take().expect("stdout checked above"),
+                stderr: stderr.take().expect("stderr checked above"),
+            });
         }
         if Instant::now() >= deadline {
             terminate_child(&mut child)?;
-            join_reader(stdout_reader)?;
-            join_reader(stderr_reader)?;
             bail!("command timed out after {} ms", timeout.as_millis())
         }
         thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = join_reader(stdout_reader)?;
-    let stderr = join_reader(stderr_reader)?;
-    if stdout.len() > MAX_COMMAND_OUTPUT || stderr.len() > MAX_COMMAND_OUTPUT {
-        bail!("command output exceeds {MAX_COMMAND_OUTPUT} bytes")
     }
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
 }
 
 fn read_capped(reader: impl io::Read) -> io::Result<Vec<u8>> {
@@ -270,19 +288,23 @@ fn read_capped(reader: impl io::Read) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>> {
-    reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("command output reader panicked"))?
-        .context("reading command output")
+fn poll_output(reader: &Receiver<io::Result<Vec<u8>>>) -> Result<Option<Vec<u8>>> {
+    match reader.try_recv() {
+        Ok(output) => output.map(Some).context("reading command output"),
+        Err(mpsc::TryRecvError::Empty) => Ok(None),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            bail!("command output reader stopped unexpectedly")
+        }
+    }
 }
 
 fn terminate_child(child: &mut Child) -> Result<()> {
     #[cfg(unix)]
     {
-        let result = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-        if result == -1 {
-            child.kill().context("terminating timed-out command")?;
+        if let Err(error) = killpg(Pid::from_raw(child.id() as i32), Signal::SIGKILL) {
+            if error != nix::errno::Errno::ESRCH {
+                child.kill().context("terminating timed-out command")?;
+            }
         }
     }
     #[cfg(not(unix))]

@@ -1,0 +1,38 @@
+{
+  "code": {
+    "capabilities": ["text.v1"],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "unbounded-tmux-output": {
+      "help": "Use the bounded tmux command runner instead of buffering a subprocess directly.",
+      "kind": "review",
+      "message": "tmux subprocess output must be capped and timeout-bound."
+    },
+    "unsafe-tmux-process-control": {
+      "help": "Use safe process-group APIs and nix signal wrappers; do not add unsafe process control here.",
+      "kind": "review",
+      "message": "tmux subprocess lifecycle must not introduce unsafe code."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "tmux-subprocess-safety",
+  "mode": "advisory",
+  "patterns": {
+    "unbounded": "\\.output\\s*\\(",
+    "unsafe": "\\bunsafe\\b"
+  },
+  "scope": {
+    "exclude": [],
+    "include": ["crates/kea-app/src/tmux.rs"],
+    "require_files": []
+  },
+  "schema_version": 1,
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "tmux subprocesses must remain bounded and safe"
+}

@@ -78,7 +78,7 @@ fn command_output_is_capped_and_hung_commands_are_reaped() {
     assert!(output.is_err());
 
     let started = std::time::Instant::now();
-    let output = run_command("sh", ["-c", "sleep 2"], Duration::from_millis(50));
+    let output = run_command("sh", ["-c", "sleep 30 &"], Duration::from_millis(50));
     assert!(output.is_err());
     assert!(started.elapsed() < Duration::from_secs(1));
 }

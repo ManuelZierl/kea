@@ -1,0 +1,6 @@
+for m in rx::find_all(file, "unbounded") {
+    emit(m.span, "unbounded-tmux-output");
+}
+for m in rx::find_all(file, "unsafe") {
+    emit(m.span, "unsafe-tmux-process-control");
+}
