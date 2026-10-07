@@ -1,6 +1,6 @@
 ---
 title: Alpha.4 acceptance
-nav_order: 19
+nav_order: 20
 ---
 
 # Alpha.4 release-candidate acceptance
@@ -8,6 +8,54 @@ nav_order: 19
 **Preparation, not publication.** `0.0.1-alpha.4` must not be tagged or promoted
 to `main` until the maintainer signs off on the checks below. The published
 release remains `v0.0.1-alpha.3`.
+
+## Automated evidence and limits
+
+Local validation on Linux:
+
+| Check | Result | Scope |
+|---|---|---|
+| `cargo fmt --all -- --check` | PASS | Workspace formatting |
+| `cargo test --locked --workspace` | PASS | 286 tests; one ignored documentation example |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | PASS | Kea crates; existing upstream future-compatibility warnings remain |
+| `wt validate/test/check --no-global` | PASS | No blocking findings; cwd-label and retained-growth advisories inspected |
+| Reverse-search standalone harness | PASS | 19 tests |
+| Native Windows icon source check | PASS | Source generation only; hosted CI checks the Windows executable |
+| Locked debug and release builds | PASS | Linux x86_64 |
+| Isolated X11 debug smoke | PASS | Tabs, tmux lifecycle/error, composer, full terminal/editor suite |
+| Extracted Linux candidate archive | PASS | `--help`, executable byte comparison and local SHA-256 manifest |
+| Isolated X11 release smoke | PASS | All five suites above plus maximized Settings/title-bar clicks under Openbox |
+| Monitored release-app inspection | PASS, limited | Light/system appearance at 1050×780 and minimum-width 760×600; tmux rows and controls visible |
+
+The cwd advisory is guarded by `local_shell_ready()`; the retained event append
+is private and preceded by quota checks/rolling eviction. Neither finding was
+silenced to obtain a pass.
+
+The local Linux archive contains README, changelog, the Kea license and vendored
+dependency licenses/patch notices. It is a candidate artifact, not a published
+release; its local checksum is not a signature or a certification of other OSes.
+
+The integration candidate passed the isolated Linux/X11 tmux lifecycle check:
+attach, tab-close cancellation/confirmation, detach with the server/session still
+alive, and Kill cancellation/confirmation. The discovery-error check preserved
+the actual PTY geometry and rejected pointer/wheel input behind the manager.
+These scripts use disposable servers; they do not inspect the user's tmux server.
+
+The PTY teardown regression was also checked against the original implementation:
+the original failed, and the corrected implementation passed. The fixture uses a
+writable portable temporary directory, not a developer-specific path.
+
+Independent code review found no remaining material issue in the updater, tmux
+guard/pipe handling, overlay routing or teardown correction. Automated validation
+does not certify Windows PowerShell helper execution, a non-admin installer
+run, native Wayland, macOS/Windows graphical behavior, physical IME/keyboard
+input, accessibility or subjective visual clarity.
+
+One early full-smoke Settings click failed without an established root cause;
+later full runs passed. This record does not claim a proven fix for that transient
+failure. The tmux session-loss failure, in contrast, was reproduced and traced to
+PTY writer destruction injecting newline/VEOF before the child was terminated;
+the input sender now survives until child kill/wait completes.
 
 ## What needs your judgment
 
@@ -27,6 +75,15 @@ Windows: use the candidate workflow's `kea-windows-x86_64` artifact, not the
 published alpha.3 download. The artifact includes the executable and per-user
 installer. Record the workflow commit. macOS requires a source build before
 publication; the normal candidate matrix only tests the portable engines there.
+
+Download a candidate Windows artifact with GitHub CLI (replace `RUN_ID` with a
+successful CI run for the prepared `develop` commit):
+
+```sh
+gh run download RUN_ID --repo ManuelZierl/kea --name kea-windows-x86_64 --dir kea-alpha4-windows
+```
+
+Do not use the public alpha.3 artifact for alpha.4 acceptance.
 
 ### 1. Visual clarity and real desktop — Linux, Windows, macOS
 
@@ -103,6 +160,14 @@ run an unqualified `tmux kill-server` or reuse an important session for this tes
 Use [Windows updater acceptance](manual-testing.md#windows-updater--no-elevation-acceptance)
 for install, uninstall, Start-menu/Apps entries, no UAC, opt-out, workspace-global
 status, cancel/confirm restart and portable migration.
+
+For installation-only acceptance, run the candidate `*-setup.exe` interactively
+as the normal account, launch from Start, and check the title-bar version and
+`%LOCALAPPDATA%\Programs\Kea\kea.exe`. Then uninstall using Windows **Installed
+apps** and confirm its shortcut/application entry is removed without UAC. Keep
+sample settings/history separate; uninstall is not permission to erase them.
+If a restart handoff fails, retain `%LOCALAPPDATA%\Kea\update-failure.log` with
+the test report rather than interpreting a closed window as success.
 
 **Publication dependency:** the production updater uses GitHub releases. Before
 alpha.4 is published, alpha.3 has no updater and the candidate cannot update to
