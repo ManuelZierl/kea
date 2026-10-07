@@ -152,7 +152,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     if std::process::Command::new("script")
         .arg("--version")
         .output()
-        .is_ok()
+        .is_ok_and(|output| output.status.success())
     {
         let attach = attach_command(&attach_session).unwrap();
         let mut pty_args = vec!["tmux".to_owned(), "-L".to_owned(), socket.clone()];
