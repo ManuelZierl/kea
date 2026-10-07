@@ -230,25 +230,25 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
     use std::{os::windows::process::CommandExt as _, process::Command};
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let current = std::env::current_exe().context("cannot locate the running Kea executable")?;
     let local_app_data = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .context("LOCALAPPDATA is unavailable")?;
     let installed = local_app_data.join("Programs").join("Kea").join("kea.exe");
-    let script = format!(
-        "$ErrorActionPreference='Stop';\
-         $parent={};$setup={};$fallback={};$installed={};$ok=$false;\
-         Wait-Process -Id $parent -ErrorAction SilentlyContinue;\
-         Start-Sleep -Milliseconds 150;\
-         try {{$process=Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru;$ok=($process.ExitCode -eq 0)}} catch {{$ok=$false}} finally {{Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue}};\
-         if ($ok -and (Test-Path -LiteralPath $installed)) {{Start-Process -FilePath $installed}} elseif (Test-Path -LiteralPath $fallback) {{Start-Process -FilePath $fallback}}",
-        std::process::id(),
-        powershell_literal(staged),
-        powershell_literal(&current),
-        powershell_literal(&installed),
+    let powershell = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .context("SystemRoot is unavailable")?;
+    anyhow::ensure!(
+        powershell.is_absolute(),
+        "SystemRoot is not an absolute path"
     );
+    let powershell = system_powershell_path(&powershell);
+    anyhow::ensure!(
+        powershell.is_file(),
+        "the system PowerShell executable is unavailable"
+    );
+    let script = install_helper_script(std::process::id(), staged, &installed);
 
-    Command::new("powershell.exe")
+    Command::new(powershell)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -264,12 +264,33 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
     Ok(())
 }
 
+fn system_powershell_path(system_root: &Path) -> PathBuf {
+    system_root
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+}
+
+fn install_helper_script(parent: u32, staged: &Path, installed: &Path) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';\
+         $parent={};$setup={};$installed={};$ok=$false;\
+         Wait-Process -Id $parent -ErrorAction SilentlyContinue;\
+         Start-Sleep -Milliseconds 150;\
+         try {{$process=Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru;$ok=($process.ExitCode -eq 0)}} catch {{$ok=$false}} finally {{Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue}};\
+         if ($ok -and (Test-Path -LiteralPath $installed)) {{Start-Process -FilePath $installed; exit 0}} else {{exit 1}}",
+        parent,
+        powershell_literal(staged),
+        powershell_literal(installed),
+    )
+}
+
 #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
 fn spawn_install_helper(_: &Path) -> Result<()> {
     anyhow::bail!("self-update is not supported on this platform")
 }
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn powershell_literal(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }

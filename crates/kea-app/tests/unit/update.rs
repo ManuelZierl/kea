@@ -58,3 +58,27 @@ fn digest_parser_is_strict() {
         "a".repeat(64)
     );
 }
+
+#[test]
+fn system_powershell_path_is_under_explicit_system_root() {
+    let root = Path::new("system-root");
+    assert_eq!(
+        system_powershell_path(root),
+        root.join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe")
+    );
+}
+
+#[test]
+fn failed_install_does_not_fall_back_to_the_previous_executable() {
+    let script = install_helper_script(
+        42,
+        Path::new("C:/Temp/kea-update.exe"),
+        Path::new("C:/Users/test/Programs/Kea/kea.exe"),
+    );
+    assert!(!script.contains("$fallback"));
+    assert!(script.contains("Start-Process -FilePath $installed"));
+    assert!(script.contains("else {exit 1}"));
+}
