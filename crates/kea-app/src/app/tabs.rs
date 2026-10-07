@@ -351,6 +351,9 @@ impl KeaRoot {
     }
 
     fn refresh_tmux(&mut self, cx: &mut Context<Self>) {
+        if self.tmux_loading {
+            return;
+        }
         let generation = self.next_tmux_generation();
         let tx = self.tmux_tx.clone();
         self.tmux_loading = true;
@@ -391,7 +394,7 @@ impl KeaRoot {
             cx.notify();
             return;
         }
-        let command = match tmux::attach_command(tmux_session.id()) {
+        let command = match tmux::attach_command(&tmux_session) {
             Ok(command) => command,
             Err(error) => {
                 self.notice = Some(format!("Could not attach tmux: {error:#}"));
@@ -439,13 +442,15 @@ impl KeaRoot {
     }
 
     fn kill_tmux_session(&mut self, tmux_session: TmuxSession, cx: &mut Context<Self>) {
+        if self.tmux_loading {
+            return;
+        }
         let generation = self.next_tmux_generation();
         let tx = self.tmux_tx.clone();
-        let id = tmux_session.id().to_string();
         let name = tmux_session.name().to_string();
         self.tmux_loading = true;
         std::thread::spawn(move || {
-            let (notice, sessions) = match tmux::kill_session(&id) {
+            let (notice, sessions) = match tmux::kill_session(&tmux_session) {
                 Ok(()) => match tmux::list_sessions() {
                     Ok(sessions) => (
                         Some(format!("Killed tmux session {name}.")),
@@ -876,6 +881,7 @@ impl Render for KeaRoot {
                                     .label("Kill")
                                     .ghost()
                                     .small()
+                                    .disabled(self.tmux_loading)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.request_kill_tmux(kill_session.clone(), window, cx);
                                     })),
