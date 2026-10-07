@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "discarded_sender_is_rejected",
+      "files": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "content": "impl Drop for Pty { fn drop(&mut self) { self.input.take(); } }"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "code": "discarded-pty-input-sender",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "captured_sender_is_allowed",
+      "files": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "content": "let input = self.input.take(); thread::spawn(move || { child.kill(); child.wait(); drop(input); });"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

@@ -144,7 +144,7 @@ impl Pty {
 }
 impl Drop for Pty {
     fn drop(&mut self) {
-        self.input.take();
+        let input = self.input.take();
         let master = self.master.take();
         let child = self.child.take();
         // Process waits and ConPTY shutdown must not block the closing GUI.
@@ -153,6 +153,10 @@ impl Drop for Pty {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            // UnixMasterWriter::drop sends a newline and VEOF. Keep the input
+            // sender alive until the child is gone, or a pending line can be
+            // executed while teardown is in progress.
+            drop(input);
             drop(master);
         });
     }

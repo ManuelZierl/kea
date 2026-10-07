@@ -1,0 +1,32 @@
+{
+  "code": {
+    "capabilities": ["text.v1"],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "discarded-pty-input-sender": {
+      "help": "Capture the PTY input sender and release it only in the teardown worker after child termination.",
+      "kind": "review",
+      "message": "PTY Drop must not discard self.input.take() before child kill/wait. Unix writer teardown can send newline and VEOF."
+    }
+  },
+  "documentation": {
+    "file": "rule.md"
+  },
+  "execution": "file",
+  "id": "pty-drop-input-order",
+  "mode": "advisory",
+  "patterns": {
+    "discarded": "self\\.input\\.take\\(\\)\\s*;"
+  },
+  "scope": {
+    "exclude": [],
+    "include": ["crates/kea-pty/src/lib.rs"],
+    "require_files": []
+  },
+  "schema_version": 1,
+  "severity": "warning",
+  "tests_file": "tests.json",
+  "title": "PTY teardown must retain input until child termination"
+}

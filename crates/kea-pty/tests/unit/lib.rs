@@ -51,3 +51,47 @@ fn captures_output_and_drains_before_exit() {
     let directory = std::env::current_dir().unwrap();
     assert!(output.contains(directory.to_string_lossy().as_ref()));
 }
+
+#[cfg(unix)]
+#[test]
+fn drop_kills_child_before_pty_input_can_execute_a_pending_line() {
+    use std::{fs, path::PathBuf, thread, time::Duration};
+
+    let marker = PathBuf::from(format!(
+        "/tmp/opencode/kea-pty-drop-order-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let command = vec![
+        "sh".into(),
+        "-c".into(),
+        "printf READY; IFS= read -r line; printf executed > \"$0\"; sleep 10".into(),
+        marker.as_os_str().to_owned(),
+    ];
+    let mut pty = Pty::spawn(&command, Size::new(80, 24).unwrap()).unwrap();
+    let start = std::time::Instant::now();
+    let mut ready = false;
+    while start.elapsed() < Duration::from_secs(5) {
+        while let Some(message) = pty.try_recv() {
+            if let Message::Output(bytes) = message {
+                ready |= bytes.windows(5).any(|bytes| bytes == b"READY");
+            }
+        }
+        if ready {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready, "fixture did not become ready");
+
+    drop(pty);
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !marker.exists(),
+        "PTY teardown executed implicit input before killing the child"
+    );
+    let _ = fs::remove_file(marker);
+}
