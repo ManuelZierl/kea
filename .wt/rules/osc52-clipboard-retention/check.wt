@@ -1,0 +1,3 @@
+for m in rx::find_all(file, "unbounded") {
+    emit(m.span, "unbounded-clipboard-queue");
+}

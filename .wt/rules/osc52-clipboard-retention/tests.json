@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "vec-clipboard-queue",
+      "files": [
+        {
+          "path": "crates/kea-alacritty/src/engine.rs",
+          "content": "clipboard_stores: Option<Arc<Mutex<Vec<String>>>>,\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-alacritty/src/engine.rs",
+          "code": "unbounded-clipboard-queue",
+          "kind": "violation"
+        }
+      ]
+    },
+    {
+      "name": "latest-clipboard-queue",
+      "files": [
+        {
+          "path": "crates/kea-alacritty/src/engine.rs",
+          "content": "clipboard_stores: Option<Arc<Mutex<ClipboardStores>>>,\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}
