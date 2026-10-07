@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "kea-alacritty"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 dependencies = [
  "alacritty_terminal",
  "kea-core",
@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "kea-app"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 dependencies = [
  "anyhow",
  "embed-resource",
@@ -3172,9 +3172,9 @@ dependencies = [
  "kea-document",
  "kea-session",
  "nix 0.28.0",
+ "semver",
  "serde",
  "serde_json",
- "semver",
  "sha2 0.10.9",
  "tempfile",
  "tree-sitter-bash",
@@ -3183,18 +3183,18 @@ dependencies = [
 
 [[package]]
 name = "kea-core"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 
 [[package]]
 name = "kea-document"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 dependencies = [
  "kea-core",
 ]
 
 [[package]]
 name = "kea-pty"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 dependencies = [
  "anyhow",
  "kea-core",
@@ -3203,7 +3203,7 @@ dependencies = [
 
 [[package]]
 name = "kea-session"
-version = "0.0.1-alpha.3"
+version = "0.0.1-alpha.4"
 dependencies = [
  "anyhow",
  "kea-alacritty",

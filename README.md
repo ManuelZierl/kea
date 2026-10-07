@@ -14,10 +14,13 @@ Compose a command or prompt and submit it to the active terminal receiver,
 then recall and edit it without losing your next draft. Your shell, SSH, Vim,
 REPLs and other terminal applications keep their native input behavior.
 
-**Early alpha:** `v0.0.1-alpha.3`. Expect rough edges;
+**Release candidate:** `v0.0.1-alpha.4` is prepared for acceptance, not published.
+The latest published release is `v0.0.1-alpha.3`. Expect rough edges;
 real-platform compatibility is still being validated. See the
 [compatibility checklist](docs/terminal-compatibility-alpha.md) and
 [known limits](docs/usage.md#limits-and-privacy).
+
+Maintainer checks before publication: [alpha.4 acceptance](docs/alpha4-acceptance.md).
 
 [Documentation](https://manuelzierl.github.io/kea/) ·
 [Releases](https://github.com/ManuelZierl/kea/releases) ·
