@@ -755,6 +755,17 @@ impl Render for KeaRoot {
         let tmux_manager = self.tmux_open.then(|| {
             let mut panel = div()
                 .id("tmux-manager")
+                // This floating panel covers the live terminal. Keep covered
+                // pointer and wheel events in the manager instead of letting
+                // them reach the terminal behind it; child buttons still
+                // receive their own click events before this boundary.
+                .occlude()
+                .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }))
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }))
                 .absolute()
                 .top(px(72.))
                 .right(px(8.))
