@@ -5,6 +5,7 @@ use gpui_component::WindowExt as _;
 pub(super) enum UpdateAction {
     Checking { manual: bool },
     Downloading,
+    Verifying,
 }
 
 impl KeaRoot {
@@ -47,7 +48,7 @@ impl KeaRoot {
         cx.notify();
     }
 
-    pub(super) fn poll_update(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn poll_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(receiver) = &self.update_rx else {
             return;
         };
@@ -57,7 +58,9 @@ impl KeaRoot {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 let manual = matches!(
                     self.update_action,
-                    Some(UpdateAction::Checking { manual: true }) | Some(UpdateAction::Downloading)
+                    Some(UpdateAction::Checking { manual: true })
+                        | Some(UpdateAction::Downloading)
+                        | Some(UpdateAction::Verifying)
                 );
                 self.update_rx = None;
                 self.update_action = None;
@@ -113,6 +116,29 @@ impl KeaRoot {
                     self.notice = Some(format!("Update failed: {error}"));
                 }
             },
+            update::WorkerResult::Verified(result) => match result {
+                Ok(()) => {
+                    let Some(staged) = self.update_staged.clone() else {
+                        self.notice = Some("The staged update is no longer available.".into());
+                        cx.notify();
+                        return;
+                    };
+                    match update::launch_staged_update(&staged) {
+                        Ok(()) => {
+                            self.close_allowed = true;
+                            window.defer(cx, |window, _| window.remove_window());
+                        }
+                        Err(error) => {
+                            self.notice = Some(format!("Could not start update: {error:#}"));
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.notice = Some(format!(
+                        "Update verification failed; Kea remains open and the staged installer was not run: {error}"
+                    ));
+                }
+            },
         }
         cx.notify();
     }
@@ -133,23 +159,14 @@ impl KeaRoot {
                 .title(format!("Restart to update Kea to v{version}?"))
                 .child("Kea will close all terminal processes and discard unsaved transient state before running the verified current-user installer. Save anything you want to keep first.")
                 .confirm()
-                .on_ok(move |_, window, cx| {
-                    let launched = weak
-                        .update(cx, |this, cx| match update::launch_staged_update(&staged) {
-                            Ok(()) => {
-                                this.close_allowed = true;
-                                true
-                            }
-                            Err(error) => {
-                                this.notice = Some(format!("Could not start update: {error:#}"));
-                                cx.notify();
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if launched {
-                        window.defer(cx, |window, _| window.remove_window());
-                    }
+                .on_ok(move |_, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.update_rx = Some(update::verify_staged_in_background(staged));
+                        this.update_action = Some(UpdateAction::Verifying);
+                        this.update_notice =
+                            Some("Verifying the staged Kea update before restart…".into());
+                        cx.notify();
+                    });
                     true
                 })
         });

@@ -31,12 +31,14 @@ pub struct UpdateInfo {
 pub struct StagedUpdate {
     pub version: Version,
     installer_path: PathBuf,
+    expected_sha256: String,
 }
 
 #[derive(Debug)]
 pub enum WorkerResult {
     Checked(std::result::Result<Option<UpdateInfo>, String>),
     Staged(std::result::Result<StagedUpdate, String>),
+    Verified(std::result::Result<(), String>),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -59,6 +61,26 @@ pub fn supported() -> bool {
     cfg!(all(target_os = "windows", target_arch = "x86_64"))
 }
 
+pub fn startup_failure_notice() -> Option<String> {
+    if !supported() {
+        return None;
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA")?;
+    let path = PathBuf::from(local_app_data)
+        .join("Kea")
+        .join("update-failure.log");
+    let file = File::open(&path).ok()?;
+    let mut message = String::new();
+    file.take(16 * 1024).read_to_string(&mut message).ok()?;
+    let message = message.trim();
+    (!message.is_empty()).then(|| {
+        format!(
+            "The previous Kea update failed: {message}. Kea remains on the current version; retry the update or run the latest installer manually. Details are retained in {}.",
+            path.display()
+        )
+    })
+}
+
 pub fn check_in_background() -> Receiver<WorkerResult> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -73,6 +95,15 @@ pub fn stage_in_background(update: UpdateInfo) -> Receiver<WorkerResult> {
     thread::spawn(move || {
         let result = prepare_update(&update).map_err(|error| format!("{error:#}"));
         let _ = tx.send(WorkerResult::Staged(result));
+    });
+    rx
+}
+
+pub fn verify_staged_in_background(staged: StagedUpdate) -> Receiver<WorkerResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = verify_staged(&staged).map_err(|error| format!("{error:#}"));
+        let _ = tx.send(WorkerResult::Verified(result));
     });
     rx
 }
@@ -197,10 +228,18 @@ fn prepare_update(update: &UpdateInfo) -> Result<StagedUpdate> {
     Ok(StagedUpdate {
         version: update.version.clone(),
         installer_path,
+        expected_sha256: update.sha256.clone(),
     })
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
+    let metadata = path
+        .metadata()
+        .context("cannot inspect the staged Kea update")?;
+    anyhow::ensure!(
+        metadata.len() <= MAX_INSTALLER_BYTES,
+        "update installer exceeds the download limit"
+    );
     let mut file = File::open(path).context("cannot reopen the staged Kea update")?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -216,17 +255,30 @@ fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn verify_staged(staged: &StagedUpdate) -> Result<()> {
+    anyhow::ensure!(
+        staged.installer_path.is_file(),
+        "the staged update installer is no longer available"
+    );
+    let actual = sha256_file(&staged.installer_path)?;
+    anyhow::ensure!(
+        actual == staged.expected_sha256,
+        "the staged update changed after download verification"
+    );
+    Ok(())
+}
+
 pub fn launch_staged_update(staged: &StagedUpdate) -> Result<()> {
     anyhow::ensure!(supported(), "self-update is not supported on this platform");
     anyhow::ensure!(
         staged.installer_path.is_file(),
         "the staged update installer is no longer available"
     );
-    spawn_install_helper(&staged.installer_path)
+    spawn_install_helper(&staged.installer_path, &staged.expected_sha256)
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn spawn_install_helper(staged: &Path) -> Result<()> {
+fn spawn_install_helper(staged: &Path, expected_sha256: &str) -> Result<()> {
     use std::{os::windows::process::CommandExt as _, process::Command};
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -234,6 +286,7 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
         .map(PathBuf::from)
         .context("LOCALAPPDATA is unavailable")?;
     let installed = local_app_data.join("Programs").join("Kea").join("kea.exe");
+    let failure_log = local_app_data.join("Kea").join("update-failure.log");
     let powershell = std::env::var_os("SystemRoot")
         .map(PathBuf::from)
         .context("SystemRoot is unavailable")?;
@@ -246,7 +299,13 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
         powershell.is_file(),
         "the system PowerShell executable is unavailable"
     );
-    let script = install_helper_script(std::process::id(), staged, &installed);
+    let script = install_helper_script(
+        std::process::id(),
+        staged,
+        &installed,
+        expected_sha256,
+        &failure_log,
+    );
 
     Command::new(powershell)
         .args([
@@ -274,28 +333,48 @@ fn system_powershell_path(system_root: &Path) -> PathBuf {
 }
 
 #[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
-fn install_helper_script(parent: u32, staged: &Path, installed: &Path) -> String {
+fn install_helper_script(
+    parent: u32,
+    staged: &Path,
+    installed: &Path,
+    expected_sha256: &str,
+    failure_log: &Path,
+) -> String {
     format!(
         "$ErrorActionPreference='Stop';\
-         $parent={};$setup={};$installed={};$ok=$false;\
+         $parent={};$setup={};$installed={};$expected={};$failure={};$stream=$null;$process=$null;$ok=$false;$errorMessage='update helper failed';\
          Wait-Process -Id $parent -ErrorAction SilentlyContinue;\
          Start-Sleep -Milliseconds 150;\
-         try {{$process=Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru;$ok=($process.ExitCode -eq 0)}} catch {{$ok=$false}} finally {{Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue}};\
-         if ($ok -and (Test-Path -LiteralPath $installed)) {{Start-Process -FilePath $installed; exit 0}} else {{exit 1}}",
+         try {{$stream=[System.IO.File]::Open($setup,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read);\
+              if ($stream.Length -gt 134217728) {{throw 'update installer exceeds the download limit'}};\
+              $actual=(Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant();\
+              if ($actual -ne $expected) {{throw 'update installer digest mismatch'}};\
+              $stream.Position=0;\
+              $process=Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru;$ok=($process.ExitCode -eq 0);if (!$ok) {{$errorMessage='installer returned a failure exit code'}}}} catch {{$errorMessage=$_.Exception.Message;$ok=$false}} finally {{if ($null -ne $stream) {{$stream.Dispose()}};Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue}};\
+         if ($ok -and (Test-Path -LiteralPath $installed)) {{Remove-Item -LiteralPath $failure -Force -ErrorAction SilentlyContinue;Start-Process -FilePath $installed; exit 0}};\
+         try {{$directory=Split-Path -Parent $failure;New-Item -ItemType Directory -Force -Path $directory | Out-Null;Set-Content -LiteralPath $failure -Value ('Kea update failed: ' + $errorMessage + '. Retry the update or run the latest installer manually.') -Encoding UTF8}} catch {{}};\
+         exit 1",
         parent,
         powershell_literal(staged),
         powershell_literal(installed),
+        powershell_string(expected_sha256),
+        powershell_literal(failure_log),
     )
 }
 
 #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-fn spawn_install_helper(_: &Path) -> Result<()> {
+fn spawn_install_helper(_: &Path, _: &str) -> Result<()> {
     anyhow::bail!("self-update is not supported on this platform")
 }
 
 #[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 fn powershell_literal(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+    powershell_string(&path.to_string_lossy())
+}
+
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+fn powershell_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(test)]

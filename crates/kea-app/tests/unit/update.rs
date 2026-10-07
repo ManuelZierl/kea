@@ -77,8 +77,41 @@ fn failed_install_does_not_fall_back_to_the_previous_executable() {
         42,
         Path::new("C:/Temp/kea-update.exe"),
         Path::new("C:/Users/test/Programs/Kea/kea.exe"),
+        &"a".repeat(64),
+        Path::new("C:/Users/test/AppData/Local/Kea/update-failure.log"),
     );
     assert!(!script.contains("$fallback"));
+    assert!(script.contains("Get-FileHash -InputStream $stream -Algorithm SHA256"));
+    assert!(script.contains("[System.IO.FileShare]::Read"));
+    assert!(script.contains("$actual -ne $expected"));
+    assert!(script.contains("Set-Content -LiteralPath $failure"));
+    assert!(script.contains("Retry the update or run the latest installer manually."));
     assert!(script.contains("Start-Process -FilePath $installed"));
-    assert!(script.contains("else {exit 1}"));
+    assert!(script.contains("exit 1"));
+}
+
+#[test]
+fn mutation_after_staging_fails_the_restart_boundary_verification() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("kea-update.exe");
+    std::fs::write(&path, b"original installer").unwrap();
+    let expected_sha256 = sha256_file(&path).unwrap();
+    let staged = StagedUpdate {
+        version: Version::parse("1.0.0").unwrap(),
+        installer_path: path.clone(),
+        expected_sha256,
+    };
+
+    std::fs::write(&path, b"mutated installer").unwrap();
+
+    let error = verify_staged(&staged).unwrap_err().to_string();
+    assert!(error.contains("changed after download verification"));
+
+    let result = verify_staged_in_background(staged).recv().unwrap();
+    match result {
+        WorkerResult::Verified(Err(error)) => {
+            assert!(error.contains("changed after download verification"));
+        }
+        other => panic!("unexpected verification result: {other:?}"),
+    }
 }

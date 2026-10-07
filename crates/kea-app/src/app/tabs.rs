@@ -69,7 +69,10 @@ impl KeaRoot {
         let update_poll = cx.spawn_in(window, async move |this, cx| loop {
             Timer::after(std::time::Duration::from_millis(250)).await;
             let disconnected = cx
-                .update(|_, cx| this.update(cx, |this, cx| this.poll_update(cx)).is_err())
+                .update(|window, cx| {
+                    this.update(cx, |this, cx| this.poll_update(window, cx))
+                        .is_err()
+                })
                 .unwrap_or(true);
             if disconnected {
                 break;
@@ -508,6 +511,12 @@ impl Render for KeaRoot {
                 Some(updater::UpdateAction::Downloading) => (
                     "Updating…".to_string(),
                     "Downloading and verifying the Kea update".to_string(),
+                    true,
+                    0_u8,
+                ),
+                Some(updater::UpdateAction::Verifying) => (
+                    "Verifying…".to_string(),
+                    "Verifying the staged Kea update before restart".to_string(),
                     true,
                     0_u8,
                 ),
