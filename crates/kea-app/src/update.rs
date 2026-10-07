@@ -264,6 +264,7 @@ fn spawn_install_helper(staged: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 fn system_powershell_path(system_root: &Path) -> PathBuf {
     system_root
         .join("System32")
@@ -272,6 +273,7 @@ fn system_powershell_path(system_root: &Path) -> PathBuf {
         .join("powershell.exe")
 }
 
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 fn install_helper_script(parent: u32, staged: &Path, installed: &Path) -> String {
     format!(
         "$ErrorActionPreference='Stop';\
@@ -291,6 +293,7 @@ fn spawn_install_helper(_: &Path) -> Result<()> {
     anyhow::bail!("self-update is not supported on this platform")
 }
 
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 fn powershell_literal(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
