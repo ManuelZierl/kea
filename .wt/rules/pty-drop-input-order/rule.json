@@ -1,6 +1,6 @@
 {
   "code": {
-    "capabilities": ["text.v1"],
+    "capabilities": ["ast.v1"],
     "file": "check.wt",
     "language": "wt-rule-1"
   },
@@ -17,9 +17,7 @@
   "execution": "file",
   "id": "pty-drop-input-order",
   "mode": "advisory",
-  "patterns": {
-    "discarded": "self\\.input\\.take\\(\\)\\s*;"
-  },
+  "patterns": {},
   "scope": {
     "exclude": [],
     "include": ["crates/kea-pty/src/lib.rs"],

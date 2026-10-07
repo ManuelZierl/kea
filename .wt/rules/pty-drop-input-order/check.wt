@@ -1,3 +1,3 @@
-for m in rx::find_all(file, "discarded") {
+for m in file.ast_match("rust", "self.input.take();") {
     emit(m.span, "discarded-pty-input-sender");
 }
