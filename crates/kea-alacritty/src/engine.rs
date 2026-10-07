@@ -98,7 +98,15 @@ impl Engine {
     pub fn frozen_grid(&self) -> Self {
         let mut frozen = Self::new(self.size, false);
         *frozen.terminal.grid_mut() = self.terminal.grid().clone();
-        frozen.terminal.selection = None;
+        // The grid is copied identically, so a valid selection remains valid in
+        // the frozen view. Keep the native range and Kea-side anchor/head
+        // metadata together; Shift-click/drag uses both to extend it.
+        frozen.terminal.selection = self.terminal.selection.clone();
+        frozen.selection_anchor = self.selection_anchor;
+        frozen.selection_head = self.selection_head;
+        frozen.selection_block = self.selection_block;
+        frozen.selection_explicit = self.selection_explicit;
+        frozen.selection_invalidated = self.selection_invalidated;
         if !self
             .terminal
             .mode()

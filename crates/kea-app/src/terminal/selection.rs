@@ -18,6 +18,15 @@ pub fn local_shift_drag_freezes(shift: bool, owner: MouseOwner) -> bool {
     shift && owner != MouseOwner::Forward
 }
 
+pub fn preserves_shift_selection(
+    shift: bool,
+    control: bool,
+    explicit: bool,
+    selected: bool,
+) -> bool {
+    shift && (explicit || selected) && !(control && shift)
+}
+
 pub fn mouse_owner(
     reporting: bool,
     shift_local: bool,
