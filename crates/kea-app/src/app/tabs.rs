@@ -827,14 +827,15 @@ impl Render for KeaRoot {
                         .text_color(cx.theme().danger)
                         .child(notice.clone()),
                 );
-            } else if self.tmux_loading {
+            }
+            if self.tmux_loading {
                 panel = panel.child(
                     div()
                         .py_2()
                         .text_color(cx.theme().muted_foreground)
                         .child("Refreshing local tmux sessions…"),
                 );
-            } else if self.tmux_sessions.is_empty() {
+            } else if self.tmux_sessions.is_empty() && self.tmux_notice.is_none() {
                 panel = panel.child(
                     div()
                         .py_2()
