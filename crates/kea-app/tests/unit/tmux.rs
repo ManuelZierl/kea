@@ -56,6 +56,7 @@ fn recognizes_normal_empty_server_errors() {
 }
 
 #[test]
+#[cfg(unix)]
 fn attach_command_targets_stable_tmux_id_without_a_shell() {
     let selected = session("$12", "alpha", 100, 200, 300);
     let command = attach_command(&selected).unwrap();
@@ -77,6 +78,21 @@ fn attach_command_targets_stable_tmux_id_without_a_shell() {
         ]
     );
     assert!(attach_command(&session("name", "alpha", 100, 200, 300)).is_err());
+}
+
+#[test]
+#[cfg(not(unix))]
+fn native_tmux_actions_report_unsupported_platform() {
+    let selected = session("$12", "alpha", 100, 200, 300);
+    assert!(attach_command(&selected)
+        .unwrap_err()
+        .to_string()
+        .contains("supported only on Unix"));
+    assert!(kill_session(&selected)
+        .unwrap_err()
+        .to_string()
+        .contains("supported only on Unix"));
+    assert!(list_sessions().is_err());
 }
 
 #[test]
@@ -166,18 +182,30 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
             .map(|part| shell_quote(part))
             .collect::<Vec<_>>()
             .join(" ");
+        let transcript = tempdir.path().join("attach-transcript");
+        let transcript_path = transcript.to_string_lossy();
+        // Hosted jobs need an explicit TERM. Observe rendered output before
+        // stopping the server; the regex spelling cannot match script's header
+        // containing this command line. -f flushes the transcript as it arrives.
         let command = format!(
-            "(sleep 0.2; tmux -L {} kill-server) & {attach_line}",
+            "(for attempt in $(seq 1 200); do grep -q 'PTY[_]ATTACH[_]OK' {} 2>/dev/null && break; sleep 0.01; done; tmux -L {} kill-server) & env TERM=xterm-256color {attach_line}",
+            shell_quote(&transcript_path),
             shell_quote(&socket)
         );
         let pty_result = run_command_with_tmpdir(
             "script",
-            ["-qfec", &command, "/dev/null"],
-            Duration::from_secs(2),
+            ["-qfec", &command, &transcript_path],
+            Duration::from_secs(3),
             Some(tempdir.path()),
         )
         .unwrap();
-        assert!(String::from_utf8_lossy(&pty_result.stdout).contains("PTY_ATTACH_OK"));
+        assert!(
+            String::from_utf8_lossy(&pty_result.stdout).contains("PTY_ATTACH_OK"),
+            "attach did not render the pane; status={} stdout={:?} stderr={:?}",
+            pty_result.status,
+            String::from_utf8_lossy(&pty_result.stdout),
+            String::from_utf8_lossy(&pty_result.stderr)
+        );
         assert!(!String::from_utf8_lossy(&pty_result.stdout).contains(STALE_SESSION_MESSAGE));
     }
     assert!(isolated_tmux(

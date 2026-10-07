@@ -37,6 +37,8 @@ tmux's stable session ID for attach/kill operations while displaying the current
 session name.
 
 This first manager intentionally covers the **local default tmux server** only.
+Native tmux management is supported on Unix. On Windows the manager reports
+that limitation; it does not connect to WSL or a remote tmux server.
 An SSH process typed or launched in a terminal remains ordinary terminal input;
 Kea does not scrape it to discover a remote host or remote tmux state. Remote
 SSH-backed tmux management should compose an explicit host/connection resource
