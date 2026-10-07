@@ -11,6 +11,24 @@ release remains `v0.0.1-alpha.3`.
 
 ## Automated evidence and limits
 
+All five reviewed feature/fix PRs (#33–#37) are merged into `develop`.
+The preparation branch starts at `0d16b43` and changes only the workspace/lockfile
+version, README, changelog and this acceptance record; its runtime source matches
+the tested integration candidate.
+
+Hosted feature integration checks:
+
+- [Updater CI, final #33 head](https://github.com/ManuelZierl/kea/actions/runs/37615049406):
+  PASS, including Windows application tests, release binary, native icon/subsystem
+  verification and NSIS installer packaging.
+- [Combined updater/tmux CI, final #37 head](https://github.com/ManuelZierl/kea/actions/runs/37617477365):
+  PASS, including portable Linux/macOS/Windows checks, Linux application tests and
+  graphical suites, Windows application tests and installer packaging.
+- These feature runs still used the pre-bump version. For alpha.4 Windows
+  acceptance, download the successful **preparation** branch/`develop` artifact,
+  not either earlier feature artifact. Documentation builds also passed; deploy
+  and release jobs were intentionally skipped on PRs.
+
 Local validation on Linux:
 
 | Check | Result | Scope |
