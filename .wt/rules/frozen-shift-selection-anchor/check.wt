@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "if $CONDITION { self.session.freeze_display(); self.session.clear_terminal_selection(); }") {
+    emit(m.span, "cleared-shift-anchor");
+}

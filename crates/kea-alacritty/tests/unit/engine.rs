@@ -128,6 +128,27 @@ fn frozen_grid_preserves_active_buffer_colors_cursor_and_native_selection() {
 }
 
 #[test]
+fn frozen_grid_preserves_selection_anchor_head_and_explicit_caret() {
+    use crate::TerminalPoint;
+
+    let mut live = Engine::new(Size::new(12, 2).unwrap(), false);
+    live.output(b"abcdef");
+    live.begin_selection(TerminalPoint { row: 0, column: 1 });
+    live.update_selection(TerminalPoint { row: 0, column: 4 });
+    let mut frozen = live.frozen_grid();
+
+    assert_eq!(frozen.selection_text(), live.selection_text());
+    frozen.extend_selection(TerminalPoint { row: 0, column: 5 });
+    assert_eq!(frozen.selection_text(), Some("bcdef".into()));
+
+    live.place_selection_caret(TerminalPoint { row: 0, column: 3 });
+    let frozen = live.frozen_grid();
+    assert!(frozen.explicit_selection_active());
+    assert!(frozen.local_selection_active());
+    assert!(frozen.selection_text().is_none());
+}
+
+#[test]
 fn frozen_grid_keeps_scrollback_offset_when_live_output_scrolls() {
     let mut live = Engine::new(Size::new(12, 3).unwrap(), true);
     live.output(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");

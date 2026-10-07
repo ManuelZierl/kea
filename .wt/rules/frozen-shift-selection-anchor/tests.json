@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "unconditional-clear",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn down() { if frozen_gesture { self.session.freeze_display(); self.session.clear_terminal_selection(); } }\n"}],
+      "expect": [{"path": "crates/kea-app/src/app/pointer.rs", "code": "cleared-shift-anchor", "kind": "violation"}]
+    },
+    {
+      "name": "guarded-fresh-gesture",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn down() { if frozen_gesture { self.session.freeze_display(); if force_frozen { self.session.clear_terminal_selection(); } } }\n"}],
+      "expect": []
+    },
+    {
+      "name": "explicit-stop-selecting",
+      "files": [{"path": "crates/kea-app/src/app/pointer.rs", "content": "fn stop() { self.session.clear_terminal_selection(); }\n"}],
+      "expect": []
+    }
+  ]
+}

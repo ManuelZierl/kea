@@ -670,9 +670,11 @@ before, after = os.environ['SELECTION_BEFORE_TEXT'], os.environ['SELECTION_AFTER
 assert after.startswith(before) and len(after) == len(before) + 1, (before, after)
 assert Path('smoke-artifacts/selection-default.bin').read_bytes() == b''
 PY
-# Keyboard navigation promotes the range to explicit local interaction. Exit it
+# Keyboard navigation promotes the range to explicit local interaction. Escape
+# clears that selection, then Return live leaves the frozen Shift-drag snapshot
 # before exercising a new child-owned gesture.
 key Escape
+fkey F9
 # Adding Shift after a child-owned press cannot turn its remaining events local.
 xdotool mousemove --window "$window" 25 160
 sleep .1

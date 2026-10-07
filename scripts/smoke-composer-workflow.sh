@@ -165,9 +165,42 @@ assert_bytes '03'
 key Return
 assert_bytes '030d'
 
-# Frozen selection must survive a busy mouse-reporting child even with the
-# ordinary Shift-local override disabled. No press/motion/release or typed input
-# may reach that child until Return live.
+# The ordinary Shift-local selection path must freeze the displayed grid while
+# a busy mouse-reporting child keeps advancing. The child remains alive, but its
+# output and terminal input cannot disturb the selected snapshot until Return live.
+printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
+start_fixture frozen-shift scripts/busy-terminal-fixture.py
+xdotool keydown Shift_L
+xdotool mousemove --window "$window" 20 172
+sleep .15
+xdotool mousedown 1
+sleep .3
+xdotool mousemove --window "$window" 170 172
+sleep .3
+xdotool mouseup 1
+xdotool keyup Shift_L
+sleep .2
+key ctrl+c
+shift_frozen=$(timeout 3s xclip -selection clipboard -t UTF8_STRING -o)
+[[ "$shift_frozen" =~ FRAME-[0-9]{6} ]] || { printf 'No Shift-frozen frame selected: <%s>\n' "$shift_frozen" >&2; exit 1; }
+tick=$(cat "${output%.bin}.tick")
+sleep .5
+key x ctrl+c
+[[ "$(timeout 3s xclip -selection clipboard -t UTF8_STRING -o)" == "$shift_frozen" ]]
+[[ "$(cat "${output%.bin}.tick")" -gt "$tick" ]]
+assert_bytes ''
+xdotool key --clearmodifiers 75
+sleep .2
+key ctrl+l x
+python3 - "$output" <<'PY'
+import sys
+from pathlib import Path
+assert b'x' in Path(sys.argv[1]).read_bytes(), "Return live did not restore child input after Shift-local freeze"
+PY
+
+# Ctrl+Shift remains the force-local escape hatch when the ordinary Shift-local
+# override is disabled. No press/motion/release or typed input may reach that
+# child until Return live.
 printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
 start_fixture frozen scripts/busy-terminal-fixture.py
 xdotool keydown Control_L keydown Shift_L

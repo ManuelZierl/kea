@@ -175,6 +175,27 @@ fn frozen_grid_stays_unchanged_while_live_engine_advances_and_input_is_denied() 
 }
 
 #[test]
+fn freezing_preserves_selection_for_shift_extension() {
+    let size = Size::new(20, 3).unwrap();
+    let mut recording = Recording::new(size).unwrap();
+    recording
+        .append(0, Kind::Output(b"initial".to_vec()))
+        .unwrap();
+    let mut session = Session::from_recording(recording).unwrap();
+    session.begin_terminal_selection(TerminalPoint { row: 0, column: 0 });
+    session.update_terminal_selection(TerminalPoint { row: 0, column: 3 });
+    let before = session.terminal_selection_text();
+
+    session.freeze_display();
+    assert_eq!(session.terminal_selection_text(), before);
+    session.extend_terminal_selection(TerminalPoint { row: 0, column: 6 });
+    assert_eq!(
+        session.terminal_selection_text().as_deref(),
+        Some("initial")
+    );
+}
+
+#[test]
 fn freezing_playback_stops_only_the_replay_clock_and_keeps_the_displayed_frame() {
     let mut session = Session::demo().unwrap();
     session.seek(2).unwrap();

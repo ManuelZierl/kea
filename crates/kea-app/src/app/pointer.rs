@@ -29,10 +29,26 @@ impl KeaView {
             return;
         };
         let reporting = self.session.terminal_mouse_reporting();
-        let frozen_gesture = selection::frozen_drag(event.modifiers.control, event.modifiers.shift);
+        let normal_owner = selection::mouse_owner(
+            reporting,
+            self.settings.shift_mouse_selects_locally,
+            self.session.terminal_explicit_selection_active(),
+            event.modifiers.shift,
+            event.modifiers.alt,
+        );
+        let preserve_shift_selection = selection::preserves_shift_selection(
+            event.modifiers.shift,
+            event.modifiers.control,
+            self.session.terminal_explicit_selection_active(),
+            self.session.terminal_has_selection(),
+        );
+        let frozen_gesture = selection::frozen_drag(event.modifiers.control, event.modifiers.shift)
+            || selection::local_shift_drag_freezes(event.modifiers.shift, normal_owner);
         if frozen_gesture {
             self.session.freeze_display();
-            self.session.clear_terminal_selection();
+            if !preserve_shift_selection {
+                self.session.clear_terminal_selection();
+            }
         }
         let owner = if frozen_gesture {
             if event.modifiers.alt {
@@ -41,13 +57,7 @@ impl KeaView {
                 selection::MouseOwner::LocalSimple
             }
         } else {
-            selection::mouse_owner(
-                reporting,
-                self.settings.shift_mouse_selects_locally,
-                self.session.terminal_explicit_selection_active(),
-                event.modifiers.shift,
-                event.modifiers.alt,
-            )
+            normal_owner
         };
         let gesture = selection::Gesture::new(
             point,

@@ -108,17 +108,21 @@ the application's own selection/export or an explicit cooperating integration.
 
 ## 3. Mouse routing
 
-Holding Ctrl+Shift while beginning a left drag freezes the currently displayed
-grid and selects within that immutable view, regardless of mouse reporting or
-the Shift-selection setting. Live output, recording and protocol replies continue
-against the live engine. The frozen grid is a bounded screen copy, not a replay
-checkpoint; resizing clips the view instead of reflowing it. Drag endpoints and
-edge autoscroll use the visible clipped canvas, not hidden snapshot rows/columns;
-enlarging the canvas does not create selectable snapshot content. The header identifies
-the frozen view separately from History. Return live drops it and restores normal
-input; seeking history leaves the frozen view for the selected historical frame.
-No terminal keyboard, paste or pointer input is sent to the child until Return
-live. Ctrl+Shift hover and the complete press/motion/release gesture remain local.
+Holding Shift while beginning a Kea-owned left drag freezes the currently displayed
+grid and selects within that immutable view, so live output cannot move text under
+the pointer. This follows the Shift-selection setting: with mouse reporting active
+and `shift_mouse_selects_locally = false`, ordinary Shift pointer input is still
+forwarded to the child. Ctrl+Shift forces the frozen local gesture regardless of
+that setting. Live output, recording and protocol replies continue against the live
+engine. The frozen grid is a bounded screen copy, not a replay checkpoint; resizing
+clips the view instead of reflowing it. Drag endpoints and edge autoscroll use the
+visible clipped canvas, not hidden snapshot rows/columns; enlarging the canvas does
+not create selectable snapshot content. The header identifies the frozen view
+separately from History. Return live drops it and restores normal input; seeking
+history leaves the frozen view for the selected historical frame. No terminal
+keyboard, paste or pointer input is sent to the child until Return live. Hover
+reserved for a local frozen gesture and its complete press/motion/release sequence
+remain local.
 
 ### 3.1 Child mouse reporting off
 

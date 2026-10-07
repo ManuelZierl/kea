@@ -1,4 +1,6 @@
 use super::*;
+use kea_core::{Kind, Recording, Size};
+use kea_session::Session;
 
 fn point(column: usize) -> TerminalPoint {
     TerminalPoint { row: 0, column }
@@ -32,6 +34,15 @@ fn edge_autoscroll_is_local_directional_and_bounded() {
             0
         );
     }
+}
+
+#[test]
+fn local_shift_drag_freezes_without_overriding_forwarded_shift() {
+    for owner in [MouseOwner::LocalSimple, MouseOwner::LocalBlock] {
+        assert!(local_shift_drag_freezes(true, owner));
+        assert!(!local_shift_drag_freezes(false, owner));
+    }
+    assert!(!local_shift_drag_freezes(true, MouseOwner::Forward));
 }
 
 #[test]
@@ -89,6 +100,63 @@ fn explicit_and_shift_clicks_preserve_their_anchor() {
     assert!(extended.shift_extend);
     let implicit = Gesture::new(point(1), MouseOwner::LocalSimple, false, true, true);
     assert!(implicit.preserve_click);
+}
+
+#[test]
+fn ordinary_shift_extension_survives_freeze_but_ctrl_shift_starts_over() {
+    assert!(preserves_shift_selection(true, false, true, false));
+    assert!(preserves_shift_selection(true, false, false, true));
+    assert!(!preserves_shift_selection(true, true, true, true));
+    assert!(!preserves_shift_selection(false, false, true, true));
+}
+
+#[test]
+fn shift_click_keeps_existing_range_through_mouse_down_and_up() {
+    let size = Size::new(12, 2).unwrap();
+    let mut recording = Recording::new(size).unwrap();
+    recording
+        .append(0, Kind::Output(b"initial".to_vec()))
+        .unwrap();
+    let mut session = Session::from_recording(recording).unwrap();
+    session.begin_terminal_selection(TerminalPoint { row: 0, column: 0 });
+    session.update_terminal_selection(TerminalPoint { row: 0, column: 2 });
+
+    let gesture = Gesture::new(
+        point(5),
+        MouseOwner::LocalSimple,
+        false,
+        true,
+        session.terminal_has_selection(),
+    );
+    assert!(gesture.shift_extend);
+    assert!(gesture.preserve_click);
+    session.freeze_display();
+    session.extend_terminal_selection(point(5));
+    assert_eq!(session.terminal_selection_text().as_deref(), Some("initia"));
+    assert!(!session.is_history());
+}
+
+#[test]
+fn shift_drag_keeps_explicit_caret_anchor_without_child_or_history_effects() {
+    let size = Size::new(12, 2).unwrap();
+    let mut recording = Recording::new(size).unwrap();
+    recording
+        .append(0, Kind::Output(b"initial".to_vec()))
+        .unwrap();
+    let mut session = Session::from_recording(recording).unwrap();
+    session.place_terminal_selection_caret(point(0));
+    let gesture = Gesture::new(
+        point(4),
+        MouseOwner::LocalSimple,
+        session.terminal_explicit_selection_active(),
+        true,
+        session.terminal_has_selection(),
+    );
+    assert!(gesture.shift_extend);
+    session.freeze_display();
+    session.extend_terminal_selection(point(4));
+    assert_eq!(session.terminal_selection_text().as_deref(), Some("initi"));
+    assert!(!session.is_history());
 }
 
 #[test]
