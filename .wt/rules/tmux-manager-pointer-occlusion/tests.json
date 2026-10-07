@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "transparent-manager",
+      "files": [{"path": "crates/kea-app/src/app/tabs.rs", "content": "fn panel() { let panel = div().id(\"tmux-manager\").absolute().top(px(72.)); }\n"}],
+      "expect": [{"path": "crates/kea-app/src/app/tabs.rs", "code": "pointer-click-through", "kind": "violation"}]
+    },
+    {
+      "name": "occluded-manager",
+      "files": [{"path": "crates/kea-app/src/app/tabs.rs", "content": "fn panel() { let panel = div().id(\"tmux-manager\").occlude().absolute().top(px(72.)); }\n"}],
+      "expect": []
+    },
+    {
+      "name": "ordinary-terminal",
+      "files": [{"path": "crates/kea-app/src/app/tabs.rs", "content": "fn panel() { let panel = div().id(\"terminal-surface\").absolute(); }\n"}],
+      "expect": []
+    }
+  ]
+}

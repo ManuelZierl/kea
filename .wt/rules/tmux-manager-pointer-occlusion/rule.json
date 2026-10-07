@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "tmux-manager-pointer-occlusion",
+  "title": "The tmux manager must occlude the terminal beneath it",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": {"include": ["crates/kea-app/src/app/tabs.rs"], "exclude": [], "require_files": []},
+  "code": {"file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"]},
+  "patterns": {},
+  "diagnostics": {
+    "pointer-click-through": {
+      "kind": "violation",
+      "message": "A floating tmux manager without an input boundary leaks pointer events to the live terminal.",
+      "help": "Occlude the manager before positioning it and stop covered pointer/wheel propagation without blocking its buttons."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "tests_file": "tests.json"
+}

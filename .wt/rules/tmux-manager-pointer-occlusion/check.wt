@@ -1,0 +1,3 @@
+for m in file.ast_match("rust", "div().id(\"tmux-manager\").absolute()") {
+    emit(m.span, "pointer-click-through");
+}

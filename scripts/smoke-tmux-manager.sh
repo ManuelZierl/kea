@@ -9,11 +9,18 @@ mkdir -p "$TMUX_TMPDIR"
 chmod 700 "$XDG_RUNTIME_DIR" "$TMUX_TMPDIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
 export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/memories"
+export HOME="$XDG_RUNTIME_DIR/home" HISTFILE="$XDG_RUNTIME_DIR/bash-history"
+mkdir -p "$HOME"
+printf 'theme = dark\ncheck_for_updates = false\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 window= pid=
 cleanup() {
   local status=$?
+  if [[ "$status" -ne 0 && -n "$window" ]]; then
+    import -silent -window "$window" smoke-artifacts/tmux-manager-failure.png || true
+    tail -n 60 smoke-artifacts/tmux-overlay.log >&2 || true
+  fi
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
   tmux -S "$TMUX_TMPDIR/default" kill-server 2>/dev/null || true
@@ -21,8 +28,9 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+trap 'echo "Tmux smoke failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
-tmux -S "$TMUX_TMPDIR/default" new-session -d -s overlay-test 'exec bash'
+tmux -S "$TMUX_TMPDIR/default" -f /dev/null new-session -d -s overlay-test 'exec bash --noprofile --norc'
 server_pid=$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py \
   smoke-artifacts/tmux-overlay.bin >smoke-artifacts/tmux-overlay.log 2>&1 &
@@ -36,39 +44,61 @@ done
 [[ -n "$window" ]] || { echo 'No Kea window'; exit 1; }
 xdotool windowfocus --sync "$window"
 sleep 1
+key() {
+  xdotool key --clearmodifiers --delay 50 "$1"
+  sleep .2
+}
+clients() {
+  tmux -S "$TMUX_TMPDIR/default" display-message -p -t overlay-test '#{session_attached}'
+}
+assert_clients() {
+  for _ in $(seq 1 50); do
+    [[ "$(clients)" == "$1" ]] && return
+    sleep .1
+  done
+  echo "Expected $1 attached tmux clients; got $(clients)" >&2
+  return 1
+}
 
 # Standard 1050x780 smoke geometry: toolbar tmux button, then first row Open.
-smoke_click 800 51
+smoke_click 995 51
 sleep .5
 import -silent -window "$window" smoke-artifacts/tmux-manager.png
-smoke_click 970 145
-for _ in $(seq 1 50); do
-  [[ "$(tmux -S "$TMUX_TMPDIR/default" list-clients -t overlay-test 2>/dev/null | wc -l)" -ge 1 ]] && break
-  sleep .1
-done
-[[ "$(tmux -S "$TMUX_TMPDIR/default" list-clients -t overlay-test 2>/dev/null | wc -l)" -ge 1 ]]
+smoke_click 935 199
+assert_clients 1
+[[ ! -s smoke-artifacts/tmux-overlay.bin ]] || { echo 'Manager click leaked to the underlying terminal'; exit 1; }
 [[ "$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')" == "$server_pid" ]]
 
 # Closing the Kea tab detaches its client while preserving the server/session.
-xdotool key --clearmodifiers --delay 50 ctrl+shift+w
+smoke_click 130 85
+key ctrl+shift+w
 sleep .3
-xdotool key --clearmodifiers --delay 50 Escape
-xdotool key --clearmodifiers --delay 50 ctrl+shift+w
+key Escape
+assert_clients 1
+key ctrl+shift+w
 sleep .3
-xdotool key --clearmodifiers --delay 50 Return
-for _ in $(seq 1 50); do
-  [[ "$(tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test 2>/dev/null; echo $?)" -eq 0 ]] && break
-  sleep .1
-done
+key Return
+assert_clients 0
 tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test
 [[ "$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')" == "$server_pid" ]]
 
 # Reopen the manager and cancel Kill; the persistent session must remain.
-smoke_click 800 51
+smoke_click 995 51
 sleep .5
 import -silent -window "$window" smoke-artifacts/tmux-manager-kill.png
-smoke_click 970 190
+smoke_click 997 199
 sleep .3
-xdotool key --clearmodifiers --delay 50 Escape
+key Escape
 tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test
-echo 'tmux manager attach/detach, server preservation, and Kill cancellation passed.'
+smoke_click 997 199
+sleep .3
+key Return
+for _ in $(seq 1 50); do
+  if ! tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test 2>/dev/null; then
+    echo 'tmux manager attach/detach, server preservation, Kill cancellation/confirmation and pointer isolation passed.'
+    exit 0
+  fi
+  sleep .1
+done
+echo 'Confirmed Kill did not terminate the disposable session' >&2
+exit 1
