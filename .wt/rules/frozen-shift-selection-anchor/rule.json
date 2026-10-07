@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "frozen-shift-selection-anchor",
+  "title": "Ordinary frozen Shift gestures preserve selection anchors",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": {"include": ["crates/kea-app/src/app/pointer.rs"], "exclude": [], "require_files": []},
+  "code": {"file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"]},
+  "patterns": {},
+  "diagnostics": {
+    "cleared-shift-anchor": {
+      "kind": "violation",
+      "message": "Unconditionally clearing after a frozen gesture destroys the prior Shift-click/drag anchor.",
+      "help": "Preserve selection metadata on ordinary Shift extension; clear only for an explicit fresh force-local gesture."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "tests_file": "tests.json"
+}
