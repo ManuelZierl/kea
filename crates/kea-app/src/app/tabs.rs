@@ -55,6 +55,7 @@ pub(super) struct KeaRoot {
     held_keys: Option<HeldWorkflowKeys>,
     tmux_open: bool,
     tmux_loading: bool,
+    tmux_notice: Option<String>,
     tmux_sessions: Vec<TmuxSession>,
     tmux_generation: u64,
     tmux_tx: Sender<TmuxUiResult>,
@@ -100,13 +101,11 @@ impl KeaRoot {
                             match result.sessions {
                                 Ok(sessions) => {
                                     this.tmux_sessions = sessions;
-                                    if let Some(notice) = result.notice {
-                                        this.notice = Some(notice);
-                                    }
+                                    this.tmux_notice = result.notice;
                                 }
                                 Err(error) => {
                                     this.tmux_sessions.clear();
-                                    this.notice = Some(error);
+                                    this.tmux_notice = Some(error);
                                 }
                             }
                             changed = true;
@@ -133,6 +132,7 @@ impl KeaRoot {
             held_keys: None,
             tmux_open: false,
             tmux_loading: false,
+            tmux_notice: None,
             tmux_sessions: Vec::new(),
             tmux_generation: 0,
             tmux_tx,
@@ -388,7 +388,7 @@ impl KeaRoot {
             return;
         }
         if self.tabs.is_full() {
-            self.notice = Some(format!(
+            self.tmux_notice = Some(format!(
                 "At most {MAX_TERMINALS} terminals can be open. Close one before attaching tmux."
             ));
             cx.notify();
@@ -397,7 +397,7 @@ impl KeaRoot {
         let command = match tmux::attach_command(&tmux_session) {
             Ok(command) => command,
             Err(error) => {
-                self.notice = Some(format!("Could not attach tmux: {error:#}"));
+                self.tmux_notice = Some(format!("Could not attach tmux: {error:#}"));
                 cx.notify();
                 return;
             }
@@ -408,7 +408,7 @@ impl KeaRoot {
         let (session, shell) = match startup::spawn_terminal(command, None) {
             Ok(value) => value,
             Err(error) => {
-                self.notice = Some(format!(
+                self.tmux_notice = Some(format!(
                     "Could not attach tmux session {}: {error:#}",
                     tmux_session.name()
                 ));
@@ -440,7 +440,7 @@ impl KeaRoot {
         };
         self.attach(view, title, backing, focus, window, cx);
         self.tmux_open = false;
-        self.notice = None;
+        self.tmux_notice = None;
         self.focus_selected(window, cx);
     }
 
@@ -821,7 +821,13 @@ impl Render for KeaRoot {
                         .child("tmux is the source of truth. Closing a Kea tab detaches only Kea; Kill ends the persistent session for all clients."),
                 );
 
-            if self.tmux_loading {
+            if let Some(notice) = &self.tmux_notice {
+                panel = panel.child(
+                    div()
+                        .text_color(cx.theme().danger)
+                        .child(notice.clone()),
+                );
+            } else if self.tmux_loading {
                 panel = panel.child(
                     div()
                         .py_2()
