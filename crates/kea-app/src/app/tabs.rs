@@ -402,6 +402,9 @@ impl KeaRoot {
                 return;
             }
         };
+        // Spawning only starts the guarded tmux client. Its stale-session
+        // branch reports an error and exits; Kea must not infer a successful
+        // persistent attach from spawn returning.
         let (session, shell) = match startup::spawn_terminal(command, None) {
             Ok(value) => value,
             Err(error) => {
