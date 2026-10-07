@@ -66,10 +66,43 @@ fn replay_is_silent_and_resize_is_replayed() {
         .unwrap();
     let mut replay = Engine::at(&log, 2).unwrap();
     assert!(replay.drain_replies().is_empty());
+    assert_eq!(replay.drain_clipboard_stores(), ClipboardStores::default());
     assert_eq!(replay.screen().size, Size::new(20, 4).unwrap());
     let mut live = Engine::new(log.initial_size(), true);
     live.output(b"\x1b[6n");
     assert!(!live.drain_replies().is_empty());
+}
+
+#[test]
+fn live_engine_surfaces_clipboard_stores_but_not_primary_selection() {
+    let mut live = Engine::new(Size::new(40, 6).unwrap(), true);
+    live.output(b"\x1b]52;c;S0VBX09TQzUyX1RFU1Q=\x07");
+    assert_eq!(
+        live.drain_clipboard_stores().latest,
+        Some("KEA_OSC52_TEST".to_string())
+    );
+
+    live.output(b"\x1b]52;p;cHJpbWFyeQ==\x07");
+    assert_eq!(live.drain_clipboard_stores(), ClipboardStores::default());
+}
+
+#[test]
+fn live_engine_keeps_only_the_latest_accepted_clipboard_store() {
+    let mut live = Engine::new(Size::new(40, 6).unwrap(), true);
+    live.output(b"\x1b]52;c;Zmlyc3Q=\x07\x1b]52;c;c2Vjb25k\x07\x1b]52;c;dGhpcmQ=\x07");
+    let stores = live.drain_clipboard_stores();
+    assert_eq!(stores.latest, Some("third".to_string()));
+    assert_eq!(stores.rejected, 0);
+}
+
+#[test]
+fn live_engine_rejects_oversized_clipboard_store_and_reports_it() {
+    let mut live = Engine::new(Size::new(40, 6).unwrap(), true);
+    let encoded = "AAAA".repeat((MAX_CLIPBOARD_STORE_BYTES / 3) + 1);
+    live.output(format!("\x1b]52;c;{encoded}\x07").as_bytes());
+    let stores = live.drain_clipboard_stores();
+    assert_eq!(stores.latest, None);
+    assert_eq!(stores.rejected, 1);
 }
 
 #[test]
@@ -121,10 +154,32 @@ fn frozen_grid_preserves_active_buffer_colors_cursor_and_native_selection() {
         live.output(b"\x1b[2J\x1b[Hchanged\x1b[6n");
         assert!(!live.drain_replies().is_empty());
         assert!(frozen.drain_replies().is_empty());
+        assert_eq!(frozen.drain_clipboard_stores(), ClipboardStores::default());
         assert_eq!(frozen.screen().text(), before.text());
         assert_eq!(frozen.selection_text(), selected);
         assert!(!live.screen().text().contains("last"));
     }
+}
+
+#[test]
+fn frozen_grid_preserves_selection_anchor_head_and_explicit_caret() {
+    use crate::TerminalPoint;
+
+    let mut live = Engine::new(Size::new(12, 2).unwrap(), false);
+    live.output(b"abcdef");
+    live.begin_selection(TerminalPoint { row: 0, column: 1 });
+    live.update_selection(TerminalPoint { row: 0, column: 4 });
+    let mut frozen = live.frozen_grid();
+
+    assert_eq!(frozen.selection_text(), live.selection_text());
+    frozen.extend_selection(TerminalPoint { row: 0, column: 5 });
+    assert_eq!(frozen.selection_text(), Some("bcdef".into()));
+
+    live.place_selection_caret(TerminalPoint { row: 0, column: 3 });
+    let frozen = live.frozen_grid();
+    assert!(frozen.explicit_selection_active());
+    assert!(frozen.local_selection_active());
+    assert!(frozen.selection_text().is_none());
 }
 
 #[test]

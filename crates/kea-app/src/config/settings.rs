@@ -49,6 +49,8 @@ pub struct Settings {
     pub composer_suggestions: bool,
     /// Empty disables textual action shorthand. The action menu remains available.
     pub composer_action_prefix: String,
+    /// Check GitHub Releases once when the initial Windows window starts.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -70,6 +72,7 @@ impl Default for Settings {
             confirm_ctrl_c: false,
             composer_suggestions: true,
             composer_action_prefix: "::".into(),
+            check_for_updates: true,
         }
     }
 }
@@ -170,6 +173,7 @@ impl Settings {
                 "history_persistence" => settings.history_persistence = boolean(value)?,
                 "confirm_ctrl_c" => settings.confirm_ctrl_c = boolean(value)?,
                 "composer_suggestions" => settings.composer_suggestions = boolean(value)?,
+                "check_for_updates" => settings.check_for_updates = boolean(value)?,
                 "composer_action_prefix" => {
                     let prefix = if value == "none" { "" } else { value };
                     anyhow::ensure!(crate::editor::workflow::valid_prefix(prefix),
@@ -253,6 +257,7 @@ history_persistence = {}\n\
 confirm_ctrl_c = {}\n\
 composer_suggestions = {}\n\
 composer_action_prefix = {composer_action_prefix}\n\
+check_for_updates = {}\n\
 shift_mouse_selects_locally = {}\n\
 animate_logo = {}\n\
 show_blocks = {}\n\
@@ -266,6 +271,7 @@ output_wrap = {}\n",
             self.history_persistence,
             self.confirm_ctrl_c,
             self.composer_suggestions,
+            self.check_for_updates,
             self.shift_mouse_selects_locally,
             self.animate_logo,
             self.show_blocks,

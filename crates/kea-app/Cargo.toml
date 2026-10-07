@@ -21,6 +21,9 @@ anyhow.workspace = true
 nix = { version = "0.28", features = ["fs", "signal", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
+sha2 = "0.10"
+reqwest = { package = "zed-reqwest", version = "=0.12.15-zed", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 tempfile = "3"
 tree-sitter-bash = "=0.23.3"
 

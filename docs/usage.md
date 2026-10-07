@@ -118,9 +118,9 @@ Terminal applications receive encoded terminal input, not raw physical keyboard 
 - Legacy, UTF-8 and SGR mouse-wheel reports are forwarded when requested.
 - Primary mouse press/release is forwarded when mouse reporting is active.
 - Drag/motion is forwarded only for the negotiated DECSET 1002/1003 modes.
-- **Shift+drag** selects locally by default. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
+- **Shift+drag** selects locally by default and freezes the displayed grid so busy output cannot move the text underneath the selection. The child and recording continue. Shift-modified hover is suppressed so positioning for that reserved gesture cannot update the child TUI. **Return live** (F9) restores live viewing and input. Set `shift_mouse_selects_locally = false` to forward Shift pointer input to mouse-reporting applications. **Shift+wheel** always uses Kea scrollback.
 - **Select text** in the terminal header enters local selection without a modifier gesture. F4 does the same from composer/chrome; from terminal focus use Ctrl/Cmd+L, then F4.
-- **Ctrl+Shift+drag** freezes the displayed grid for stable selection during busy output, even when the Shift override is disabled. The child and recording continue. **Return live** (F9) restores live viewing and input; the frozen view itself cannot send input.
+- **Ctrl+Shift+drag** forces the same frozen local selection even when the Shift override is disabled.
 - A local selection/caret owns Copy, Esc and navigation/extension keys. In the live view, other input clears it and reaches the child on the first key. Alt-drag creates a column selection after local ownership is established.
 
 For long shell output, hold a local drag at or beyond the terminal's upper/lower
@@ -220,7 +220,9 @@ Configuration directories:
 - macOS: `~/Library/Application Support/Kea/`
 - Windows: `%APPDATA%\Kea\`
 
-`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files.
+`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files. On supported Windows
+builds, `check_for_updates = false` disables the once-per-startup GitHub Release
+check without disabling manual checks.
 
 Use the Settings button in the main toolbar to change appearance, composer and
 workflow preferences. Choices are saved automatically to `settings.conf`; theme,
@@ -266,6 +268,7 @@ theme = system
 post_submit_focus = editor
 persist_history = false
 history_persistence = false
+check_for_updates = true
 shift_mouse_selects_locally = true
 animate_logo = true
 show_blocks = false
@@ -320,9 +323,31 @@ cargo run --locked --release -- --demo
 
 On Windows, `kea.exe` uses the GUI subsystem and does not intentionally allocate a companion console window. Development builds remain unsigned.
 
-Version tags named exactly `v<workspace-version>` publish unsigned Linux, macOS
-and Windows archives through GitHub Actions after the cross-platform CI and Linux
-desktop smoke test pass. The tagged commit must be reachable from `main`.
+Version tags named exactly `v<workspace-version>` publish unsigned Linux and macOS
+archives, a portable Windows archive, and a current-user Windows installer through
+GitHub Actions after the cross-platform CI and Linux desktop smoke test pass. The
+tagged commit must be reachable from `main`.
+
+## Windows installation and updates
+
+The Windows installer is fixed to `%LOCALAPPDATA%\\Programs\\Kea` and does not
+request elevation. The portable ZIP remains available without installation.
+
+Windows x86_64 builds check GitHub Releases once when the initial Kea window starts
+unless `check_for_updates = false` is set. The title bar always allows an explicit
+check. Update state belongs to the window rather than an individual terminal tab.
+Choosing **Update v…** downloads the installer to a temporary file and verifies it
+against the SHA-256 digest attached to that GitHub Release asset while Kea keeps
+running. The control then changes to **Restart for v…**. Restart requires an
+explicit confirmation because every terminal process and unsaved transient state
+will be closed. After acceptance, the verified current-user installer runs silently
+and Kea restarts the installed copy. A portable build can use the same action; a
+successful update moves future launches to the per-user installed copy while
+leaving the original portable files untouched.
+
+This verifies release-asset integrity but does not provide Windows publisher
+identity. Release executables and installers remain unsigned for
+Authenticode/SmartScreen purposes.
 
 ## Architecture
 

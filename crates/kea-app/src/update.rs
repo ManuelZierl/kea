@@ -1,0 +1,382 @@
+//! Release update discovery and Windows current-user installer handoff.
+//!
+//! Kea never trusts a download URL by itself. A candidate installer must be an
+//! asset of a GitHub Release and carry GitHub's SHA-256 asset digest; the staged
+//! installer is hashed again before the application offers to restart.
+use anyhow::{Context as _, Result};
+use semver::Version;
+use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
+use std::{
+    fs::File,
+    io::{Read as _, Write as _},
+    path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver},
+    thread,
+    time::Duration,
+};
+
+const RELEASES_URL: &str = "https://api.github.com/repos/ManuelZierl/kea/releases?per_page=20";
+const MAX_INSTALLER_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateInfo {
+    pub version: Version,
+    installer_url: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StagedUpdate {
+    pub version: Version,
+    installer_path: PathBuf,
+    expected_sha256: String,
+}
+
+#[derive(Debug)]
+pub enum WorkerResult {
+    Checked(std::result::Result<Option<UpdateInfo>, String>),
+    Staged(std::result::Result<StagedUpdate, String>),
+    Verified(std::result::Result<(), String>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
+    size: u64,
+}
+
+pub fn supported() -> bool {
+    cfg!(all(target_os = "windows", target_arch = "x86_64"))
+}
+
+pub fn startup_failure_notice() -> Option<String> {
+    if !supported() {
+        return None;
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA")?;
+    let path = PathBuf::from(local_app_data)
+        .join("Kea")
+        .join("update-failure.log");
+    let file = File::open(&path).ok()?;
+    let mut message = String::new();
+    file.take(16 * 1024).read_to_string(&mut message).ok()?;
+    let message = message.trim();
+    (!message.is_empty()).then(|| {
+        format!(
+            "The previous Kea update failed: {message}. Kea remains on the current version; retry the update or run the latest installer manually. Details are retained in {}.",
+            path.display()
+        )
+    })
+}
+
+pub fn check_in_background() -> Receiver<WorkerResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = check_for_update().map_err(|error| format!("{error:#}"));
+        let _ = tx.send(WorkerResult::Checked(result));
+    });
+    rx
+}
+
+pub fn stage_in_background(update: UpdateInfo) -> Receiver<WorkerResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = prepare_update(&update).map_err(|error| format!("{error:#}"));
+        let _ = tx.send(WorkerResult::Staged(result));
+    });
+    rx
+}
+
+pub fn verify_staged_in_background(staged: StagedUpdate) -> Receiver<WorkerResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = verify_staged(&staged).map_err(|error| format!("{error:#}"));
+        let _ = tx.send(WorkerResult::Verified(result));
+    });
+    rx
+}
+
+fn http_client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .user_agent(format!("Kea/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("cannot create update HTTP client")
+}
+
+fn check_for_update() -> Result<Option<UpdateInfo>> {
+    anyhow::ensure!(supported(), "self-update is not supported on this platform");
+    let releases = http_client()?
+        .get(RELEASES_URL)
+        .send()
+        .context("cannot reach GitHub Releases")?
+        .error_for_status()
+        .context("GitHub Releases returned an error")?
+        .json::<Vec<GithubRelease>>()
+        .context("cannot read GitHub release metadata")?;
+    let current = Version::parse(env!("CARGO_PKG_VERSION"))
+        .context("Kea's compiled version is not valid semver")?;
+    Ok(select_update(&current, &releases))
+}
+
+fn select_update(current: &Version, releases: &[GithubRelease]) -> Option<UpdateInfo> {
+    releases
+        .iter()
+        .filter(|release| !release.draft)
+        .filter(|release| !current.pre.is_empty() || !release.prerelease)
+        .filter_map(|release| {
+            let version_text = release
+                .tag_name
+                .strip_prefix('v')
+                .unwrap_or(&release.tag_name);
+            let version = Version::parse(version_text).ok()?;
+            if version <= *current {
+                return None;
+            }
+
+            let expected_name = format!("kea-{}-windows-x86_64-setup.exe", release.tag_name);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == expected_name)?;
+            if asset.size == 0 || asset.size > MAX_INSTALLER_BYTES {
+                return None;
+            }
+            let sha256 = parse_sha256(asset.digest.as_deref()?)?;
+            Some(UpdateInfo {
+                version,
+                installer_url: asset.browser_download_url.clone(),
+                sha256,
+                size: asset.size,
+            })
+        })
+        .max_by(|left, right| left.version.cmp(&right.version))
+}
+
+fn parse_sha256(value: &str) -> Option<String> {
+    let digest = value.strip_prefix("sha256:")?;
+    (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| digest.to_ascii_lowercase())
+}
+
+fn prepare_update(update: &UpdateInfo) -> Result<StagedUpdate> {
+    anyhow::ensure!(supported(), "self-update is not supported on this platform");
+    anyhow::ensure!(
+        update.size <= MAX_INSTALLER_BYTES,
+        "update installer exceeds the download limit"
+    );
+
+    let mut response = http_client()?
+        .get(&update.installer_url)
+        .send()
+        .context("cannot download the Kea update")?
+        .error_for_status()
+        .context("the Kea update download returned an error")?;
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MAX_INSTALLER_BYTES,
+            "update installer exceeds the download limit"
+        );
+    }
+
+    let mut staged = tempfile::Builder::new()
+        .prefix("kea-update-")
+        .suffix(".exe")
+        .tempfile()
+        .context("cannot stage the Kea update")?;
+    let copied = std::io::copy(
+        &mut response.by_ref().take(MAX_INSTALLER_BYTES + 1),
+        staged.as_file_mut(),
+    )
+    .context("cannot write the staged Kea update")?;
+    anyhow::ensure!(
+        copied <= MAX_INSTALLER_BYTES,
+        "update installer exceeds the download limit"
+    );
+    staged
+        .as_file_mut()
+        .flush()
+        .context("cannot flush the staged Kea update")?;
+    staged
+        .as_file()
+        .sync_all()
+        .context("cannot sync the staged Kea update")?;
+
+    let actual = sha256_file(staged.path())?;
+    anyhow::ensure!(
+        actual == update.sha256,
+        "update digest does not match the GitHub release asset"
+    );
+
+    let (file, installer_path) = staged
+        .keep()
+        .map_err(|error| error.error)
+        .context("cannot retain the staged Kea update")?;
+    drop(file);
+    Ok(StagedUpdate {
+        version: update.version.clone(),
+        installer_path,
+        expected_sha256: update.sha256.clone(),
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let metadata = path
+        .metadata()
+        .context("cannot inspect the staged Kea update")?;
+    anyhow::ensure!(
+        metadata.len() <= MAX_INSTALLER_BYTES,
+        "update installer exceeds the download limit"
+    );
+    let mut file = File::open(path).context("cannot reopen the staged Kea update")?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .context("cannot hash the staged Kea update")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn verify_staged(staged: &StagedUpdate) -> Result<()> {
+    anyhow::ensure!(
+        staged.installer_path.is_file(),
+        "the staged update installer is no longer available"
+    );
+    let actual = sha256_file(&staged.installer_path)?;
+    anyhow::ensure!(
+        actual == staged.expected_sha256,
+        "the staged update changed after download verification"
+    );
+    Ok(())
+}
+
+pub fn launch_staged_update(staged: &StagedUpdate) -> Result<()> {
+    anyhow::ensure!(supported(), "self-update is not supported on this platform");
+    anyhow::ensure!(
+        staged.installer_path.is_file(),
+        "the staged update installer is no longer available"
+    );
+    spawn_install_helper(&staged.installer_path, &staged.expected_sha256)
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn spawn_install_helper(staged: &Path, expected_sha256: &str) -> Result<()> {
+    use std::{os::windows::process::CommandExt as _, process::Command};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .context("LOCALAPPDATA is unavailable")?;
+    let installed = local_app_data.join("Programs").join("Kea").join("kea.exe");
+    let failure_log = local_app_data.join("Kea").join("update-failure.log");
+    let powershell = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .context("SystemRoot is unavailable")?;
+    anyhow::ensure!(
+        powershell.is_absolute(),
+        "SystemRoot is not an absolute path"
+    );
+    let powershell = system_powershell_path(&powershell);
+    anyhow::ensure!(
+        powershell.is_file(),
+        "the system PowerShell executable is unavailable"
+    );
+    let script = install_helper_script(
+        std::process::id(),
+        staged,
+        &installed,
+        expected_sha256,
+        &failure_log,
+    );
+
+    Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .context("cannot start the Windows update helper")?;
+    Ok(())
+}
+
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+fn system_powershell_path(system_root: &Path) -> PathBuf {
+    system_root
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+}
+
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+fn install_helper_script(
+    parent: u32,
+    staged: &Path,
+    installed: &Path,
+    expected_sha256: &str,
+    failure_log: &Path,
+) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';\
+         $parent={};$setup={};$installed={};$expected={};$failure={};$stream=$null;$process=$null;$ok=$false;$errorMessage='update helper failed';\
+         Wait-Process -Id $parent -ErrorAction SilentlyContinue;\
+         Start-Sleep -Milliseconds 150;\
+         try {{$stream=[System.IO.File]::Open($setup,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read);\
+              if ($stream.Length -gt 134217728) {{throw 'update installer exceeds the download limit'}};\
+              $actual=(Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant();\
+              if ($actual -ne $expected) {{throw 'update installer digest mismatch'}};\
+              $stream.Position=0;\
+              $process=Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru;$ok=($process.ExitCode -eq 0);if (!$ok) {{$errorMessage='installer returned a failure exit code'}}}} catch {{$errorMessage=$_.Exception.Message;$ok=$false}} finally {{if ($null -ne $stream) {{$stream.Dispose()}};Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue}};\
+         if ($ok -and (Test-Path -LiteralPath $installed)) {{Remove-Item -LiteralPath $failure -Force -ErrorAction SilentlyContinue;Start-Process -FilePath $installed; exit 0}};\
+         try {{$directory=Split-Path -Parent $failure;New-Item -ItemType Directory -Force -Path $directory | Out-Null;Set-Content -LiteralPath $failure -Value ('Kea update failed: ' + $errorMessage + '. Retry the update or run the latest installer manually.') -Encoding UTF8}} catch {{}};\
+         exit 1",
+        parent,
+        powershell_literal(staged),
+        powershell_literal(installed),
+        powershell_string(expected_sha256),
+        powershell_literal(failure_log),
+    )
+}
+
+#[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+fn spawn_install_helper(_: &Path, _: &str) -> Result<()> {
+    anyhow::bail!("self-update is not supported on this platform")
+}
+
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+fn powershell_literal(path: &Path) -> String {
+    powershell_string(&path.to_string_lossy())
+}
+
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+fn powershell_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/update.rs"]
+mod tests;

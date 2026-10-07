@@ -40,6 +40,7 @@ impl KeaView {
             SettingsChange::ComposerSuggestions(value) => {
                 self.settings.composer_suggestions = value
             }
+            SettingsChange::CheckForUpdates(value) => self.settings.check_for_updates = value,
         }
 
         let path = match self.settings.save() {
@@ -61,10 +62,12 @@ impl KeaView {
         self.notice = Some(
             if matches!(
                 change,
-                SettingsChange::PersistHistory(_) | SettingsChange::HistoryPersistence(_)
+                SettingsChange::PersistHistory(_)
+                    | SettingsChange::HistoryPersistence(_)
+                    | SettingsChange::CheckForUpdates(_)
             ) {
                 format!(
-                    "Settings saved to {}. Draft-history persistence changes take effect on the next launch.",
+                    "Settings saved to {}. Persistence and startup-update-check changes take effect on the next launch.",
                     path.display()
                 )
             } else {

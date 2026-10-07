@@ -50,9 +50,15 @@ pub(super) struct KeaRoot {
     settings: Settings,
     focus: FocusHandle,
     scroll: ScrollHandle,
-    notice: Option<String>,
-    close_allowed: bool,
+    pub(super) notice: Option<String>,
+    pub(super) update_notice: Option<String>,
+    pub(super) close_allowed: bool,
     held_keys: Option<HeldWorkflowKeys>,
+    pub(super) update_available: Option<update::UpdateInfo>,
+    pub(super) update_staged: Option<update::StagedUpdate>,
+    pub(super) update_rx: Option<Receiver<update::WorkerResult>>,
+    pub(super) update_action: Option<updater::UpdateAction>,
+    _update_poll: Task<()>,
     tmux_open: bool,
     tmux_loading: bool,
     tmux_notice: Option<String>,
@@ -86,6 +92,19 @@ impl KeaRoot {
         } else {
             InitialFocus::Editor
         };
+        let check_for_updates = settings.check_for_updates;
+        let update_poll = cx.spawn_in(window, async move |this, cx| loop {
+            Timer::after(std::time::Duration::from_millis(250)).await;
+            let disconnected = cx
+                .update(|window, cx| {
+                    this.update(cx, |this, cx| this.poll_update(window, cx))
+                        .is_err()
+                })
+                .unwrap_or(true);
+            if disconnected {
+                break;
+            }
+        });
         let (tmux_tx, tmux_rx) = mpsc::channel::<TmuxUiResult>();
         let tmux_pump = cx.spawn_in(window, async move |this, cx| loop {
             Timer::after(Duration::from_millis(50)).await;
@@ -128,8 +147,14 @@ impl KeaRoot {
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             notice: None,
+            update_notice: None,
             close_allowed: false,
             held_keys: None,
+            update_available: None,
+            update_staged: None,
+            update_rx: None,
+            update_action: None,
+            _update_poll: update_poll,
             tmux_open: false,
             tmux_loading: false,
             tmux_notice: None,
@@ -147,6 +172,9 @@ impl KeaRoot {
             window,
             cx,
         );
+        if check_for_updates {
+            root.begin_update_check(false, cx);
+        }
         root
     }
 
@@ -747,6 +775,62 @@ impl Render for KeaRoot {
             );
         }
         let dialog_layer = Root::render_dialog_layer(window, cx);
+        let update_control = update::supported().then(|| {
+            let (label, tooltip, disabled, action) = match self.update_action {
+                Some(updater::UpdateAction::Checking { .. }) => (
+                    "Checking…".to_string(),
+                    "Checking GitHub Releases for a newer Kea version".to_string(),
+                    true,
+                    0_u8,
+                ),
+                Some(updater::UpdateAction::Downloading) => (
+                    "Updating…".to_string(),
+                    "Downloading and verifying the Kea update".to_string(),
+                    true,
+                    0_u8,
+                ),
+                Some(updater::UpdateAction::Verifying) => (
+                    "Verifying…".to_string(),
+                    "Verifying the staged Kea update before restart".to_string(),
+                    true,
+                    0_u8,
+                ),
+                None if self.update_staged.is_some() => {
+                    let staged = self.update_staged.as_ref().expect("checked above");
+                    (
+                        format!("Restart for v{}", staged.version),
+                        format!("Restart Kea and install v{}", staged.version),
+                        false,
+                        2_u8,
+                    )
+                }
+                None => match &self.update_available {
+                    Some(info) => (
+                        format!("Update v{}", info.version),
+                        format!("Download and verify Kea v{}", info.version),
+                        false,
+                        1_u8,
+                    ),
+                    None => (
+                        "Updates".to_string(),
+                        "Check GitHub Releases for a newer Kea version".to_string(),
+                        false,
+                        0_u8,
+                    ),
+                },
+            };
+            Button::new("updates")
+                .label(label)
+                .tooltip(tooltip)
+                .ghost()
+                .small()
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, window, cx| match action {
+                    1 => this.begin_update_download(cx),
+                    2 => this.request_update_restart(window, cx),
+                    _ => this.begin_update_check(true, cx),
+                }))
+        });
         let body = if let Some(tab) = self.tabs.active() {
             div().flex_1().min_h_0().child(tab.view.clone())
         } else {
@@ -941,7 +1025,8 @@ impl Render for KeaRoot {
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                            ),
+                            )
+                            .children(update_control),
                     )
                     .on_close_window(
                         cx.listener(|this, _, window, cx| this.request_close_window(window, cx)),
@@ -979,6 +1064,13 @@ impl Render for KeaRoot {
                             ),
                     ),
             )
+            .children(self.update_notice.clone().map(|notice| {
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(notice)
+            }))
             .children(self.notice.clone().map(|notice| {
                 div()
                     .px_2()

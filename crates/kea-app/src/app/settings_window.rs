@@ -4,7 +4,10 @@ use gpui_component::{
     button::Button, dialog::Dialog, switch::Switch, ActiveTheme as _, Selectable as _,
     Sizable as _, WindowExt as _,
 };
-use kea_app::config::settings::{Appearance, PostSubmitFocus, Settings};
+use kea_app::{
+    config::settings::{Appearance, PostSubmitFocus, Settings},
+    update,
+};
 
 mod keybindings;
 
@@ -29,6 +32,7 @@ pub(super) enum SettingsChange {
     AnimateLogo(bool),
     ConfirmCtrlC(bool),
     ComposerSuggestions(bool),
+    CheckForUpdates(bool),
 }
 
 pub(super) fn open(view: Entity<KeaView>, window: &mut Window, cx: &mut App) {
@@ -308,7 +312,7 @@ fn build_dialog(
                         ),
                         toggle_row(
                             "shift-local-selection",
-                            "Shift-drag selects terminal text locally",
+                            "Shift-drag freezes and selects terminal text locally",
                             "Turn off to forward Shift pointer gestures to mouse-aware terminal apps.",
                             settings.shift_mouse_selects_locally,
                             SettingsChange::ShiftMouseSelectsLocally,
@@ -336,6 +340,22 @@ fn build_dialog(
                     ],
                     cx,
                 ))
+                .when(update::supported(), |content| {
+                    content.child(setting_group(
+                        "Updates",
+                        "Windows updates use a current-user installer and never require elevation.",
+                        vec![toggle_row(
+                            "check-for-updates",
+                            "Check for updates on startup",
+                            "Check GitHub Releases once when the first Kea window starts. Manual checks remain available when disabled.",
+                            settings.check_for_updates,
+                            SettingsChange::CheckForUpdates,
+                            view,
+                            cx,
+                        )],
+                        cx,
+                    ))
+                })
                 .child(
                     div()
                         .text_xs()

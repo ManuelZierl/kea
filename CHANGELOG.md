@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add a Windows current-user installer under `%LOCALAPPDATA%\\Programs\\Kea`; installation and updates do not require elevation.
+- Add opt-out startup update checks plus a manual title-bar check. Available Windows updates download and verify the release installer while Kea keeps running, then require an explicit restart confirmation before closing terminals, installing silently, and restarting the installed build.
+- Keep the portable Windows ZIP as a separate manual distribution path. Windows binaries remain unsigned for Authenticode/SmartScreen purposes.
+
 ## 0.0.1-alpha.3 — 2026-10-04
 
 - Automatically trim older terminal history at its retention limit and group nearby

@@ -10,6 +10,7 @@ mod shell_metadata;
 mod startup;
 mod tabs;
 mod terminal_input;
+mod updater;
 use tabs::{KeaRoot, WorkspaceEvent};
 mod workspace;
 
@@ -25,6 +26,7 @@ use kea_app::{
     reverse_search::view::ReverseSearchView,
     shell::ShellFlavor,
     terminal::{context::InputContext, input, recovery::PromptLineTracker, selection},
+    update,
 };
 use kea_document::Document;
 use kea_session::Session;

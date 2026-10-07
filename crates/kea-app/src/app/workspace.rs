@@ -1,10 +1,15 @@
 use super::*;
 use gpui_component::{input as edit, ActiveTheme as _};
+use kea_alacritty::MAX_CLIPBOARD_STORE_BYTES;
 use kea_app::ui::logo::{
     warm_frame, KeaLogo, KeaLogoAnimation, FRAME_COUNT as LOGO_FRAME_COUNT, KEA_LOGO_PECK_DURATION,
 };
 use kea_session::Observed;
 use std::time::Duration;
+
+fn can_write_clipboard_store(visible: bool, historical: bool, frozen: bool) -> bool {
+    visible && !historical && !frozen
+}
 
 impl KeaView {
     #[allow(clippy::too_many_arguments)]
@@ -333,6 +338,9 @@ impl KeaView {
         let previous_context = self.input_context.generation();
         let was_prompt_ready = self.input_context.ready();
         let pump = self.session.pump_observed();
+        let pump_changed = pump.changed;
+        let clipboard_store = pump.clipboard_store;
+        let clipboard_store_rejections = pump.clipboard_store_rejections;
         let mut changed = false;
         for event in pump.observed {
             changed |= match event {
@@ -346,6 +354,22 @@ impl KeaView {
                     self.document.finish(at)
                 }
             };
+        }
+        if can_write_clipboard_store(
+            self.visible,
+            self.session.is_history(),
+            self.session.is_frozen(),
+        ) {
+            if let Some(text) = clipboard_store {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+        }
+        if clipboard_store_rejections > 0 {
+            self.notice = Some(format!(
+                "OSC 52 clipboard store rejected: content exceeds {} MiB.",
+                MAX_CLIPBOARD_STORE_BYTES / (1024 * 1024)
+            ));
+            changed = true;
         }
         if previous_context != self.input_context.generation() {
             self.pending_run = None;
@@ -367,9 +391,13 @@ impl KeaView {
         if changed {
             self.document_ui.dirty = true;
         }
-        if pump.changed || changed {
+        if pump_changed || changed {
             cx.notify();
         }
         prompt_arrived
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/workspace.rs"]
+mod tests;

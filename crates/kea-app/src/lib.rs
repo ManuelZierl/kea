@@ -7,5 +7,6 @@ pub mod shell;
 pub mod terminal;
 pub mod tmux;
 pub mod ui;
+pub mod update;
 
 pub mod tabs;

@@ -1,0 +1,30 @@
+{
+  "code": {
+    "capabilities": ["text.v1"],
+    "file": "check.wt",
+    "language": "wt-rule-1"
+  },
+  "diagnostics": {
+    "unbounded-clipboard-queue": {
+      "help": "Retain only a byte-bounded latest OSC 52 store and expose rejection state.",
+      "kind": "violation",
+      "message": "OSC 52 clipboard stores must not be retained in an unbounded Vec<String>."
+    }
+  },
+  "documentation": {"file": "rule.md"},
+  "execution": "file",
+  "id": "osc52-clipboard-retention",
+  "mode": "enforced",
+  "patterns": {
+    "unbounded": "clipboard_stores\\s*:\\s*Option<Arc<Mutex<Vec<String>>>>"
+  },
+  "schema_version": 1,
+  "scope": {
+    "exclude": [],
+    "include": ["crates/kea-alacritty/src/engine.rs"],
+    "require_files": []
+  },
+  "severity": "error",
+  "tests_file": "tests.json",
+  "title": "OSC 52 clipboard retention is bounded"
+}
