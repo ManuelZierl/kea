@@ -11,11 +11,18 @@ use std::sync::{Arc, Mutex};
 use crate::TERMINAL_SCROLLBACK_LINES;
 
 const MAX_PENDING_TERMINAL_EVENTS: usize = 256;
+pub const MAX_CLIPBOARD_STORE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct ClipboardStores {
+    pub latest: Option<String>,
+    pub rejected: usize,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct Listener {
     replies: Option<Arc<Mutex<Vec<String>>>>,
-    clipboard_stores: Option<Arc<Mutex<Vec<String>>>>,
+    clipboard_stores: Option<Arc<Mutex<ClipboardStores>>>,
 }
 
 fn push_bounded(queue: &Option<Arc<Mutex<Vec<String>>>>, value: String) {
@@ -28,6 +35,19 @@ fn push_bounded(queue: &Option<Arc<Mutex<Vec<String>>>>, value: String) {
     }
 }
 
+fn push_clipboard_store(queue: &Option<Arc<Mutex<ClipboardStores>>>, value: String) {
+    let Some(queue) = queue else {
+        return;
+    };
+    let mut queue = queue.lock().unwrap_or_else(|e| e.into_inner());
+    if value.len() > MAX_CLIPBOARD_STORE_BYTES {
+        queue.rejected = queue.rejected.saturating_add(1);
+    } else {
+        // The platform clipboard only observes the latest accepted request.
+        queue.latest = Some(value);
+    }
+}
+
 impl EventListener for Listener {
     fn send_event(&self, event: TerminalEvent) {
         // Live engines may return protocol replies and request writes to the
@@ -37,7 +57,7 @@ impl EventListener for Listener {
         match event {
             TerminalEvent::PtyWrite(text) => push_bounded(&self.replies, text),
             TerminalEvent::ClipboardStore(ClipboardType::Clipboard, text) => {
-                push_bounded(&self.clipboard_stores, text);
+                push_clipboard_store(&self.clipboard_stores, text);
             }
             _ => {}
         }
@@ -64,7 +84,7 @@ pub struct Engine {
     pub(crate) terminal: Term<Listener>,
     pub(crate) parser: Processor,
     replies: Option<Arc<Mutex<Vec<String>>>>,
-    clipboard_stores: Option<Arc<Mutex<Vec<String>>>>,
+    clipboard_stores: Option<Arc<Mutex<ClipboardStores>>>,
     pub(crate) size: Size,
     pub(crate) selection_anchor: Option<alacritty_terminal::index::Point>,
     pub(crate) selection_head: Option<alacritty_terminal::index::Point>,
@@ -76,7 +96,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(size: Size, live: bool) -> Self {
         let replies = live.then(|| Arc::new(Mutex::new(Vec::new())));
-        let clipboard_stores = live.then(|| Arc::new(Mutex::new(Vec::new())));
+        let clipboard_stores = live.then(|| Arc::new(Mutex::new(ClipboardStores::default())));
         let listener = Listener {
             replies: replies.clone(),
             clipboard_stores: clipboard_stores.clone(),
@@ -146,7 +166,7 @@ impl Engine {
             .unwrap_or_default()
     }
 
-    pub fn drain_clipboard_stores(&mut self) -> Vec<String> {
+    pub fn drain_clipboard_stores(&mut self) -> ClipboardStores {
         self.clipboard_stores
             .as_ref()
             .map(|q| std::mem::take(&mut *q.lock().unwrap_or_else(|e| e.into_inner())))

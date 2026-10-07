@@ -15,7 +15,7 @@ Kea should improve input around an existing terminal application without making 
 | IME / Unicode | Platform composition is committed before bytes are sent; confirming an IME candidate never triggers a Kea action. |
 | AltGr | Completed text wins over treating Ctrl+Alt as a control chord. |
 | Paste | Bracketed paste is honored. Multiline application send refuses when the child has not enabled bracketed paste. |
-| OSC 52 clipboard | A live application's OSC 52 store for the system clipboard reaches the local platform clipboard, including through SSH/tmux. Primary-selection stores and clipboard-load/read requests are not promoted to host effects; replay remains side-effect-free. |
+| OSC 52 clipboard | A visible live view's latest accepted OSC 52 store for the system clipboard reaches the local platform clipboard, including through SSH/tmux. Hidden-tab and frozen-view stores, primary-selection stores and clipboard-load/read requests are not promoted to host effects; replay remains side-effect-free. Retained clipboard content is bounded to 1 MiB, although the upstream terminal parser may transiently process larger OSC strings before rejection. |
 | Keyboard extensions | Kea enables Alacritty's Kitty keyboard negotiation support, but classic terminal encoding remains the fallback. Modified Enter uses CSI-u only after the child negotiated disambiguated keyboard input. |
 | Mouse wheel | Legacy, UTF-8 and SGR wheel reports are forwarded when mouse reporting is active. Shift+wheel is always local scrollback. |
 | Mouse buttons | Primary press/release is forwarded using the child's negotiated Legacy/UTF-8/SGR encoding. |

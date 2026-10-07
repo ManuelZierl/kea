@@ -71,7 +71,7 @@ fn live_osc52_store_is_exposed_by_the_session_pump() {
         &[
             "sh".into(),
             "-c".into(),
-            "printf '\\033]52;c;S0VBX09TQzUyX1RFU1Q=\\007'".into(),
+            "printf '\\033]52;c;S0VBX09TQzUyX1RFU1Q=\\007'; sleep 0.1".into(),
         ],
         Size::new(80, 24).unwrap(),
         None,
@@ -80,9 +80,15 @@ fn live_osc52_store_is_exposed_by_the_session_pump() {
 
     let start = Instant::now();
     let mut clipboard_stores = Vec::new();
-    while session.is_running() {
+    loop {
         let pump = session.pump_observed();
-        clipboard_stores.extend(pump.clipboard_stores);
+        if let Some(store) = pump.clipboard_store {
+            clipboard_stores.push(store);
+        }
+        assert_eq!(pump.clipboard_store_rejections, 0);
+        if !session.is_running() {
+            break;
+        }
         assert!(start.elapsed().as_secs() < 10);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
