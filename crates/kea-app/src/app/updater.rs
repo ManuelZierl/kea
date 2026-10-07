@@ -161,7 +161,7 @@ impl KeaRoot {
                 .confirm()
                 .on_ok(move |_, _, cx| {
                     let _ = weak.update(cx, |this, cx| {
-                        this.update_rx = Some(update::verify_staged_in_background(staged));
+                        this.update_rx = Some(update::verify_staged_in_background(staged.clone()));
                         this.update_action = Some(UpdateAction::Verifying);
                         this.update_notice =
                             Some("Verifying the staged Kea update before restart…".into());
