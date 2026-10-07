@@ -57,6 +57,13 @@ failure. The tmux session-loss failure, in contrast, was reproduced and traced t
 PTY writer destruction injecting newline/VEOF before the child was terminated;
 the input sender now survives until child kill/wait completes.
 
+An initial combined hosted run also exposed two test-fixture errors: the attach
+test assumed Unix support on Windows, and the Linux PTY fixture inherited an
+unset `TERM`. The latter was reproduced locally with `TERM` removed. Tests now
+assert Windows's unsupported-platform contract and supply their own PTY terminal
+type; the attach fixture waits for observed pane output rather than killing the
+server after a fixed sleep. Ten local unset-`TERM` runs passed after correction.
+
 ## What needs your judgment
 
 Use sample data, disposable sessions and the exact candidate executable. Close
