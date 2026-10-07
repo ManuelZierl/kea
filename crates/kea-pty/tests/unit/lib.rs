@@ -55,43 +55,78 @@ fn captures_output_and_drains_before_exit() {
 #[cfg(unix)]
 #[test]
 fn drop_kills_child_before_pty_input_can_execute_a_pending_line() {
-    use std::{fs, path::PathBuf, thread, time::Duration};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        thread,
+        time::{Duration, SystemTime},
+    };
 
-    let marker = PathBuf::from(format!(
-        "/tmp/opencode/kea-pty-drop-order-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let command = vec![
-        "sh".into(),
-        "-c".into(),
-        "printf READY; IFS= read -r line; printf executed > \"$0\"; sleep 10".into(),
-        marker.as_os_str().to_owned(),
-    ];
-    let mut pty = Pty::spawn(&command, Size::new(80, 24).unwrap()).unwrap();
-    let start = std::time::Instant::now();
-    let mut ready = false;
-    while start.elapsed() < Duration::from_secs(5) {
-        while let Some(message) = pty.try_recv() {
-            if let Message::Output(bytes) = message {
-                ready |= bytes.windows(5).any(|bytes| bytes == b"READY");
-            }
+    struct TestDirectory(PathBuf);
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
         }
-        if ready {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
     }
-    assert!(ready, "fixture did not become ready");
 
-    drop(pty);
-    thread::sleep(Duration::from_millis(500));
-    assert!(
-        !marker.exists(),
-        "PTY teardown executed implicit input before killing the child"
-    );
-    let _ = fs::remove_file(marker);
+    fn test_directory() -> TestDirectory {
+        let root = std::env::temp_dir();
+        let name = format!(
+            "kea-pty-drop-order-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = root.join(name);
+        fs::create_dir(&path).unwrap();
+
+        // Do not let an unwritable fixture turn the negative assertion into a
+        // false pass, especially on hosted runners with unusual temp roots.
+        let probe = path.join("writable-probe");
+        fs::write(&probe, b"probe").unwrap();
+        assert!(probe.is_file());
+        fs::remove_file(probe).unwrap();
+
+        TestDirectory(path)
+    }
+
+    fn run_attempt(directory: &Path, attempt: usize) {
+        let marker = directory.join(format!("executed-{attempt}"));
+        let command = vec![
+            "sh".into(),
+            "-c".into(),
+            "printf READY; IFS= read -r line; printf executed > \"$0\"; sleep 10".into(),
+            marker.as_os_str().to_owned(),
+        ];
+        let mut pty = Pty::spawn(&command, Size::new(80, 24).unwrap()).unwrap();
+        let start = std::time::Instant::now();
+        let mut ready = false;
+        while start.elapsed() < Duration::from_secs(2) {
+            while let Some(message) = pty.try_recv() {
+                if let Message::Output(bytes) = message {
+                    ready |= bytes.windows(5).any(|bytes| bytes == b"READY");
+                }
+            }
+            if ready {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready, "fixture did not become ready");
+
+        drop(pty);
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            !marker.exists(),
+            "PTY teardown executed implicit input before killing the child"
+        );
+    }
+
+    let directory = test_directory();
+    for attempt in 0..8 {
+        run_attempt(&directory.0, attempt);
+    }
 }
