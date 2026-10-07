@@ -1,7 +1,9 @@
 use super::*;
 use anyhow::{Context as _, Result};
 use gpui_component::TitleBar;
-use kea_app::{editor::history as draft_history, history::session_files, reverse_search::view};
+use kea_app::{
+    editor::history as draft_history, history::session_files, reverse_search::view, update,
+};
 use std::{ffi::OsString, fs::File, path::PathBuf};
 
 pub(super) fn run() -> Result<()> {
@@ -155,6 +157,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             "No integrated shell detected. Submit remains available with confirmation; native terminal input and Tab are unchanged."
                 .into(),
         );
+    }
+    if let Some(update_notice) = update::startup_failure_notice() {
+        warnings.push(update_notice);
     }
     let notice = (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join(" ")));
 

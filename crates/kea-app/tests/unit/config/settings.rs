@@ -9,6 +9,7 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
     );
     assert!(Settings::default().font_family.is_none());
     assert!(Settings::default().shift_mouse_selects_locally);
+    assert!(Settings::default().check_for_updates);
     assert!(!Settings::default().show_blocks);
     assert!(Settings::parse("show_blocks = true").unwrap().show_blocks);
 
@@ -22,6 +23,17 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
     assert_eq!(settings.post_submit_focus, PostSubmitFocus::Terminal);
     assert!(!settings.shift_mouse_selects_locally);
     assert!(!settings.animate_logo);
+}
+
+#[test]
+fn update_checks_default_on_and_can_be_disabled() {
+    assert!(Settings::default().check_for_updates);
+    assert!(
+        !Settings::parse("check_for_updates = false")
+            .unwrap()
+            .check_for_updates
+    );
+    assert!(Settings::parse("check_for_updates = maybe").is_err());
 }
 
 #[test]
@@ -70,6 +82,7 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
         confirm_ctrl_c: true,
         composer_suggestions: false,
         composer_action_prefix: "!!".into(),
+        check_for_updates: false,
     };
 
     settings.save_to(&path).unwrap();

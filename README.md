@@ -40,11 +40,16 @@ See [Terminal tabs](docs/terminal-tabs.md) for creation, switching, reordering a
 
 ## Getting started
 
-Release archives are unsigned standalone binaries for Linux, macOS and Windows;
-native installers are not available yet. Download a matching archive from
-[Releases](https://github.com/ManuelZierl/kea/releases), extract it,
-and run `kea` (`kea.exe` on Windows). Linux needs a Vulkan-capable graphics stack
-and the system libraries listed in the [source setup](docs/usage.md#run-from-source).
+Windows releases provide a **current-user installer** under
+`%LOCALAPPDATA%\\Programs\\Kea`; it does not require administrator privileges.
+Installed Windows builds can check GitHub Releases from the title bar, verify the
+release asset's SHA-256 digest, download the update while Kea keeps running, then
+restart into it only after explicit confirmation. The portable
+Windows ZIP remains available for manual use. Linux and macOS continue to use
+standalone release archives. Release binaries are not Authenticode/code-signed
+yet, so Windows may still show a SmartScreen warning on the initial download.
+Linux needs a Vulkan-capable graphics stack and the system libraries listed in
+the [source setup](docs/usage.md#run-from-source).
 
 To build from source, install stable Rust and the platform build dependencies
 described in the [user guide](docs/usage.md#run-from-source), then:

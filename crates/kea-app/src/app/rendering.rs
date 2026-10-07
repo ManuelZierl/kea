@@ -677,7 +677,8 @@ impl Render for KeaView {
                 Action::CopyDocument,
                 cx,
             ))
-            .child(div().flex_1())
+            .child(div().flex_1());
+        toolbar = toolbar
             .child(
                 Button::new("settings")
                     .icon(IconName::Settings)

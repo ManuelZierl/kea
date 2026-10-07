@@ -6,5 +6,6 @@ pub mod reverse_search;
 pub mod shell;
 pub mod terminal;
 pub mod ui;
+pub mod update;
 
 pub mod tabs;
