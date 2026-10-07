@@ -1,10 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.0.1-alpha.4 — Prepared, not published
 
 - Add a Windows current-user installer under `%LOCALAPPDATA%\\Programs\\Kea`; installation and updates do not require elevation.
 - Add opt-out startup update checks plus a manual title-bar check. Available Windows updates download and verify the release installer while Kea keeps running, then require an explicit restart confirmation before closing terminals, installing silently, and restarting the installed build.
 - Keep the portable Windows ZIP as a separate manual distribution path. Windows binaries remain unsigned for Authenticode/SmartScreen purposes.
+- Add a visual local tmux session manager with separate Open, detach and confirmed
+  Kill actions. Closing a Kea tab or window preserves the persistent tmux session.
+- Freeze ordinary locally owned Shift-drag selections while live output continues;
+  preserve the original selection anchor for Shift-click/drag extension.
+- Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
+- Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
+  live terminal; hidden tabs and historical views cannot change the clipboard.
+
+### Acceptance gate
+
+- See [alpha.4 acceptance](docs/alpha4-acceptance.md) for automated evidence and
+  maintainer checks. Publication requires explicit manual sign-off.
+- Real Windows installer/update behavior, macOS/Windows GUI interaction, native
+  Wayland, physical keyboard/IME and accessibility are not certified by Linux
+  synthetic tests or hosted compilation.
+- End-to-end self-update needs a newer eligible GitHub release or controlled test
+  harness. The candidate cannot update to itself, and alpha.3 has no updater.
 
 ## 0.0.1-alpha.3 — 2026-10-04
 
