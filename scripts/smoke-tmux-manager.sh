@@ -2,6 +2,7 @@
 # Exercise the tmux manager through the real window and an isolated tmux server.
 set -Eeuo pipefail
 source scripts/smoke-input.sh
+unset TMUX
 mkdir -p smoke-artifacts
 export XDG_RUNTIME_DIR="$(mktemp -d)"
 export TMUX_TMPDIR="$XDG_RUNTIME_DIR/tmux"
@@ -23,15 +24,15 @@ cleanup() {
   fi
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
-  tmux -S "$TMUX_TMPDIR/default" kill-server 2>/dev/null || true
+  tmux kill-server 2>/dev/null || true
   rm -rf "$XDG_RUNTIME_DIR"
   exit "$status"
 }
 trap cleanup EXIT
 trap 'echo "Tmux smoke failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
-tmux -S "$TMUX_TMPDIR/default" -f /dev/null new-session -d -s overlay-test 'exec bash --noprofile --norc'
-server_pid=$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')
+tmux -f /dev/null new-session -d -s overlay-test 'exec bash --noprofile --norc'
+server_pid=$(tmux display-message -p '#{pid}')
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py \
   smoke-artifacts/tmux-overlay.bin >smoke-artifacts/tmux-overlay.log 2>&1 &
 pid=$!
@@ -49,7 +50,7 @@ key() {
   sleep .2
 }
 clients() {
-  tmux -S "$TMUX_TMPDIR/default" display-message -p -t overlay-test '#{session_attached}'
+  tmux display-message -p -t overlay-test '#{session_attached}'
 }
 assert_clients() {
   for _ in $(seq 1 50); do
@@ -67,7 +68,7 @@ import -silent -window "$window" smoke-artifacts/tmux-manager.png
 smoke_click 935 199
 assert_clients 1
 [[ ! -s smoke-artifacts/tmux-overlay.bin ]] || { echo 'Manager click leaked to the underlying terminal'; exit 1; }
-[[ "$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')" == "$server_pid" ]]
+[[ "$(tmux display-message -p '#{pid}')" == "$server_pid" ]]
 
 # Closing the Kea tab detaches its client while preserving the server/session.
 smoke_click 130 85
@@ -75,12 +76,15 @@ key ctrl+shift+w
 sleep .3
 key Escape
 assert_clients 1
+# Cancellation restores the tab's remembered focus. Re-enter the composer before
+# using a Kea accelerator; a live tmux client must retain native key ownership.
+smoke_click 130 85
 key ctrl+shift+w
 sleep .3
 key Return
 assert_clients 0
-tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test
-[[ "$(tmux -S "$TMUX_TMPDIR/default" display-message -p '#{pid}')" == "$server_pid" ]]
+tmux has-session -t overlay-test
+[[ "$(tmux display-message -p '#{pid}')" == "$server_pid" ]]
 
 # Reopen the manager and cancel Kill; the persistent session must remain.
 smoke_click 995 51
@@ -89,12 +93,12 @@ import -silent -window "$window" smoke-artifacts/tmux-manager-kill.png
 smoke_click 997 199
 sleep .3
 key Escape
-tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test
+tmux has-session -t overlay-test
 smoke_click 997 199
 sleep .3
 key Return
 for _ in $(seq 1 50); do
-  if ! tmux -S "$TMUX_TMPDIR/default" has-session -t overlay-test 2>/dev/null; then
+  if ! tmux has-session -t overlay-test 2>/dev/null; then
     echo 'tmux manager attach/detach, server preservation, Kill cancellation/confirmation and pointer isolation passed.'
     exit 0
   fi
