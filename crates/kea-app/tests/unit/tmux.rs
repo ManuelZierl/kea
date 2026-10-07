@@ -121,14 +121,14 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     let tempdir = tempfile::tempdir().unwrap();
     let socket = format!("kea-unit-{}", std::process::id());
     let cleanup = || {
-        let _ = isolated_tmux(tempdir.path(), &socket, &["kill-server"]);
+        let _ = isolated_tmux(tempdir.path(), &socket, ["kill-server"]);
     };
     cleanup();
 
     let absent = isolated_tmux(
         tempdir.path(),
         &socket,
-        &["list-sessions", "-F", LIST_FORMAT],
+        ["list-sessions", "-F", LIST_FORMAT],
     );
     assert!(!absent.status.success());
     assert!(no_server_running(&String::from_utf8_lossy(&absent.stderr)));
@@ -136,7 +136,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(isolated_tmux(
         tempdir.path(),
         &socket,
-        &[
+        [
             "new-session",
             "-d",
             "-s",
@@ -183,7 +183,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(isolated_tmux(
         tempdir.path(),
         &socket,
-        &["new-session", "-d", "-s", "fresh"]
+        ["new-session", "-d", "-s", "fresh"]
     )
     .status
     .success());
@@ -206,18 +206,18 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(confirm_kill(&fresh_result).is_ok());
 
     assert!(
-        isolated_tmux(tempdir.path(), &socket, &["new-session", "-d", "-s", "old"])
+        isolated_tmux(tempdir.path(), &socket, ["new-session", "-d", "-s", "old"])
             .status
             .success()
     );
     let old = discover_isolated_session(tempdir.path(), &socket);
-    assert!(isolated_tmux(tempdir.path(), &socket, &["kill-server"])
+    assert!(isolated_tmux(tempdir.path(), &socket, ["kill-server"])
         .status
         .success());
     assert!(isolated_tmux(
         tempdir.path(),
         &socket,
-        &["new-session", "-d", "-s", "replacement"]
+        ["new-session", "-d", "-s", "replacement"]
     )
     .status
     .success());
@@ -234,7 +234,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(!stale_output.contains(KILL_SUCCESS_MARKER));
     assert!(confirm_kill(&stale_result).is_err());
     assert!(
-        isolated_tmux(tempdir.path(), &socket, &["has-session", "-t", old.id()])
+        isolated_tmux(tempdir.path(), &socket, ["has-session", "-t", old.id()])
             .status
             .success()
     );
@@ -252,7 +252,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(isolated_tmux(
         tempdir.path(),
         &socket,
-        &["has-session", "-t", replacement.id()]
+        ["has-session", "-t", replacement.id()]
     )
     .status
     .success());
@@ -266,7 +266,7 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     assert!(attach_result.status.success());
     assert!(String::from_utf8_lossy(&attach_result.stdout).contains(STALE_SESSION_MESSAGE));
     assert!(
-        isolated_tmux(tempdir.path(), &socket, &["has-session", "-t", old.id()])
+        isolated_tmux(tempdir.path(), &socket, ["has-session", "-t", old.id()])
             .status
             .success()
     );
@@ -292,7 +292,7 @@ where
 
 #[cfg(unix)]
 fn discover_isolated_session(root: &std::path::Path, socket: &str) -> TmuxSession {
-    let output = isolated_tmux(root, socket, &["list-sessions", "-F", LIST_FORMAT]);
+    let output = isolated_tmux(root, socket, ["list-sessions", "-F", LIST_FORMAT]);
     assert!(output.status.success());
     let sessions = parse_sessions(&output.stdout).unwrap();
     assert_eq!(sessions.len(), 1);

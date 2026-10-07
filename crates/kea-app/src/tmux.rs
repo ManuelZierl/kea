@@ -370,9 +370,9 @@ fn run_command_loop(
             return Err(error);
         }
         let status = child.try_wait()?;
-        if status.is_some() && stdout.closed && stderr.closed {
+        if let Some(status) = status.filter(|_| stdout.closed && stderr.closed) {
             return Ok(Output {
-                status: status.expect("status checked above"),
+                status,
                 stdout: stdout.bytes,
                 stderr: stderr.bytes,
             });
