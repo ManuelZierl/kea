@@ -115,6 +115,12 @@ jobs:
             LIBGL_ALWAYS_SOFTWARE=1 \
             timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
             dbus-run-session -- bash scripts/smoke-tmux-manager.sh
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-tmux-manager-error.sh
       - name: Guarded composer workflow acceptance
         shell: bash
         run: |
