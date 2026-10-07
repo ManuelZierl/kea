@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "discarded_sender_is_rejected",
+      "files": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "content": "impl Drop for Pty { fn drop(&mut self) { self.input.take(); } }"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "code": "discarded-pty-input-sender",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "captured_sender_is_allowed",
+      "files": [
+        {
+          "path": "crates/kea-pty/src/lib.rs",
+          "content": "impl Drop for Pty { fn drop(&mut self) { let input = self.input.take(); thread::spawn(move || { child.kill(); child.wait(); drop(input); }); } }"
+        }
+      ],
+      "expect": []
+    },
+    {
+      "name": "exited_child_input_release_is_allowed",
+      "files": [{"path": "crates/kea-pty/src/lib.rs", "content": "impl Pty { fn exit_code(&mut self) { if self.status.is_some() { self.input.take(); } } }\nimpl Drop for Pty { fn drop(&mut self) { let input = self.input.take(); thread::spawn(move || { child.kill(); child.wait(); drop(input); }); } }"}],
+      "expect": []
+    },
+    {
+      "name": "multiline_discard_is_rejected",
+      "files": [{"path": "crates/kea-pty/src/lib.rs", "content": "impl Drop for Pty {\n fn drop(&mut self) {\n self.input.take();\n let child = self.child.take();\n }\n}"}],
+      "expect": [{"path": "crates/kea-pty/src/lib.rs", "code": "discarded-pty-input-sender", "kind": "review"}]
+    },
+    {
+      "name": "underscore_discard_is_rejected",
+      "files": [{"path": "crates/kea-pty/src/lib.rs", "content": "impl Drop for Pty { fn drop(&mut self) { let _ = self.input.take(); } }"}],
+      "expect": [{"path": "crates/kea-pty/src/lib.rs", "code": "discarded-pty-input-sender", "kind": "review"}]
+    }
+  ]
+}

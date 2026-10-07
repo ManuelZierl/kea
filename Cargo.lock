@@ -3171,6 +3171,7 @@ dependencies = [
  "kea-core",
  "kea-document",
  "kea-session",
+ "nix 0.28.0",
  "serde",
  "serde_json",
  "semver",

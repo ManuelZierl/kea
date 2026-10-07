@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "direct_output_is_rejected",
+      "files": [
+        {
+          "path": "crates/kea-app/src/tmux.rs",
+          "content": "let output = Command::new(\"tmux\").output()?;\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/tmux.rs",
+          "code": "unbounded-tmux-output",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "unsafe_process_control_is_rejected",
+      "files": [
+        {
+          "path": "crates/kea-app/src/tmux.rs",
+          "content": "unsafe { command.pre_exec(|| Ok(())); }\n"
+        }
+      ],
+      "expect": [
+        {
+          "path": "crates/kea-app/src/tmux.rs",
+          "code": "unsafe-tmux-process-control",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "name": "bounded_runner_has_no_forbidden_forms",
+      "files": [
+        {
+          "path": "crates/kea-app/src/tmux.rs",
+          "content": "let output = run_command(\"tmux\", args, timeout)?;\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

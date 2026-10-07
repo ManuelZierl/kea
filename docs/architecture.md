@@ -103,6 +103,23 @@ No authored command is submitted through eval or Invoke-Expression. The same
 integration can be printed and installed explicitly inside nested/remote shells;
 Kea does not install remotely, infer prompt text, or treat SSH specially.
 
+### Persistent terminal resources
+
+Kea tabs own terminal clients, not every resource reached through those clients.
+The first explicit resource integration is local tmux: `kea-app::tmux` queries
+the local tmux server through bounded subprocess output and exposes sessions to
+the workspace UI. A tmux-backed tab directly launches `tmux attach-session`
+through the existing PTY path. Dropping the tab therefore drops the client while
+the tmux server/session remains authoritative and persistent. Session destruction
+is a separate confirmed tmux operation.
+
+tmux discovery and lifecycle commands run off the UI thread. The manager uses
+tmux session IDs as operation targets and names only as presentation. It does not
+change `kea-core`, `kea-document`, the PTY protocol, input-context semantics,
+or terminal-output parsing. The initial integration is local/default-server only;
+future SSH support should provide an explicit connection/host layer rather than
+detecting SSH or remote tmux from terminal content.
+
 ## Text services and key routing
 
 GPUI Component supplies the editable draft, read-only block text and search fields. Platform text-input integration owns composition and replacement ranges. The terminal surface also implements GPUI's text-input handler so committed IME/composed text can reach the child without a handwritten character approximation.

@@ -20,6 +20,30 @@ Initial and subsequent local tabs use the same shell-based labels: Shell,
 PowerShell, or Terminal, followed by a stable tab number. The title bar shows
 the running Kea version.
 
+## tmux sessions
+
+The **tmux** button opens a visual manager for sessions in the local tmux server.
+Kea asks tmux for its session list instead of inferring session state from terminal
+output. The list shows the tmux session name, window count and attached-client
+count. **Open** starts a normal Kea terminal tab whose child process is
+`tmux attach-session`; **Kill** is a separate confirmed action against the
+persistent tmux session.
+
+A tmux session is not owned by the Kea tab attached to it. Closing that tab ends
+only Kea's tmux client and leaves the tmux session running. Closing the whole Kea
+window has the same detach-only behavior for tmux-backed tabs. To end the
+persistent session for all clients, use **Kill** in the tmux manager. Kea targets
+tmux's stable session ID for attach/kill operations while displaying the current
+session name.
+
+This first manager intentionally covers the **local default tmux server** only.
+Native tmux management is supported on Unix. On Windows the manager reports
+that limitation; it does not connect to WSL or a remote tmux server.
+An SSH process typed or launched in a terminal remains ordinary terminal input;
+Kea does not scrape it to discover a remote host or remote tmux state. Remote
+SSH-backed tmux management should compose an explicit host/connection resource
+with this tmux-session model rather than guessing from terminal bytes.
+
 From composer/chrome, **Ctrl+Tab / Ctrl+Shift+Tab** switch terminals,
 **Ctrl+Shift+W** closes one, and **Ctrl+Shift+PageUp / PageDown** reorder it.
 Tabs also support clicking, close buttons and drag reordering. Shortcuts are

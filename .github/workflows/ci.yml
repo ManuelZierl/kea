@@ -84,7 +84,7 @@ jobs:
           key: desktop-linux
           cache-on-failure: true
       # The coordinate-based smoke fixture uses GPUI's Ubuntu UI font metrics.
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11 fonts-ubuntu
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libvulkan-dev libclang-dev clang cmake pkg-config xvfb xdotool xclip imagemagick mesa-vulkan-drivers dbus-x11 fonts-ubuntu tmux
       - run: cargo test --locked -p kea-app
       - run: bash scripts/test-reverse-search-core.sh
       - run: cargo build --locked -p kea-app
@@ -103,6 +103,24 @@ jobs:
             LIBGL_ALWAYS_SOFTWARE=1 \
             timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
             dbus-run-session -- bash scripts/smoke-tabs.sh
+      - name: Local tmux manager acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -e "${lvp_icds[0]}"
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-tmux-manager.sh
+          env -u WAYLAND_DISPLAY -u DISPLAY \
+            MESA_VK_WSI_FORCE_SW=1 \
+            VK_ICD_FILENAMES="${lvp_icds[0]}" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            timeout 90s xvfb-run -a -s '-screen 0 1280x900x24 +extension DRI3' \
+            dbus-run-session -- bash scripts/smoke-tmux-manager-error.sh
       - name: Guarded composer workflow acceptance
         shell: bash
         run: |
