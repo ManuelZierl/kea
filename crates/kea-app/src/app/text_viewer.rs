@@ -18,15 +18,18 @@ pub(super) enum TextSource {
     Reconstructed { gaps: usize },
 }
 
+/// Opens the viewer, or returns false without showing anything while another
+/// dialog is open; the caller must then tell the user instead of dropping it.
+#[must_use]
 pub(super) fn open(
     title: String,
     source: TextSource,
     text: String,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> bool {
     if window.has_active_dialog(cx) {
-        return;
+        return false;
     }
     let lines = text.lines().count();
     let viewer = cx.new(|cx| {
@@ -109,4 +112,5 @@ pub(super) fn open(
                 ]
             })
     });
+    true
 }

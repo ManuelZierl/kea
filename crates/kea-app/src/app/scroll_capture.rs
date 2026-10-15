@@ -4,7 +4,7 @@
 use super::*;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Sizable as _, WindowExt as _,
 };
 use kea_app::terminal::stitch::{self, Region};
 
@@ -113,13 +113,24 @@ impl KeaView {
 
     /// Stitch the snapshots and show them for review; nothing is copied yet.
     pub(super) fn finish_scroll_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scroll_capture.is_none() {
+            return;
+        }
+        // Keep the capture rather than losing it behind another dialog.
+        if window.has_active_dialog(cx) {
+            self.notice =
+                Some("Close the open dialog, then choose Done again; the capture is kept.".into());
+            cx.notify();
+            return;
+        }
         let Some(capture) = self.scroll_capture.take() else {
             return;
         };
         let stitched = stitch::stitch(&capture.snapshots);
         cx.notify();
         let title = format!("Scroll capture · {} snapshot(s)", capture.snapshots.len());
-        text_viewer::open(
+        // No dialog was open (checked above), so the viewer opens.
+        let _ = text_viewer::open(
             title,
             text_viewer::TextSource::Reconstructed {
                 gaps: stitched.gaps,

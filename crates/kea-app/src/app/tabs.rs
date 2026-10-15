@@ -515,15 +515,23 @@ impl KeaRoot {
             return;
         }
         match result.text {
-            Ok(history) => text_viewer::open(
-                result.title,
-                text_viewer::TextSource::Tmux {
-                    truncated: history.truncated,
-                },
-                history.text,
-                window,
-                cx,
-            ),
+            Ok(history) => {
+                let title = result.title.clone();
+                let opened = text_viewer::open(
+                    result.title,
+                    text_viewer::TextSource::Tmux {
+                        truncated: history.truncated,
+                    },
+                    history.text,
+                    window,
+                    cx,
+                );
+                if !opened {
+                    self.notice = Some(format!(
+                        "{title} is ready, but another dialog is open; close it and read the history again."
+                    ));
+                }
+            }
             Err(error) => self.notice = Some(format!("Could not read tmux history: {error}")),
         }
     }
@@ -947,11 +955,11 @@ impl Render for KeaRoot {
             } else {
                 ""
             };
+            // Always numbered: two tabs on one tmux session or one SSH context
+            // must stay distinguishable, e.g. as draft move targets.
             let label = if !context.is_empty() && context != "local" {
-                format!("{} · {context}{suffix}", tab.title)
+                format!("{} {} · {context}{suffix}", tab.title, id.0 + 1)
             } else {
-                // Numbered like process tabs: two tabs on one tmux session must
-                // stay distinguishable, e.g. as draft move targets.
                 format!("{} {}{suffix}", tab.title, id.0 + 1)
             };
             labels.push((id, label.clone()));

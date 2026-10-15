@@ -452,8 +452,10 @@ impl Render for KeaView {
                     .map(ToOwned::to_owned)
             });
         // A notice reports the latest action ("Nothing was sent…") and clears on
-        // the next one; a sticky warning must not hide it, and shows again after.
+        // the next one; a sticky warning must not hide it. Nor may a notice hide
+        // the warning (a disk or quota failure): both are shown side by side.
         let status_is_warning = self.notice.is_none() && status_warning.is_some();
+        let warning_beside_notice = self.notice.as_ref().and(status_warning.clone());
         let status = self.notice.clone().or(status_warning).unwrap_or_else(|| {
             if self.session.is_frozen() {
                 "Frozen terminal view · Return live to interact".into()
@@ -926,6 +928,17 @@ impl Render for KeaView {
                     })
                     .child(status),
             )
+            .when_some(warning_beside_notice, |bar, warning| {
+                bar.child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(cx.theme().danger)
+                        .child(warning),
+                )
+            })
             .child(
                 div()
                     .flex_shrink_0()
