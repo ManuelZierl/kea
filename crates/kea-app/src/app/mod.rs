@@ -75,6 +75,8 @@ struct KeaView {
     document: Document,
     shell_metadata: ShellMetadata,
     input_context: InputContext,
+    /// Deleted once the integrated shell reports, or when the tab closes.
+    bootstrap_file: Option<kea_app::shell::BootstrapFile>,
     shell: Option<ShellFlavor>,
     keymap: Keymap,
     settings: Settings,

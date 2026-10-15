@@ -186,6 +186,7 @@ impl KeaView {
             document,
             shell_metadata: ShellMetadata::default(),
             input_context: InputContext::default(),
+            bootstrap_file: None,
             shell,
             keymap,
             settings,
@@ -362,6 +363,11 @@ impl KeaView {
                 Observed::Output { at, bytes } => {
                     self.shell_metadata.ingest(&bytes);
                     self.input_context.ingest(&bytes);
+                    // Only the session token can claim `local`, and the shell
+                    // reports after sourcing (and deleting) the bootstrap file.
+                    if self.input_context.id() == "local" {
+                        self.bootstrap_file = None;
+                    }
                     self.document.ingest_output(at, &bytes)
                 }
                 Observed::Exit { at, .. } => {

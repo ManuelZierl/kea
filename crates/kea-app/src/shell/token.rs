@@ -17,6 +17,26 @@ pub fn new_session_token() -> Result<MarkerToken> {
     Ok(MarkerToken::from_bytes(bytes))
 }
 
+/// A token for a terminal that runs untracked because system randomness was
+/// unavailable. No integration carries it; std's per-process hasher keys and
+/// the clock only make it hard to guess, so printed markers stay inert.
+pub fn fallback_token() -> MarkerToken {
+    use std::hash::{BuildHasher as _, Hasher as _};
+    let mut bytes = [0u8; 16];
+    for (index, half) in bytes.chunks_mut(8).enumerate() {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_usize(index);
+        hasher.write_u32(std::process::id());
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos()),
+        );
+        half.copy_from_slice(&hasher.finish().to_le_bytes());
+    }
+    MarkerToken::from_bytes(bytes)
+}
+
 /// The markers a live terminal accepts: its own token, plus the user's remote
 /// token when one exists. An unreadable remote token only disables remote
 /// integration; it never weakens the local check.

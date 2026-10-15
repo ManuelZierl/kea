@@ -107,6 +107,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         );
     }
 
+    let mut bootstrap = None;
     let (session, shell, marker_auth) = if demo {
         (Session::demo()?, None, kea_core::MarkerAuth::Replay)
     } else if let Some(path) = replay {
@@ -119,8 +120,13 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         }
         (session, None, kea_core::MarkerAuth::Replay)
     } else {
-        let (session, shell, token) = spawn_terminal(command, record.as_deref())?;
-        (session, shell, kea_app::shell::token::live_auth(token))
+        let spawned = spawn_terminal(command, record.as_deref())?;
+        bootstrap = spawned.bootstrap;
+        (
+            spawned.session,
+            spawned.shell,
+            kea_app::shell::token::live_auth(spawned.token),
+        )
     };
 
     let document = Document::from_recording(session.recording());
@@ -217,6 +223,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                         cx,
                     );
                     view.set_marker_auth(marker_auth);
+                    view.bootstrap_file = bootstrap;
                     view
                 });
                 let weak = view.downgrade();
@@ -272,20 +279,36 @@ pub(super) fn show_message(message: String) {
     });
 }
 
+/// A freshly spawned terminal and what its view needs to observe it.
+pub(super) struct SpawnedTerminal {
+    pub session: Session,
+    /// `None` when Kea did not integrate the shell; it then runs untracked.
+    pub shell: Option<ShellFlavor>,
+    /// Embedded in the integration when the shell is integrated, otherwise
+    /// known to nobody, so printed markers are inert.
+    pub token: kea_core::MarkerToken,
+    /// Deleted when dropped; the view drops it once the shell has reported.
+    pub bootstrap: Option<kea_app::shell::BootstrapFile>,
+}
+
 /// Shared startup path for a fresh local terminal. Never changes process-wide cwd.
 /// The caller alone supplies explicit command/recording options for the first tab.
-/// Returns the terminal's marker token: embedded in the integration when the
-/// shell is integrated, otherwise known to nobody, so printed markers are inert.
+/// Integration is optional: if it cannot be prepared, the shell still starts,
+/// untracked, with a visible warning. Only spawning the process itself can fail.
 pub(super) fn spawn_terminal(
     mut command: Vec<OsString>,
     record: Option<&std::path::Path>,
-) -> Result<(Session, Option<ShellFlavor>, kea_core::MarkerToken)> {
-    let token = kea_app::shell::token::new_session_token()?;
+) -> Result<SpawnedTerminal> {
     #[cfg(windows)]
     if command.is_empty() {
         command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
     }
-    let shell = ShellFlavor::detect(&command);
+    let detected = ShellFlavor::detect(&command);
+    let (token, mut integration_error) = match kea_app::shell::token::new_session_token() {
+        Ok(token) => (token, None),
+        Err(error) => (kea_app::shell::token::fallback_token(), Some(error)),
+    };
+    let mut shell = detected.filter(|_| integration_error.is_none());
     // Install after the user's profile; do not inject source through PSReadLine.
     if shell == Some(ShellFlavor::PowerShell) {
         if command.is_empty() {
@@ -301,13 +324,49 @@ pub(super) fn spawn_terminal(
         command.push("-Command".into());
         command.push(script.into());
     }
-    let mut session = Session::spawn(&command, kea_core::Size::new(100, 26)?, record)?;
-    if shell == Some(ShellFlavor::Posix) {
-        let (line, path) = ShellFlavor::posix_bootstrap(&command, &token, &std::env::temp_dir())?;
-        if let Err(error) = session.send_hidden(line) {
-            let _ = std::fs::remove_file(path);
-            return Err(error);
+    // Prepare the file before spawning, so a failure leaves nothing typed.
+    let bootstrap = if shell == Some(ShellFlavor::Posix) {
+        let preferred = kea_app::shell::bootstrap_directory();
+        let fallback = std::env::temp_dir();
+        match ShellFlavor::posix_bootstrap(&command, &token, &preferred).or_else(|error| {
+            if preferred == fallback {
+                Err(error)
+            } else {
+                ShellFlavor::posix_bootstrap(&command, &token, &fallback)
+            }
+        }) {
+            Ok(bootstrap) => Some(bootstrap),
+            Err(error) => {
+                integration_error = Some(error);
+                shell = None;
+                None
+            }
         }
+    } else {
+        None
+    };
+    let mut session = Session::spawn(&command, kea_core::Size::new(100, 26)?, record)?;
+    let bootstrap = match bootstrap {
+        Some((line, file)) => match session.send_hidden(line) {
+            Ok(()) => Some(file),
+            Err(error) => {
+                integration_error = Some(error);
+                shell = None;
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(error) = integration_error.filter(|_| detected.is_some()) {
+        session.warning = Some(format!(
+            "Shell integration is off for this terminal ({error:#}); \
+             it runs untracked, so Submit asks for confirmation."
+        ));
     }
-    Ok((session, shell, token))
+    Ok(SpawnedTerminal {
+        session,
+        shell,
+        token,
+        bootstrap,
+    })
 }

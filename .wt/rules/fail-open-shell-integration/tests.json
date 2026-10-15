@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "propagated-bootstrap-and-token",
+      "files": [{ "path": "crates/kea-app/src/app/startup.rs", "content": "fn spawn() -> Result<()> { let token = kea_app::shell::token::new_session_token()?; let (line, path) = ShellFlavor::posix_bootstrap(&command, &token, &std::env::temp_dir())?; Ok(()) }" }],
+      "expect": [
+        { "path": "crates/kea-app/src/app/startup.rs", "code": "propagated-integration-failure", "kind": "violation" },
+        { "path": "crates/kea-app/src/app/startup.rs", "code": "propagated-integration-failure", "kind": "violation" }
+      ]
+    },
+    {
+      "name": "untracked-fallback",
+      "files": [{ "path": "crates/kea-app/src/app/startup.rs", "content": "fn spawn() { let token = match new_session_token() { Ok(t) => t, Err(e) => fallback_token() }; match ShellFlavor::posix_bootstrap(&command, &token, &dir) { Ok(b) => Some(b), Err(error) => { shell = None; None } }; }" }],
+      "expect": []
+    }
+  ]
+}

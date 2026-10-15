@@ -9,6 +9,41 @@ pub enum ShellFlavor {
     PowerShell,
 }
 
+/// The private file that installs POSIX integration. Dropping the guard
+/// deletes the file if the shell has not already done so.
+#[derive(Debug)]
+pub struct BootstrapFile(std::path::PathBuf);
+
+impl BootstrapFile {
+    pub fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for BootstrapFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Where the bootstrap file goes: the per-user runtime directory when the
+/// platform provides an owner-only one, otherwise the system temp directory.
+pub fn bootstrap_directory() -> std::path::PathBuf {
+    #[cfg(unix)]
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from) {
+        use std::os::unix::fs::PermissionsExt as _;
+        // Someone else's private directory is not writable; creating the file
+        // then fails and the caller falls back to the temp directory.
+        let private = dir.is_absolute()
+            && std::fs::metadata(&dir)
+                .is_ok_and(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0);
+        if private {
+            return dir;
+        }
+    }
+    std::env::temp_dir()
+}
+
 impl ShellFlavor {
     pub fn detect(command: &[OsString]) -> Option<Self> {
         let program = command
@@ -56,14 +91,16 @@ impl ShellFlavor {
 
     /// Install POSIX integration by sourcing a private file instead of typing
     /// the whole script. Returns the short line to type and the file. The file is
-    /// owner-only (it holds the session token) and removes itself once sourced.
+    /// owner-only (it holds the session token) and removes itself once sourced;
+    /// Kea also deletes it when the returned guard drops, because a shell that
+    /// never finishes sourcing it (an rc `exec`, Ctrl-C, early exit) cannot.
     /// A short line is echoed and suppressed reliably instead of being redrawn
     /// across wrapped rows, and the token never appears on screen.
     pub fn posix_bootstrap(
         command: &[OsString],
         token: &MarkerToken,
         directory: &std::path::Path,
-    ) -> anyhow::Result<(Vec<u8>, std::path::PathBuf)> {
+    ) -> anyhow::Result<(Vec<u8>, BootstrapFile)> {
         use anyhow::Context as _;
         use std::io::Write as _;
         let mut file = tempfile::Builder::new()
@@ -72,15 +109,21 @@ impl ShellFlavor {
             .tempfile_in(directory)
             .context("cannot create the shell integration file")?;
         let path = file.path().to_owned();
-        let quoted = posix_quote(&path.to_string_lossy());
+        // A lossy path would make the shell source (and delete) another file.
+        let quoted = posix_quote(
+            path.to_str()
+                .context("the shell integration directory is not valid UTF-8")?,
+        );
         let mut script = Self::Posix.integration_for(command, "local", token);
         script.extend_from_slice(format!("command rm -f -- {quoted}\n").as_bytes());
         file.write_all(&script)
             .and_then(|()| file.as_file().sync_all())
             .context("cannot write the shell integration file")?;
-        file.into_temp_path()
-            .keep()
-            .context("cannot keep the shell integration file")?;
+        let path = BootstrapFile(
+            file.into_temp_path()
+                .keep()
+                .context("cannot keep the shell integration file")?,
+        );
         // Same history rules as the inline script: bash deletes the line itself
         // (the sourced hook runs `history -d $HISTCMD`); others skip a leading space.
         let prefix = if posix_name(command) == "bash" {

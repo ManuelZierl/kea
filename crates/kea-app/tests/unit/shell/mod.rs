@@ -352,7 +352,7 @@ fn file_bootstrap_installs_hooks_removes_itself_and_stays_out_of_history() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(path.path()).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
     let histfile = root.path().join("history");
@@ -382,9 +382,43 @@ fn file_bootstrap_installs_hooks_removes_itself_and_stays_out_of_history() {
         "{stdout}"
     );
     assert!(stdout.contains("user-hook"), "{stdout}");
-    assert!(!path.exists(), "the integration file removes itself");
+    assert!(!path.path().exists(), "the integration file removes itself");
     assert!(
         !stdout.contains(".kea-shell-"),
         "bootstrap line left in history:\n{stdout}"
     );
+}
+
+#[test]
+fn unsourced_bootstrap_file_is_deleted_when_kea_drops_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (_, file) =
+        ShellFlavor::posix_bootstrap(&[OsString::from("zsh")], &test_token(), root.path()).unwrap();
+    let path = file.path().to_owned();
+    assert!(path.exists());
+    // e.g. the rc file ran `exec fish`, so the shell never sourced it.
+    drop(file);
+    assert!(
+        !path.exists(),
+        "an unsourced token file must not be left behind"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn bootstrap_directory_prefers_private_runtime_dir_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let runtime = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(runtime.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let saved = std::env::var_os("XDG_RUNTIME_DIR");
+    std::env::set_var("XDG_RUNTIME_DIR", runtime.path());
+    assert_eq!(bootstrap_directory(), runtime.path());
+    std::fs::set_permissions(runtime.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(bootstrap_directory(), std::env::temp_dir());
+    std::env::set_var("XDG_RUNTIME_DIR", "relative/dir");
+    assert_eq!(bootstrap_directory(), std::env::temp_dir());
+    match saved {
+        Some(value) => std::env::set_var("XDG_RUNTIME_DIR", value),
+        None => std::env::remove_var("XDG_RUNTIME_DIR"),
+    }
 }
