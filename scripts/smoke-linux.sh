@@ -16,7 +16,7 @@ chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
 export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
 export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/input-memory"
-printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 kea_pid=''; window=''
@@ -190,7 +190,7 @@ echo 'Live OSC 52 system-clipboard store reached the desktop clipboard.'
 
 # Settings must render above the workspace, save through the app-owned path, and
 # leave the current editor entity/draft intact while presentation changes live.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/settings-ui.bin >smoke-artifacts/settings-ui.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/settings-ui.log
 focus_editor
@@ -260,7 +260,7 @@ echo 'Keybinding settings save/reopen/restart and preserved draft passed; small-
 
 # Unified submission: unknown receivers require explicit confirmation. A held
 # first chord must not send, and cancelling input must remain in the draft.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/submit-guard.bin >smoke-artifacts/submit-guard.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/submit-guard.log
 focus_editor
@@ -289,7 +289,7 @@ cleanup_app
 # composer popup dispatch. Clipboard assertions observe the editor's real value.
 mkdir -p "$XDG_RUNTIME_DIR/completion"
 touch "$XDG_RUNTIME_DIR/completion/cab" "$XDG_RUNTIME_DIR/completion/café"
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 HISTFILE="$XDG_RUNTIME_DIR/bash-history" ./target/debug/kea --terminal-focus -- bash --noprofile --norc >smoke-artifacts/completion-ui.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/completion-ui.log
 xdotool type --clearmodifiers "cd '$XDG_RUNTIME_DIR/completion'"
@@ -383,7 +383,7 @@ cleanup_app
 echo 'Completion mouse selection, scrolling and configured Enter-to-submit acceptance passed.'
 
 # Ctrl-R recalls into the draft without sending another byte to the child.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/reverse-search.bin >smoke-artifacts/reverse-search.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/reverse-search.log
 key ctrl+r
@@ -457,7 +457,7 @@ echo 'Reverse-search recall, undo, cancellation, mouse/keyboard handoff, confirm
 cleanup_app
 
 # Capture actual bytes in a raw child before any editor interaction.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/keys.bin >smoke-artifacts/terminal.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/terminal.log
 key space ctrl+c ctrl+v Return Tab
@@ -530,7 +530,7 @@ cleanup_app
 
 # A TUI that negotiates SGR drag mouse reporting gets press/motion/release instead of
 # Kea swallowing the click. Modified Enter becomes CSI-u only after negotiation.
-printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-compat-fixture.py smoke-artifacts/compat.bin >smoke-artifacts/compat.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/compat.log
 xdotool mousemove --window "$window" 220 160
@@ -552,7 +552,7 @@ cleanup_app
 
 # Manual acceptance F3: without a negotiated keyboard protocol, modified Enter
 # must collapse to classic CR instead of leaking CSI-u or vanishing.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/classic-enter.bin >smoke-artifacts/classic-enter.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/classic-enter.log
 key Return shift+Return
@@ -564,7 +564,7 @@ assert actual == b'\r\r', actual
 assert b'13;2u' not in actual, actual
 PY
 cleanup_app
-printf 'theme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\npost_submit_focus = terminal\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-fixture.py smoke-artifacts/terminal-focus-policy.bin >smoke-artifacts/terminal-policy.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/terminal-policy.log
 focus_editor
@@ -581,7 +581,7 @@ cleanup_app
 # without changing the child's input stream. Keyboard extension selects the
 # stable first output line, so clipboard content proves this is real app text,
 # not a local action that merely reports success.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection.bin >smoke-artifacts/selection.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection.log
 focus_editor
@@ -647,7 +647,7 @@ cleanup_app
 # With mouse reporting active, the default Shift gesture is wholly local and
 # emits no partial press/release to the child. Disabling the policy forwards the
 # same gesture with the current Shift modifier encoded in both SGR events.
-printf 'theme = dark\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-default.bin --motion >smoke-artifacts/selection-default.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection-default.log
 selection_before=$(wc -c < smoke-artifacts/selection-default.bin)
@@ -705,7 +705,7 @@ assert (b'36', b'M') in reports, actual
 PY
 cleanup_app
 
-printf 'theme = dark\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
 ./target/debug/kea --direct -- python3 scripts/terminal-selection-fixture.py smoke-artifacts/selection-forwarded.bin --motion >smoke-artifacts/selection-forwarded.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/selection-forwarded.log
 xdotool keydown Shift
@@ -727,7 +727,7 @@ PY
 cleanup_app
 
 source scripts/smoke-terminal-scrollback.sh
-printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
 ./target/debug/kea -- bash --noprofile --norc >smoke-artifacts/document.log 2>&1 & kea_pid=$!
 wait_window smoke-artifacts/document.log
 focus_editor

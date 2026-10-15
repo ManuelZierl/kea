@@ -11,7 +11,7 @@ export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
 export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/memories"
 export TMUX_TMPDIR="$XDG_RUNTIME_DIR/local"
 mkdir -p "$TMUX_TMPDIR" "$XDG_RUNTIME_DIR/remote" "$XDG_RUNTIME_DIR/bin"
-printf 'theme = dark\ncheck_for_updates = false\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\ncheck_for_updates = false\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 pid= sshd_pid= window=
 cleanup() {

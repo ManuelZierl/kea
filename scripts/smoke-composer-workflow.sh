@@ -10,7 +10,7 @@ chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
 export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
 export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/input-memory"
-printf 'theme = dark\npost_submit_focus = editor\nconfirm_ctrl_c = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\npost_submit_focus = editor\nconfirm_ctrl_c = true\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 kea_pid=''; window=''; output=''
@@ -187,7 +187,7 @@ assert_bytes '030d'
 # The ordinary Shift-local selection path must freeze the displayed grid while
 # a busy mouse-reporting child keeps advancing. The child remains alive, but its
 # output and terminal input cannot disturb the selected snapshot until Return live.
-printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = true\n' > "$KEA_SETTINGS"
 start_fixture frozen-shift scripts/busy-terminal-fixture.py
 xdotool keydown Shift_L
 xdotool mousemove --window "$window" 20 172
@@ -220,7 +220,7 @@ PY
 # Ctrl+Shift remains the force-local escape hatch when the ordinary Shift-local
 # override is disabled. No press/motion/release or typed input may reach that
 # child until Return live.
-printf 'theme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nconfirm_ctrl_c = true\nshift_mouse_selects_locally = false\n' > "$KEA_SETTINGS"
 start_fixture frozen scripts/busy-terminal-fixture.py
 xdotool keydown Control_L keydown Shift_L
 xdotool mousemove --window "$window" 20 172
@@ -252,7 +252,7 @@ import sys
 from pathlib import Path
 assert b'x' in Path(sys.argv[1]).read_bytes(), "Return live did not restore child input"
 PY
-printf 'theme = dark\npost_submit_focus = editor\nconfirm_ctrl_c = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\npost_submit_focus = editor\nconfirm_ctrl_c = true\n' > "$KEA_SETTINGS"
 
 # A confirmation key remains owned across a tab switch until physical release.
 # The other draft is harmless even if a regression accidentally submits it.

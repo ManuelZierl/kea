@@ -67,7 +67,7 @@ export DISPLAY=":$(cat "$tmp/display")"
 xdotool getdisplaygeometry >/dev/null
 "$openbox_bin" >"$tmp/openbox.log" 2>&1 & wm_pid=$!
 sleep .5
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 "$root/target/debug/kea" --direct -- python3 -c 'import time; time.sleep(3600)' >"$tmp/kea.log" 2>&1 & kea_pid=$!
 window=''
