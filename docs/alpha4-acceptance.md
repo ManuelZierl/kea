@@ -105,6 +105,88 @@ output). The copied output still showed the earlier error frame. Its cause and
 relationship to this follow-up have not been established; do not treat the
 historical candidate PASS above as a pass for this runtime revision.
 
+## Final candidate evidence (#39 + #40 + review follow-ups)
+
+The candidate is `develop` at `fbe7177`: #40 (draft tabs, scroll copy, marker
+tokens, restorable Submit, Not live state) merged into #39 (composer splits,
+SSH tmux management), plus eight review follow-up commits. Three independent
+reviews (SSH/tmux, security/shell integration, composer/capture) found no
+blocker. Their follow-ups are fixed. The shared remote token and pre-view marker
+parsing are documented as known limits rather than fixed.
+
+The first hosted run of the combined branch
+([CI](https://github.com/ManuelZierl/kea/actions/runs/38775393555)) **failed**
+`desktop-windows`: draft-history compaction replaced the file while its append
+handle was open, which Windows refuses. After the fix, the final head `0e22a51`
+passed every job ([CI](https://github.com/ManuelZierl/kea/actions/runs/38778259126),
+[Documentation](https://github.com/ManuelZierl/kea/actions/runs/38778259132)).
+
+Local Linux checks on the final head:
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo test --locked --workspace` | PASS, 359 tests; one ignored documentation example |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | PASS |
+| `cargo build --locked -p kea-app`, reverse-search harness | PASS |
+| `wt validate` / `wt test` / `wt check --no-global --no-host-ignores --no-cache` | PASS, 0 blocking; 9 advisories inspected |
+| Isolated Xvfb smoke: linux, tabs, composer workflow, scroll capture, tmux manager, tmux manager error | PASS |
+| `smoke-tmux-ssh.sh` | NOT RUN (no local sshd) |
+
+The earlier full-smoke **FAIL** at the history Return-live assertion (above) did
+not reproduce: `smoke-linux.sh` passed locally and in hosted `desktop-linux` for
+this candidate. No root cause was established, so treat it as possibly flaky.
+
+### Interactive UI passes — native Wayland and X11
+
+Kea ran in an isolated `gnome-shell --headless` (GNOME Shell 50.1 / Mutter,
+virtual 1440×960 monitor, scale 1, AMD GPU) with its own D-Bus session,
+PipeWire, `HOME`, `XDG_*` directories and `TMUX_TMPDIR`. The user's desktop and
+tmux server were not touched. Pointer and keyboard input came from Mutter's
+RemoteDesktop API, a separate client read and wrote the compositor clipboard,
+and screenshots were checked at every step. Wayland ran with `--no-x11` and
+`DISPLAY` unset. X11 used the same shell's Xwayland with `WAYLAND_DISPLAY` unset,
+so Mutter acted as the X11 window manager.
+
+| Check | Wayland | X11 |
+|---|---|---|
+| Launch, title bar/version, cwd report, Submit to the ready shell (sent once) | PASS | PASS |
+| Drag selection → Ctrl+C → external clipboard reader gets the exact text | PASS | PASS |
+| External clipboard → Ctrl+V into composer, Unicode intact | PASS | PASS |
+| Undo after Submit restores the draft without re-sending | PASS | PASS |
+| Draft tabs: Ctrl+Alt+Enter, titles, `submitted_draft = close` hint | PASS | PASS |
+| History: Not live badge/banner, Return live (F9), Paste disabled | PASS | PASS |
+| Shift-drag frozen view with Not live · Frozen badge | PASS | not run |
+| tmux manager → Open in a numbered tab; cwd "not reported"; input unconfirmed | PASS | PASS |
+| Guarded Submit into tmux: nothing sent, then Enter sends once | PASS | PASS |
+| tmux history → Copy all: exactly 2001 retained lines on the clipboard | PASS | PASS |
+| Move to ⇄ with numbered target; nothing sent; source confirmation cleared | PASS | PASS |
+| Capture scroll in `less`: exact rebuild (64 rows Wayland, 76 rows X11) | PASS | PASS |
+| Capture of an in-place ticking clock: one snapshot, no gap/duplicate (fix) | PASS | not run |
+| Integration fail-open: unwritable runtime/temp dir → terminal opens untracked with warning; guarded Submit sends once | PASS | not run |
+| Maximize, close confirmation (mentions surviving tmux), exit 0, tmux survives, no bootstrap leftovers | PASS | PASS |
+
+A pure-X11 cross-check under Xvfb/Openbox with native XTEST typed
+`echo "a%b|c" X_Y; seq -f "row-%03g" 1 3` exactly and ran it. In the Xwayland
+run, synthetic keysyms sometimes lost Shift and occasionally dropped keys. The
+first key after creating a new virtual keyboard was always lost on both
+backends. These are artifacts of the synthetic RemoteDesktop path and did not
+reproduce with XTEST; physical keyboards remain a manual check.
+
+Observations, none of which are regressions from this candidate:
+
+- The mouse wheel does not scroll pagers that do not request mouse reporting
+  (for example `less`). Alternate-scroll (DECSET 1007) wheel-to-arrow translation
+  is not implemented; Capture scroll works with keyboard scrolling.
+- Escape did not dismiss the open tmux manager popover.
+- At about 1024 px wide, the terminal toolbar truncates its hint text, and long
+  warnings/notices clip in the status bar.
+- Under Openbox, Kea's client-side title bar is drawn below the window
+  manager's own decoration.
+
+These runs do not certify physical keyboards/IME, fractional or multi-monitor
+scaling, accessibility, your everyday GNOME session, macOS or Windows.
+
 ## What needs your judgment
 
 The composer/SSH-tmux follow-up changes require fresh acceptance; the historical
@@ -252,9 +334,9 @@ labels or synthetic Unicode paste.
 
 | Check | Platform/environment | Result | Evidence/issue |
 |---|---|---|---|
-| Visual clarity / scaling / overlay | | NOT RUN | |
-| Busy-TUI selection / external clipboard / OSC 52 | | NOT RUN | |
-| tmux detach / kill / stale targets | | NOT RUN | |
+| Visual clarity / scaling / overlay | | NOT RUN | Agent pass at scale 1 only, see above |
+| Busy-TUI selection / external clipboard / OSC 52 | | NOT RUN | Agent pass: clipboard both ways on Wayland/X11; OSC 52 not exercised |
+| tmux detach / kill / stale targets | | NOT RUN | Agent pass: Open/detach-on-close; Kill not exercised |
 | Non-admin Windows install / uninstall | | NOT RUN | |
 | Windows newer-version update | | BLOCKED | Needs a newer eligible release or harness |
 | Physical keys / AltGr / real IME | | NOT RUN | |
