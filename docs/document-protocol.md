@@ -16,8 +16,8 @@ Authored text follows the normal terminal input and shell execution path. Shell
 hooks observe native start and completion without per-command eval wrappers:
 
 ```text
-ESC ] 777;kea;native-start;<context> BEL
-ESC ] 777;kea;native-done;<context>;<signed-status> BEL
+ESC ] 777;kea;<token>;native-start;<context> BEL
+ESC ] 777;kea;<token>;native-done;<context>;<signed-status> BEL
 ```
 
 Context identifies a receiver within the session. Local, nested and remote
@@ -73,8 +73,11 @@ while preserving raw output. Both formats remain readable. Terminal replay
 ignores submission metadata, while a document-aware reader may reconstruct blocks.
 See the [recording format](recording-format.md) for framing and validation.
 
-OSC metadata is interoperability, not authentication. Any terminal program can
-forge these messages. They do not establish trusted command provenance or grant
+Live terminals accept these markers only with the terminal's session token (or,
+for non-local contexts, the user's remote token); see
+[marker tokens](active-input.md#marker-tokens). Replay also reads older
+untokened recordings. OSC metadata is still interoperability, not
+authentication: anything running in the integrated shell can read the token. They do not establish trusted command provenance or grant
 permission to launch a process, install a provider or contact a supplied address.
 Authored commands and output may contain secrets; persistence is explicit,
 bounded, plaintext and non-overwriting.

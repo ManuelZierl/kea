@@ -1,4 +1,5 @@
 use crate::encoding::base64_decode;
+use kea_core::MarkerAuth;
 
 const MARKER_PREFIX: &[u8] = b"\x1b]777;kea;";
 const MARKER_END: u8 = 0x07;
@@ -23,6 +24,8 @@ pub(crate) enum Piece {
 #[derive(Debug, Default)]
 pub(crate) struct MarkerScanner {
     pending: Vec<u8>,
+    /// Live documents require the session token; replay accepts any marker.
+    pub(crate) auth: MarkerAuth,
 }
 
 impl MarkerScanner {
@@ -49,7 +52,7 @@ impl MarkerScanner {
                 break;
             };
             let raw: Vec<u8> = self.pending.drain(..=end).collect();
-            match parse_marker(&raw) {
+            match parse_marker(&raw, &self.auth) {
                 Some(marker) => pieces.push(Piece::Marker(marker)),
                 None => pieces.push(Piece::Data(raw)),
             }
@@ -62,11 +65,13 @@ impl MarkerScanner {
     }
 }
 
-fn parse_marker(raw: &[u8]) -> Option<Marker> {
+fn parse_marker(raw: &[u8], auth: &MarkerAuth) -> Option<Marker> {
     if !raw.starts_with(MARKER_PREFIX) || raw.last().copied() != Some(MARKER_END) {
         return None;
     }
     let body = std::str::from_utf8(&raw[MARKER_PREFIX.len()..raw.len() - 1]).ok()?;
+    // Unauthenticated markers stay ordinary output in a live document.
+    let (_, body) = auth.check(body)?;
     let mut parts = body.split(';');
     match parts.next()? {
         kind @ ("cwd" | "prompt") => {

@@ -1,6 +1,8 @@
 //! Explicit, live input ownership. Never infer readiness from screen contents,
 //! process names, idleness, or the optional command-block document.
-const PREFIX: &[u8] = b"\x1b]779;kea;input;1;";
+use kea_core::{MarkerAuth, MarkerOrigin};
+
+const PREFIX: &[u8] = b"\x1b]779;kea;";
 const MAX_MARKER: usize = 512;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -28,6 +30,7 @@ pub struct InputContext {
     kind: ReceiverKind,
     readiness: Readiness,
     generation: u64,
+    auth: MarkerAuth,
 }
 
 impl InputContext {
@@ -53,6 +56,10 @@ impl InputContext {
     }
     pub fn shell_ready(&self) -> bool {
         self.ready() && matches!(self.kind, ReceiverKind::Posix | ReceiverKind::PowerShell)
+    }
+    /// Live terminals require their session token; see `kea_core::MarkerAuth`.
+    pub fn set_auth(&mut self, auth: MarkerAuth) {
+        self.auth = auth;
     }
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -81,7 +88,7 @@ impl InputContext {
                 let end = self.pending.len() - if byte == 7 { 1 } else { 2 };
                 let parsed = std::str::from_utf8(&self.pending[PREFIX.len()..end])
                     .ok()
-                    .and_then(parse);
+                    .and_then(|body| parse(body, &self.auth));
                 self.invalidate();
                 if let Some((id, kind, readiness)) = parsed {
                     self.id = id;
@@ -97,9 +104,14 @@ impl InputContext {
     }
 }
 
-fn parse(body: &str) -> Option<(String, ReceiverKind, Readiness)> {
-    let mut parts = body.split(';');
+fn parse(body: &str, auth: &MarkerAuth) -> Option<(String, ReceiverKind, Readiness)> {
+    let (origin, body) = auth.check(body)?;
+    let mut parts = body.strip_prefix("input;1;")?.split(';');
     let id = parts.next()?;
+    // Only the shell Kea integrated may speak for the local receiver.
+    if origin == MarkerOrigin::Remote && id == "local" {
+        return None;
+    }
     if id.is_empty()
         || id.len() > 128
         || !id

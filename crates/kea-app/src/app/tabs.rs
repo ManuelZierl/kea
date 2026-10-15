@@ -416,7 +416,7 @@ impl KeaRoot {
         }
         // Never repeat the startup command (which might be SSH or an arbitrary
         // program), nor reuse its --record path. New tabs are fresh local shells.
-        let (session, shell) = match startup::spawn_terminal(Vec::new(), None) {
+        let (session, shell, token) = match startup::spawn_terminal(Vec::new(), None) {
             Ok(value) => value,
             Err(error) => {
                 self.notice = Some(format!("Could not open terminal: {error:#}"));
@@ -433,7 +433,7 @@ impl KeaRoot {
             InitialFocus::Terminal
         };
         let view = cx.new(|cx| {
-            KeaView::new(
+            let mut view = KeaView::new(
                 session,
                 document,
                 shell,
@@ -443,7 +443,9 @@ impl KeaRoot {
                 None,
                 window,
                 cx,
-            )
+            );
+            view.set_marker_auth(kea_app::shell::token::live_auth(token));
+            view
         });
         let label = terminal_title(shell, true);
         self.attach(
@@ -631,7 +633,7 @@ impl KeaRoot {
         // Spawning only starts the guarded tmux client. Its stale-session
         // branch reports an error and exits; Kea must not infer a successful
         // persistent attach from spawn returning.
-        let (session, shell) = match startup::spawn_terminal(command, None) {
+        let (session, shell, token) = match startup::spawn_terminal(command, None) {
             Ok(value) => value,
             Err(error) => {
                 self.tmux_notice = Some(format!(
@@ -648,7 +650,7 @@ impl KeaRoot {
         let document = Document::from_recording(session.recording());
         let focus = InitialFocus::Terminal;
         let view = cx.new(|cx| {
-            KeaView::new(
+            let mut view = KeaView::new(
                 session,
                 document,
                 shell,
@@ -658,7 +660,9 @@ impl KeaRoot {
                 None,
                 window,
                 cx,
-            )
+            );
+            view.set_marker_auth(kea_app::shell::token::live_auth(token));
+            view
         });
         let title = if tmux_session.host().destination().is_some() {
             format!(

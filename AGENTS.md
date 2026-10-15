@@ -42,7 +42,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 - No raw keystroke recording by default. Submitted command markers and output can contain secrets. Persistence is explicit, bounded and non-overwriting.
 - Bound retained data and UI entities. Surface quota exhaustion, disk failures, truncation and gaps; do not call incomplete history complete.
 - Replay checkpoints need full parser state, partial escapes/UTF-8, both buffers, modes, margins, tabs, cursor and colors. A grid clone is not a checkpoint.
-- Metadata markers are interoperability, not authentication. Imported terminal output is not trusted provenance.
+- Metadata markers are interoperability, not authentication. Imported terminal output is not trusted provenance. Live terminals accept integration markers only with their session token (remote token for non-`local` contexts, never PATH); never add a marker parser or emitter without the token.
 - Distinguish compilation, automated/component tests, graphical smoke tests and real platform validation.
 - Do not copy GPL Zed code into MIT Kea crates.
 

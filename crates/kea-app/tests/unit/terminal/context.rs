@@ -49,3 +49,30 @@ fn malformed_oversized_and_nonempty_reports_fail_closed() {
     assert!(context.pending.len() < MAX_MARKER);
     assert!(!context.ready());
 }
+
+#[test]
+fn live_contexts_need_the_session_token_and_remote_cannot_claim_local() {
+    use kea_core::{MarkerAuth, MarkerToken};
+    let session = MarkerToken::from_bytes([1; 16]);
+    let remote = MarkerToken::from_bytes([2; 16]);
+    let mut context = InputContext::default();
+    context.set_auth(MarkerAuth::Live {
+        session: session.clone(),
+        remote: Some(remote.clone()),
+    });
+    // Output such as `cat crafted.txt` cannot make Submit skip confirmation.
+    context.ingest(b"\x1b]779;kea;input;1;local;posix;ready\x07");
+    assert!(!context.ready());
+    let marker = |token: &MarkerToken, id: &str| {
+        format!(
+            "\x1b]779;kea;{};input;1;{id};posix;ready\x07",
+            token.as_str()
+        )
+    };
+    context.ingest(marker(&remote, "local").as_bytes());
+    assert!(!context.ready());
+    context.ingest(marker(&remote, "build-host").as_bytes());
+    assert!(context.ready() && !context.local_shell_ready());
+    context.ingest(marker(&session, "local").as_bytes());
+    assert!(context.local_shell_ready());
+}

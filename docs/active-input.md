@@ -36,8 +36,12 @@ may implement transactional insertion, but this raw-input fallback does not.
 The live terminal stream can contain:
 
 ```text
-ESC ] 779;kea;input;1;<context>;<kind>;<state> BEL
+ESC ] 779;kea;<token>;input;1;<context>;<kind>;<state> BEL
 ```
+
+`<token>` is `k` followed by 32 lowercase hex digits. Every integration marker
+(OSC 777/778/779) carries it directly after `kea;`. See
+[marker tokens](#marker-tokens).
 
 `ESC \\` is also accepted as the terminator. Context IDs are 1–128 ASCII letters,
 digits, hyphens, underscores or dots. `kind` is `posix`, `powershell`, or `app`.
@@ -52,10 +56,29 @@ inspect executable names or prompt text to infer readiness. `local` is reserved
 for the original integrated shell, allowing local cwd/PATH suggestions. Never
 reuse that ID in a remote integration: remote paths must not be opened locally.
 
-These reports are interoperability metadata, **not authentication**. An arbitrary
-terminal program can emit them. They do not authorize process launch, configure
-endpoints or supply trusted provenance. Connection closure and replay remain
-independent hard guards against input.
+### Marker tokens
+
+Each live terminal gets a fresh random **session token**, embedded only in the
+integration Kea installs into its own shell. A live terminal ignores every
+integration marker without the right token: such output stays ordinary output and
+cannot mark input ready (which would skip Submit confirmation), set cwd or PATH,
+or open/close command blocks. `cat` of a crafted file, an SSH login banner or a
+TUI that renders untrusted text therefore cannot forge Kea state. Terminals
+without integration (tmux clients, arbitrary programs) still get a token that
+nobody knows, so markers there are inert.
+
+Remote and nested integrations use the user's **remote token**, created
+owner-only next to `settings.conf` as `remote-integration-token` the first time
+`--print-shell-integration` runs. A remote-token marker can report readiness and
+cwd for its own context, but never for `local` and never PATH, so it cannot
+unlock local filesystem completion. Delete that file to revoke remote scripts;
+regenerate them afterwards. Replay of saved recordings accepts tokened and
+older untokened markers, since replay never sends input.
+
+Tokens are interoperability capabilities, not proof about the foreground
+process: anything running inside the integrated shell can read them. They do
+not authorize process launch, configure endpoints or supply trusted provenance.
+Connection closure and replay remain independent hard guards against input.
 
 ## Shell integration installation
 
@@ -71,6 +94,10 @@ startup configuration:
 ```bash
 kea --print-shell-integration bash remote-work > kea-remote-work.sh
 ```
+
+The script contains your remote token; keep it private like an SSH config.
+Scripts generated before marker tokens existed are ignored by current Kea;
+generate them again.
 
 Use `zsh`, `pwsh`, or another supported shell name for the corresponding script.
 The command prints only the integration; it does not connect, install or execute
@@ -157,8 +184,8 @@ cycling, Up/Down for visual rows, Enter to accept, and Escape to dismiss.
 Native shell hooks emit scoped start/done boundaries:
 
 ```text
-ESC ] 777;kea;native-start;<context> BEL
-ESC ] 777;kea;native-done;<context>;<integer-status> BEL
+ESC ] 777;kea;<token>;native-start;<context> BEL
+ESC ] 777;kea;<token>;native-done;<context>;<integer-status> BEL
 ```
 
 These do not contain commands. After a successful ready-shell Submit, Kea can

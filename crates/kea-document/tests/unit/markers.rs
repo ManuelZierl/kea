@@ -35,3 +35,20 @@ fn marker_scanner_handles_arbitrary_chunk_boundaries() {
     assert_eq!(block.started_at, Some(3));
     assert_eq!(block.finished_at, Some(4));
 }
+
+#[test]
+fn live_documents_ignore_markers_without_the_session_token() {
+    use kea_core::{MarkerAuth, MarkerToken};
+    let session = MarkerToken::from_bytes([7; 16]);
+    let mut document = Document::new();
+    document.set_marker_auth(MarkerAuth::Live {
+        session: session.clone(),
+        remote: None,
+    });
+    // `cat` of a crafted file cannot set the directory or readiness.
+    document.ingest_output(1, b"\x1b]777;kea;prompt;L2V0Yw==\x07");
+    assert_eq!(document.directory(), None);
+    let real = format!("\x1b]777;kea;{};prompt;L3RtcA==\x07", session.as_str());
+    document.ingest_output(2, real.as_bytes());
+    assert_eq!(document.directory(), Some("/tmp"));
+}

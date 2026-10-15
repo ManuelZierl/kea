@@ -35,7 +35,10 @@ pub(super) fn run() -> Result<()> {
             let flavor =
                 ShellFlavor::from_program(&name.to_string_lossy()).context("unsupported shell")?;
             use std::io::Write as _;
-            std::io::stdout().write_all(&flavor.integration_for(&[name], context))?;
+            // Remote/nested hooks use the persistent remote token; it never
+            // speaks for the local shell (see kea_app::shell::token).
+            let token = kea_app::shell::token::remote_token()?;
+            std::io::stdout().write_all(&flavor.integration_for(&[name], context, &token))?;
             return Ok(());
         }
         if arg == "--" {
@@ -104,8 +107,8 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         );
     }
 
-    let (session, shell) = if demo {
-        (Session::demo()?, None)
+    let (session, shell, marker_auth) = if demo {
+        (Session::demo()?, None, kea_core::MarkerAuth::Replay)
     } else if let Some(path) = replay {
         let loaded = kea_core::read_from(File::open(path)?)?;
         let mut session = Session::from_recording(loaded.recording)?;
@@ -114,9 +117,10 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             session.warning =
                 Some("Recovered complete events; the final recording frame was truncated.".into());
         }
-        (session, None)
+        (session, None, kea_core::MarkerAuth::Replay)
     } else {
-        spawn_terminal(command, record.as_deref())?
+        let (session, shell, token) = spawn_terminal(command, record.as_deref())?;
+        (session, shell, kea_app::shell::token::live_auth(token))
     };
 
     let document = Document::from_recording(session.recording());
@@ -161,6 +165,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     if let Some(update_notice) = update::startup_failure_notice() {
         warnings.push(update_notice);
     }
+    if update::supported() {
+        update::remove_stale_staged_updates();
+    }
     let notice = (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join(" ")));
 
     Application::new()
@@ -198,7 +205,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             if let Err(error) = cx.open_window(options, |window, cx| {
                 rendering::apply_appearance(&settings, window, cx);
                 let view = cx.new(|cx| {
-                    KeaView::new(
+                    let mut view = KeaView::new(
                         session,
                         document,
                         shell,
@@ -208,7 +215,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                         notice,
                         window,
                         cx,
-                    )
+                    );
+                    view.set_marker_auth(marker_auth);
+                    view
                 });
                 let weak = view.downgrade();
                 window.defer(cx, move |window, cx| {
@@ -265,10 +274,13 @@ pub(super) fn show_message(message: String) {
 
 /// Shared startup path for a fresh local terminal. Never changes process-wide cwd.
 /// The caller alone supplies explicit command/recording options for the first tab.
+/// Returns the terminal's marker token: embedded in the integration when the
+/// shell is integrated, otherwise known to nobody, so printed markers are inert.
 pub(super) fn spawn_terminal(
     mut command: Vec<OsString>,
     record: Option<&std::path::Path>,
-) -> Result<(Session, Option<ShellFlavor>)> {
+) -> Result<(Session, Option<ShellFlavor>, kea_core::MarkerToken)> {
+    let token = kea_app::shell::token::new_session_token()?;
     #[cfg(windows)]
     if command.is_empty() {
         command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
@@ -279,7 +291,7 @@ pub(super) fn spawn_terminal(
         if command.is_empty() {
             command.push(std::env::var_os("SHELL").context("PowerShell executable unavailable")?);
         }
-        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
+        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command, &token))?;
         if !command
             .iter()
             .any(|arg| arg.to_string_lossy().eq_ignore_ascii_case("-noexit"))
@@ -291,7 +303,11 @@ pub(super) fn spawn_terminal(
     }
     let mut session = Session::spawn(&command, kea_core::Size::new(100, 26)?, record)?;
     if shell == Some(ShellFlavor::Posix) {
-        session.send_hidden(ShellFlavor::Posix.integration(&command))?;
+        let (line, path) = ShellFlavor::posix_bootstrap(&command, &token, &std::env::temp_dir())?;
+        if let Err(error) = session.send_hidden(line) {
+            let _ = std::fs::remove_file(path);
+            return Err(error);
+        }
     }
-    Ok((session, shell))
+    Ok((session, shell, token))
 }
