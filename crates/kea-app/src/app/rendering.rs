@@ -22,6 +22,7 @@ const TERMINAL_SELECTION_FOREGROUND: u32 = 0xffffff;
 impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.validate_workflow(window, cx);
+        self.observe_scroll_capture();
         let editor = self.editor.clone();
         let enabled = self.session.input_allowed();
         self.reverse_search.update(cx, |search, cx| {
@@ -153,12 +154,22 @@ impl Render for KeaView {
                 .size_full(),
             );
 
-        let terminal_mode = if self.session.is_frozen() {
-            "Frozen selection"
-        } else if self.session.is_history() {
-            "History"
-        } else {
-            "Live"
+        let not_live = self.not_live();
+        let terminal_mode = match not_live {
+            Some(reason) => div()
+                .id("terminal-not-live")
+                .flex_shrink_0()
+                .px_1()
+                .rounded_sm()
+                .bg(cx.theme().warning)
+                .text_color(cx.theme().warning_foreground)
+                .font_weight(FontWeight::BOLD)
+                .child(reason.badge()),
+            None => div()
+                .id("terminal-live")
+                .flex_shrink_0()
+                .text_color(cx.theme().success)
+                .child("● Live"),
         };
         let terminal_context = if self
             .terminal_gesture
@@ -201,7 +212,7 @@ impl Render for KeaView {
                         .child("Terminal"),
                 )
             })
-            .child(div().flex_shrink_0().child(terminal_mode))
+            .child(terminal_mode)
             .when(!compact_chrome, |header| {
                 header.child(
                     div()
@@ -215,6 +226,7 @@ impl Render for KeaView {
                 )
             })
             .child(div().flex_1())
+            .child(self.scroll_capture_controls(terminal_selection_available, cx))
             .child(self.interrupt_toggle(cx))
             .when(!compact_chrome, |header| {
                 header.child(if terminal_display_offset == 0 {
@@ -439,8 +451,10 @@ impl Render for KeaView {
                     .warning()
                     .map(ToOwned::to_owned)
             });
-        let status_is_warning = status_warning.is_some();
-        let status = status_warning.or_else(|| self.notice.clone()).unwrap_or_else(|| {
+        // A notice reports the latest action ("Nothing was sent…") and clears on
+        // the next one; a sticky warning must not hide it, and shows again after.
+        let status_is_warning = self.notice.is_none() && status_warning.is_some();
+        let status = self.notice.clone().or(status_warning).unwrap_or_else(|| {
             if self.session.is_frozen() {
                 "Frozen terminal view · Return live to interact".into()
             } else if self.session.is_history() {
@@ -535,6 +549,7 @@ impl Render for KeaView {
                     .child(div().flex_1().min_w_0())
                     .child(button("composer-actions", "Actions")
                         .on_click(cx.listener(|this, _, window, cx| this.open_composer_actions(window, cx))))
+                    .child(self.render_draft_move_button(cx))
                     .child(
                         button(
                             "run-draft",
@@ -556,6 +571,31 @@ impl Render for KeaView {
                         })),
                     ),
             )
+            .when_some(not_live, |panel, reason| {
+                panel.child(
+                    div()
+                        .id("composer-not-live")
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(cx.theme().warning)
+                        .text_color(cx.theme().warning_foreground)
+                        .child(div().flex_1().min_w_0().child(reason.banner()))
+                        .when(reason.can_return_live(), |banner| {
+                            banner.child(self.control(
+                                "composer-return-live",
+                                action_label(&self.keymap, "Return live", Action::GoLive),
+                                Action::GoLive,
+                                cx,
+                            ))
+                        }),
+                )
+            })
             .when(self.pending_run.is_some(), |panel| panel.child(
                 div().id("submit-confirmation").px_2().py_1().text_sm()
                     .text_color(cx.theme().danger)

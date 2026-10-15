@@ -3,10 +3,15 @@ use std::{
     fs::{self, File},
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
 };
 
 const DEFAULT_CAPACITY: usize = 500;
 const MAX_HISTORY_FILE_BYTES: u64 = 16 * 1024 * 1024;
+/// The append-only file is compacted to the newest entries past this size, so it
+/// stays far below the load limit however many submissions accumulate.
+const COMPACT_HISTORY_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Exact text the user intentionally submitted from Kea's editor.
 ///
@@ -19,7 +24,7 @@ pub struct DraftHistory {
     capacity: usize,
     cursor: Option<usize>,
     scratch: String,
-    persist_path: Option<PathBuf>,
+    writer: Option<Writer>,
     persistence_warning: Option<String>,
 }
 
@@ -36,7 +41,7 @@ impl DraftHistory {
             capacity: capacity.max(1),
             cursor: None,
             scratch: String::new(),
-            persist_path: None,
+            writer: None,
             persistence_warning: None,
         }
     }
@@ -56,26 +61,53 @@ impl DraftHistory {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
         }
-        self.entries.push_back(text);
         self.reset_navigation();
-        // Memory remains authoritative, but an opted-in disk copy must not fail
-        // silently. Stop retrying after the first error, like the session journal;
-        // the current process can still recall every retained entry.
-        if let Err(error) = self.save() {
-            if let Some(path) = self.persist_path.take() {
-                self.persistence_warning = Some(format!(
-                    "Draft history persistence stopped: {}: {error}. In-memory recall remains available for this session.",
-                    path.display()
-                ));
+        // Memory remains authoritative. The opted-in disk copy is appended by a
+        // worker so the UI never waits on disk; its first failure stops it visibly.
+        if let Some(writer) = &self.writer {
+            if writer.tx.send(Message::Append(text.clone())).is_err() {
+                self.stop_persistence("the history writer stopped".into());
             }
         }
+        self.entries.push_back(text);
+        self.poll_writer();
+    }
+
+    fn poll_writer(&mut self) {
+        let error = self
+            .writer
+            .as_ref()
+            .and_then(|writer| writer.errors.try_recv().ok());
+        if let Some(error) = error {
+            self.stop_persistence(error);
+        }
+    }
+
+    fn stop_persistence(&mut self, error: String) {
+        if let Some(writer) = self.writer.take() {
+            self.persistence_warning = Some(format!(
+                "Draft history persistence stopped: {}: {error}. In-memory recall remains available for this session.",
+                writer.path.display()
+            ));
+        }
+    }
+
+    /// Wait until every recorded entry reached the file (or failed).
+    pub fn flush(&mut self) {
+        if let Some(writer) = &self.writer {
+            let (done, wait) = mpsc::channel();
+            if writer.tx.send(Message::Flush(done)).is_ok() {
+                let _ = wait.recv();
+            }
+        }
+        self.poll_writer();
     }
 
     /// Point recall at a plaintext file and seed it with previously saved entries
     /// (oldest first). Manual acceptance decision: off by default, explicit opt-in
     /// via `persist_history`, because submissions can contain secrets.
     pub fn set_persisted_entries(&mut self, path: PathBuf, entries: Vec<String>) {
-        self.persist_path = Some(path);
+        self.writer = Some(Writer::start(path));
         self.persistence_warning = None;
         for entry in entries {
             if entry.is_empty() {
@@ -90,31 +122,8 @@ impl DraftHistory {
     }
 
     pub fn take_persistence_warning(&mut self) -> Option<String> {
+        self.poll_writer();
         self.persistence_warning.take()
-    }
-
-    fn save(&self) -> std::io::Result<()> {
-        let Some(path) = self.persist_path.as_deref() else {
-            return Ok(());
-        };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut encoded = String::new();
-        for entry in &self.entries {
-            encoded.push_str(&encode_entry(entry));
-            encoded.push('\n');
-        }
-        if encoded.len() as u64 > MAX_HISTORY_FILE_BYTES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "retained drafts need {} bytes; the persistence maximum is {MAX_HISTORY_FILE_BYTES}",
-                    encoded.len()
-                ),
-            ));
-        }
-        write_private(path, encoded.as_bytes())
     }
 
     pub fn recent(&self, limit: usize) -> Vec<String> {
@@ -185,6 +194,127 @@ impl DraftHistory {
                 self.cursor = None;
                 self.scratch = current.to_owned();
             }
+        }
+    }
+}
+
+enum Message {
+    Append(String),
+    Flush(mpsc::Sender<()>),
+}
+
+/// Appends entries off the UI thread. Every append reopens the file under an
+/// exclusive lock, so concurrent Kea instances add to the same history instead
+/// of replacing each other's, and compaction can safely swap the file.
+#[derive(Debug)]
+struct Writer {
+    path: PathBuf,
+    tx: mpsc::Sender<Message>,
+    errors: mpsc::Receiver<String>,
+}
+
+impl Writer {
+    fn start(path: PathBuf) -> Self {
+        let (tx, rx) = mpsc::channel::<Message>();
+        let (error_tx, errors) = mpsc::channel();
+        let worker_path = path.clone();
+        thread::spawn(move || {
+            for message in rx {
+                match message {
+                    Message::Append(entry) => {
+                        if let Err(error) = append_entry(&worker_path, &entry) {
+                            let _ = error_tx.send(error.to_string());
+                            // Stop after the first failure; the UI reports it.
+                            return;
+                        }
+                    }
+                    Message::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        });
+        Self { path, tx, errors }
+    }
+}
+
+fn append_entry(path: &Path, entry: &str) -> std::io::Result<()> {
+    let mut line = encode_entry(entry);
+    line.push('\n');
+    if line.len() as u64 > COMPACT_HISTORY_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("one draft needs {} bytes; the persistence maximum per draft is {COMPACT_HISTORY_FILE_BYTES}", line.len()),
+        ));
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = HistoryLock::acquire(path)?;
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        // Submissions can contain secrets: keep an older or hand-made file private.
+        use std::os::unix::fs::PermissionsExt as _;
+        if file.metadata()?.permissions().mode() & 0o077 != 0 {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    file.write_all(line.as_bytes())?;
+    file.sync_data()?;
+    if file.metadata()?.len() > COMPACT_HISTORY_FILE_BYTES {
+        compact(path)?;
+    }
+    Ok(())
+}
+
+/// Keep only the newest entries. Runs under the history lock.
+fn compact(path: &Path) -> std::io::Result<()> {
+    let entries = load_history_file(path)?;
+    let mut encoded = String::new();
+    for entry in &entries {
+        encoded.push_str(&encode_entry(entry));
+        encoded.push('\n');
+    }
+    write_private(path, encoded.as_bytes())
+}
+
+/// Exclusive advisory lock on `<history>.lock`, shared by all Kea instances.
+/// Without `flock` (Windows) appends still never rewrite other entries; only a
+/// rare compaction could race a concurrent append.
+struct HistoryLock {
+    #[cfg(unix)]
+    _lock: nix::fcntl::Flock<File>,
+}
+
+impl HistoryLock {
+    fn acquire(path: &Path) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut name = path.as_os_str().to_owned();
+            name.push(".lock");
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .mode(0o600)
+                .open(PathBuf::from(name))?;
+            let lock = nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusive)
+                .map_err(|(_, errno)| std::io::Error::from(errno))?;
+            Ok(Self { _lock: lock })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(Self {})
         }
     }
 }

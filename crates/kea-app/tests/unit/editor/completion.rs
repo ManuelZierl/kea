@@ -292,3 +292,19 @@ fn command_completion_is_only_for_first_word() {
         .iter()
         .all(|candidate| !candidate.label.starts_with("Command:")));
 }
+
+#[test]
+fn powershell_quoting_doubles_typographic_single_quotes() {
+    assert_eq!(
+        shell_quote("a’; evil; ’b", Some(ShellFlavor::PowerShell)),
+        "'a’’; evil; ’’b'"
+    );
+    assert_eq!(
+        shell_quote("it's", Some(ShellFlavor::PowerShell)),
+        "'it''s'"
+    );
+    for quote in ['\u{2018}', '\u{201A}', '\u{201B}'] {
+        let quoted = shell_quote(&format!("x{quote}y"), Some(ShellFlavor::PowerShell));
+        assert_eq!(quoted, format!("'x{quote}{quote}y'"));
+    }
+}

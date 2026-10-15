@@ -83,8 +83,15 @@ aliases for this same guarded behavior; Ctrl+Shift+Enter is no longer a separate
 workflow or a bypass. Multiline submission requires negotiated bracketed paste;
 otherwise the draft is preserved instead of risking line-by-line execution.
 
-A successful submission creates a fresh draft and fresh undo history. Undo edits
-text, not process side effects. Observational shell hooks provide optional block
+A successful submission creates a fresh, empty draft. Its first Undo step
+restores the submitted text as an unsent draft, so input that the receiver
+ignored (for example a TUI that was not accepting text) costs one Ctrl+Z, not a
+retype. Undo edits text, not process side effects, and never sends anything.
+
+Submit only reaches a **live** terminal. While you view history, keep a frozen
+selection view, or after the terminal process ends, the terminal header shows an
+orange **Not live** badge and the composer shows a banner with **Return live**
+(F9 by default). Submit then sends nothing and keeps your draft. Observational shell hooks provide optional block
 boundaries without wrapping authored commands. See the full
 [active-input contract](active-input.md), including its compatibility limits.
 
@@ -141,6 +148,30 @@ Copy chord into child input. See [terminal text selection](terminal-text-selecti
 Some distinctions remain impossible in classic terminal protocols, and OS/window-manager shortcuts may never reach Kea. Advanced graphics protocols, higher Kitty key-release/repeat levels, focus-event forwarding and accessibility certification are tracked separately from the first alpha compatibility gate.
 
 See [terminal compatibility gate](terminal-compatibility-alpha.md).
+
+## Copying long output from full-screen apps
+
+Kea's terminal selection copies only what you selected and never sends Ctrl-C to
+the app. Full-screen apps (agent TUIs, pagers, editors) draw on the alternate
+screen, which has no scrollback, and inside tmux the history belongs to tmux. Two
+tools cover text that scrolled out of view:
+
+- **tmux history** (top bar, shown for tmux tabs opened from the tmux manager)
+  reads the pane's history through tmux itself (`capture-pane`, wrapped lines
+  joined, at most 50,000 lines and 8 MiB), locally or over SSH. The text is
+  exact and opens in a read-only, searchable viewer: select and copy, or
+  **Copy all**.
+- **Capture scroll** rebuilds text an app scrolls through. Select the area to
+  capture first (Shift+Alt-drag makes a block selection, which leaves side
+  panels out), click **Capture scroll** in the terminal header, then scroll the
+  app as usual; wheel and keys still go to the app. Kea records the selected
+  rectangle whenever the screen changes. **Done** shows the rebuilt text for
+  review; **Cancel** discards it. Rows that stay fixed (headers, input boxes)
+  appear once. Snapshots are joined only where their overlap is unambiguous;
+  otherwise the viewer shows a marked gap rather than a guess. Scroll in small
+  steps and avoid capturing while the app streams new output.
+
+Nothing is copied until you select text in the viewer or click **Copy all**.
 
 ## Current directory and completion
 
@@ -391,9 +422,9 @@ and [roadmap](roadmap.md).
 
 MIT. Dependencies retain their licenses. Kea is independent, not an official Zed feature or extension.
 
-## Composer sections and guarded interrupts
+## Composer draft tabs and guarded interrupts
 
-See [Composer sections and actions](composer-workflow.md) for independently
+See [Composer draft tabs and actions](composer-workflow.md) for independently
 submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
 recommendations. A section is pending input for the existing receiver, not a
 separate shell or an execution queue.

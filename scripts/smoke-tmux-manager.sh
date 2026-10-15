@@ -70,6 +70,29 @@ assert_clients 1
 [[ ! -s smoke-artifacts/tmux-overlay.bin ]] || { echo 'Manager click leaked to the underlying terminal'; exit 1; }
 [[ "$(tmux display-message -p '#{pid}')" == "$server_pid" ]]
 
+# tmux history is read through capture-pane, shown read-only, and copied only
+# by an explicit action. Nothing reaches the tmux pane or the underlying tab.
+tmux send-keys -t overlay-test 'for i in $(seq 1 120); do echo history-line-$i; done' Enter
+for _ in $(seq 1 50); do
+  tmux capture-pane -p -t overlay-test | grep -q history-line-120 && break
+  sleep .1
+done
+printf 'kea-history-sentinel' | xclip -selection clipboard
+smoke_click 912 51 # tmux history (only shown for the active tmux tab)
+sleep 1.5
+import -silent -window "$window" smoke-artifacts/tmux-history.png
+smoke_click 900 679 # Copy all
+copied=''
+for _ in $(seq 1 30); do
+  copied=$(timeout .5s xclip -selection clipboard -o 2>/dev/null || true)
+  [[ "$copied" == *history-line-120* ]] && break
+  sleep .1
+done
+grep -qx 'history-line-1' <<<"$copied" || { echo 'tmux history lacks its oldest line'; exit 1; }
+grep -qx 'history-line-120' <<<"$copied" || { echo 'tmux history lacks its newest line'; exit 1; }
+[[ ! -s smoke-artifacts/tmux-overlay.bin ]] || { echo 'History viewer leaked input to the underlying terminal'; exit 1; }
+assert_clients 1
+
 # Closing the Kea tab detaches its client while preserving the server/session.
 smoke_click 130 85
 key ctrl+shift+w
@@ -99,7 +122,7 @@ sleep .3
 key Return
 for _ in $(seq 1 50); do
   if ! tmux has-session -t overlay-test 2>/dev/null; then
-    echo 'tmux manager attach/detach, server preservation, Kill cancellation/confirmation and pointer isolation passed.'
+    echo 'tmux manager attach/detach, exact history copy, server preservation, Kill cancellation/confirmation and pointer isolation passed.'
     exit 0
   fi
   sleep .1

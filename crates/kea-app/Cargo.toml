@@ -25,6 +25,7 @@ semver = "1"
 sha2 = "0.10"
 reqwest = { package = "zed-reqwest", version = "=0.12.15-zed", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 tempfile = "3"
+getrandom = "0.3"
 tree-sitter-bash = "=0.23.3"
 
 [dev-dependencies]

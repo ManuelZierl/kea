@@ -103,9 +103,11 @@ Test Windows PowerShell/SSH/OpenCode and actual platform IMEs separately from
 Rust unit/component tests. No session persistence or remote cwd inference is
 implied by successful graphical smoke tests.
 
-## Composer sections and guarded interrupts
+## Composer draft tabs and guarded interrupts
 
-See [Composer sections and actions](composer-workflow.md) for independently
+See [Composer draft tabs and actions](composer-workflow.md) for independently
 submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
-recommendations. A section is pending input for the existing receiver, not a
-separate shell or an execution queue.
+recommendations. A draft tab is pending input for the existing receiver, not a
+separate shell or an execution queue. **Move to ⇄** transfers a draft's text to
+another terminal tab, which creates its own editor for it; editor entities,
+pending confirmations, completions and recall state are never shared.

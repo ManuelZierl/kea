@@ -2,16 +2,19 @@ use super::*;
 use gpui_component::ActiveTheme as _;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    Disableable as _, Sizable as _,
+    Disableable as _, Selectable as _, Sizable as _,
 };
 
-pub(super) fn section_editor_height(text: &str, font_size: f32) -> Pixels {
-    // Include a trailing empty line and scale with the actual editor typography.
-    let rows = (text.bytes().filter(|byte| *byte == b'\n').count() + 1).clamp(3, 10);
-    px(rows as f32 * font_size * COMPONENT_LINE_HEIGHT_EM + 12.)
-}
-
 impl KeaView {
+    /// Draft tab label: the automatic title, or a numbered name while empty.
+    pub(in crate::app) fn draft_tab_label(&self, index: usize, cx: &App) -> String {
+        self.composer_workflow
+            .sections
+            .get(index)
+            .and_then(|editor| workflow::draft_title(&editor.read(cx).value()))
+            .unwrap_or_else(|| format!("Draft {}", index + 1))
+    }
+
     pub(in crate::app) fn render_composer_sections(
         &mut self,
         window: &mut Window,
@@ -50,103 +53,22 @@ impl KeaView {
             .h_full()
             .min_w_0()
             .min_h_0();
-        if sections.len() == 1 {
-            column = column.child(
-                Input::new(&sections[0])
-                    .flex_1()
-                    .h_full()
-                    .min_h(px(72.))
-                    .appearance(false)
-                    .bordered(false),
-            );
-        } else {
-            let mut list = div()
-                .id("composer-sections")
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .gap_2()
-                .track_scroll(&self.composer_workflow.scroll)
-                .overflow_y_scroll();
-            for (index, editor) in sections.iter().enumerate() {
-                let height = section_editor_height(
-                    &editor.read(cx).value(),
-                    f32::from(cx.theme().mono_font_size),
-                );
-                let label = if index == active {
-                    format!("Draft {} · active", index + 1)
-                } else {
-                    format!("Draft {}", index + 1)
-                };
-                list = list.child(
-                    div()
-                        .id(("composer-section", editor.entity_id()))
-                        .flex()
-                        .flex_col()
-                        .flex_shrink_0()
-                        .min_w_0()
-                        .border_1()
-                        .rounded_sm()
-                        .border_color(if index == active {
-                            cx.theme().primary
-                        } else {
-                            cx.theme().border
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .min_w_0()
-                                .text_xs()
-                                .px_1()
-                                .py_1()
-                                .bg(cx.theme().muted)
-                                .text_color(cx.theme().muted_foreground)
-                                .child(
-                                    Button::new(("focus-composer-section", editor.entity_id()))
-                                        .label(label)
-                                        .tooltip("Focus this draft; Submit sends only this draft")
-                                        .ghost()
-                                        .small()
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.select_composer_section(index, cx);
-                                            this.composer_workflow
-                                                .scroll
-                                                .scroll_to_top_of_item(index);
-                                            this.focus_editor(window, cx);
-                                        })),
-                                )
-                                .child(div().flex_1().min_w_0())
-                                .child(
-                                    Button::new(("merge-composer-section", editor.entity_id()))
-                                        .label("Merge ↑")
-                                        .tooltip(
-                                            "Join this draft to the previous draft with a newline",
-                                        )
-                                        .ghost()
-                                        .small()
-                                        .disabled(index == 0)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.select_composer_section(index, cx);
-                                            this.focus_editor(window, cx);
-                                            this.merge_composer(window, cx);
-                                        })),
-                                ),
-                        )
-                        .child(
-                            Input::new(editor)
-                                .h(height)
-                                .min_w_0()
-                                .appearance(false)
-                                .bordered(false),
-                        ),
-                );
-            }
-            column = column.child(list);
+        if sections.len() > 1 {
+            column = column.child(self.render_draft_tabs(&sections, active, cx));
         }
+        if self.composer_workflow.move_open && !self.draft_move_targets.is_empty() {
+            column = column.child(self.render_draft_move_targets(cx));
+        }
+        // Only the active draft is shown, at full composer size. Inactive drafts
+        // keep their entities, text, selection and undo history.
+        column = column.child(
+            Input::new(&sections[active])
+                .flex_1()
+                .h_full()
+                .min_h(px(72.))
+                .appearance(false)
+                .bordered(false),
+        );
         if let Some(rec) = recommendation {
             let target = self.editor.clone();
             let label = if split_plan.is_some() {
@@ -172,6 +94,153 @@ impl KeaView {
             );
         }
         column.into_any_element()
+    }
+
+    fn render_draft_tabs(
+        &self,
+        sections: &[Entity<InputState>],
+        active: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut strip = div()
+            .id("composer-sections")
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_shrink_0()
+            .min_w_0()
+            .gap_1()
+            .pb_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .track_scroll(&self.composer_workflow.scroll)
+            .overflow_x_scroll();
+        for (index, editor) in sections.iter().enumerate() {
+            let label = self.draft_tab_label(index, cx);
+            let full = editor
+                .read(cx)
+                .value()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_owned();
+            let is_active = index == active;
+            let mut tab = div()
+                .id(("composer-section", editor.entity_id()))
+                .flex()
+                .flex_row()
+                .items_center()
+                .flex_shrink_0()
+                .border_b_2()
+                .border_color(if is_active {
+                    cx.theme().primary
+                } else {
+                    cx.theme().transparent
+                })
+                .child(
+                    Button::new(("focus-composer-section", editor.entity_id()))
+                        .label(label)
+                        .tooltip(if full.is_empty() {
+                            "Empty draft. Submit sends only the active draft tab.".to_owned()
+                        } else {
+                            format!("{full}\nSubmit sends only the active draft tab.")
+                        })
+                        .ghost()
+                        .small()
+                        .selected(is_active)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_composer_section(index, cx);
+                            this.composer_workflow.scroll.scroll_to_item(index);
+                            this.focus_editor(window, cx);
+                        })),
+                );
+            tab = tab.child(
+                Button::new(("close-composer-section", editor.entity_id()))
+                    .label("×")
+                    .tooltip(
+                        "Close this draft tab without sending. Undo draft tab change reopens it.",
+                    )
+                    .ghost()
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_composer_section(index, window, cx);
+                    })),
+            );
+            strip = strip.child(tab);
+        }
+        // Actions for the active tab sit at a fixed place on the right, so the
+        // tab titles do not shift when the active tab changes.
+        let editor = &sections[active];
+        strip
+            .child(
+                Button::new("add-composer-section")
+                    .label("+")
+                    .tooltip("Add an empty draft tab")
+                    .ghost()
+                    .xsmall()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.add_composer_section(window, cx);
+                    })),
+            )
+            .child(div().flex_1().min_w(px(8.)))
+            .child(
+                Button::new(("merge-composer-section", editor.entity_id()))
+                    .label("Merge ←")
+                    .tooltip("Join the active draft to the previous draft tab with a newline")
+                    .ghost()
+                    .xsmall()
+                    .disabled(active == 0)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_composer_section(active, cx);
+                        this.focus_editor(window, cx);
+                        this.merge_composer(window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// Shown in the composer header whenever another terminal tab exists.
+    pub(in crate::app) fn render_draft_move_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.draft_move_targets.is_empty() {
+            return div().into_any_element();
+        }
+        button("move-composer-section", "Move to ⇄")
+            .when(self.composer_workflow.move_open, |button| {
+                button.bg(cx.theme().accent)
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.composer_workflow.move_open = !this.composer_workflow.move_open;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn render_draft_move_targets(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut row = div()
+            .id("composer-move-targets")
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .flex_shrink_0()
+            .gap_1()
+            .py_1()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child("Move this draft to:");
+        for (target, label) in self.draft_move_targets.clone() {
+            row = row.child(
+                Button::new(("move-composer-target", target.0))
+                    .label(label)
+                    .tooltip("Moves the text only; nothing is sent")
+                    .outline()
+                    .xsmall()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.request_draft_move(target, cx);
+                    })),
+            );
+        }
+        row.into_any_element()
     }
 
     pub(in crate::app) fn render_composer_actions(

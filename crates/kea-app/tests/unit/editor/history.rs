@@ -74,17 +74,18 @@ fn persisted_entries_survive_a_restart_bounded_and_owner_only() {
     let _ = std::fs::remove_dir_all(&root);
     let path = root.join("draft-history.txt");
 
+    // The previous session left two entries in the append-only file.
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(&path, "stale\\ndraft\nfresh ä😀\n").unwrap();
     let mut history = DraftHistory::with_capacity(2);
-    history.set_persisted_entries(
-        path.clone(),
-        vec!["stale\ndraft".into(), "fresh ä😀".into()],
-    );
+    history.set_persisted_entries(path.clone(), load_history_file(&path).unwrap());
     assert_eq!(
         history.recent(10),
         vec!["stale\ndraft".to_string(), "fresh ä😀".to_string()]
     );
-    // Recording evicts the oldest entry and writes the file through.
+    // Recording evicts the oldest entry and appends it to the file.
     history.record("third".into());
+    history.flush();
     assert_eq!(
         history.recent(10),
         vec!["fresh ä😀".to_string(), "third".to_string()]
@@ -122,11 +123,13 @@ fn missing_history_file_loads_empty_and_failed_saves_keep_memory() {
     let mut history = DraftHistory::default();
     history.set_persisted_entries(blocker.join("draft-history.txt"), vec![]);
     history.record("kept".into());
+    history.flush();
     let warning = history.take_persistence_warning().unwrap();
     assert!(warning.contains("persistence stopped"));
     assert!(warning.contains("In-memory recall remains available"));
     assert_eq!(history.previous(""), Some("kept".into()));
     history.record("also kept".into());
+    history.flush();
     assert!(history.take_persistence_warning().is_none());
     assert_eq!(std::fs::read(&blocker).unwrap(), b"preserve me");
 }
@@ -192,4 +195,47 @@ fn locked_windows_history_survives_failed_replacement() {
     assert_eq!(std::fs::read(&path).unwrap(), b"previous");
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn two_instances_append_without_overwriting_each_other() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("draft-history.txt");
+    let mut first = DraftHistory::default();
+    let mut second = DraftHistory::default();
+    first.set_persisted_entries(path.clone(), Vec::new());
+    second.set_persisted_entries(path.clone(), Vec::new());
+    for index in 0..20 {
+        first.record(format!("first {index}"));
+        second.record(format!("second {index}\nmultiline"));
+    }
+    first.flush();
+    second.flush();
+    let loaded = load_history_file(&path).unwrap();
+    assert_eq!(loaded.len(), 40);
+    for index in 0..20 {
+        assert!(loaded.contains(&format!("first {index}")));
+        assert!(loaded.contains(&format!("second {index}\nmultiline")));
+    }
+}
+
+#[test]
+fn the_append_only_file_is_compacted_to_recent_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("draft-history.txt");
+    let big = "x".repeat(8 * 1024);
+    let text = (0..600)
+        .map(|index| format!("{index} {big}\n"))
+        .collect::<String>();
+    assert!(text.len() as u64 > COMPACT_HISTORY_FILE_BYTES);
+    std::fs::write(&path, text).unwrap();
+    let mut history = DraftHistory::default();
+    history.set_persisted_entries(path.clone(), Vec::new());
+    history.record("newest".into());
+    history.flush();
+    assert!(history.take_persistence_warning().is_none());
+    assert!(std::fs::metadata(&path).unwrap().len() <= COMPACT_HISTORY_FILE_BYTES);
+    let loaded = load_history_file(&path).unwrap();
+    assert_eq!(loaded.len(), DEFAULT_CAPACITY);
+    assert_eq!(loaded.last().map(String::as_str), Some("newest"));
 }

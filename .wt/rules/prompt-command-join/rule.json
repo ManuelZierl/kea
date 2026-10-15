@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "prompt-command-join",
+  "title": "Join Bash PROMPT_COMMAND hooks with newlines",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/**/*.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["text.v1"] },
+  "patterns": {
+    "semicolon_join": "\\$\\{?PROMPT_COMMAND\\}?\\s*;"
+  },
+  "diagnostics": {
+    "semicolon-join": {
+      "kind": "violation",
+      "message": "AGENTS.md: preserve the user's shell profile; a `;` after the user's PROMPT_COMMAND breaks values that already end in `;`, `&` or a newline.",
+      "help": "Join the user's PROMPT_COMMAND with a newline (for example a `$'\\n'` variable) or extend the array form."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

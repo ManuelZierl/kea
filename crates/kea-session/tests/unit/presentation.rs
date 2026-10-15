@@ -69,3 +69,12 @@ fn presentation_flushes_fail_open_bytes_at_the_aligned_exit_event() {
         Kind::Output(bytes) if bytes == b"private-prefix"
     ));
 }
+
+#[test]
+fn tokened_markers_retire_the_filter() {
+    let mut filter = EchoFilter::new(b"hidden bootstrap\r".to_vec()).unwrap();
+    let marker = b"\x1b]777;kea;k0123456789abcdef0123456789abcdef;prompt;L3RtcA==\x07";
+    let (visible, done) = filter.push(marker);
+    assert!(done);
+    assert_eq!(visible, marker);
+}

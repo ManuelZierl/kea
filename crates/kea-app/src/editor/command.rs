@@ -140,22 +140,10 @@ pub fn new_draft(
     if let Some(submitted) = submitted {
         let recall = cx.default_global::<DraftRecallGlobal>();
         recall.history.record(submitted.clone());
-        recall.persisted.record(submitted);
+        record_persisted(&mut recall.persisted, &submitted);
     }
 
-    let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
-        "bash"
-    } else {
-        "text"
-    };
-    let editor = cx.new(|cx| {
-        InputState::new(window, cx)
-            .code_editor(language)
-            .line_number(settings.line_numbers)
-            .soft_wrap(settings.soft_wrap)
-            .searchable(true)
-            .default_value(text.to_string())
-    });
+    let editor = detached_draft(shell, settings, text, window, cx);
     let recall = cx.default_global::<DraftRecallGlobal>();
     recall.current_editor = Some(editor.clone());
     recall.submission_candidate = None;
@@ -181,6 +169,51 @@ pub fn new_draft(
         });
     }
 
+    editor
+}
+
+/// A draft editor that does not become the current recall target. Use it for a
+/// draft created on behalf of a hidden terminal tab (for example a draft moved
+/// there), which must not disturb the active tab's recall or submission state.
+pub fn detached_draft(
+    shell: Option<ShellFlavor>,
+    settings: &Settings,
+    text: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
+        "bash"
+    } else {
+        "text"
+    };
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .code_editor(language)
+            .line_number(settings.line_numbers)
+            .soft_wrap(settings.soft_wrap)
+            .searchable(true)
+            .default_value(text.to_string())
+    })
+}
+
+/// The empty draft that replaces a successfully submitted one. Its only undo
+/// step restores `submitted` as an unsent draft, so input a receiver silently
+/// ignored (for example a TUI that was not reading text) costs one Undo rather
+/// than a retype. Undo only edits this draft; it never re-sends anything.
+pub fn draft_after_submission(
+    shell: Option<ShellFlavor>,
+    settings: &Settings,
+    submitted: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    let editor = new_draft(shell, settings, submitted, window, cx);
+    if !submitted.is_empty() {
+        editor.update(cx, |state, cx| {
+            state.replace_text_in_range(Some(0..submitted.encode_utf16().count()), "", window, cx);
+        });
+    }
     editor
 }
 
@@ -358,5 +391,14 @@ pub fn record_submission(text: &str, cx: &mut App) {
     let recall = cx.default_global::<DraftRecallGlobal>();
     recall.submission_candidate = None;
     recall.history.record(text.to_owned());
-    recall.persisted.record(text.to_owned());
+    record_persisted(&mut recall.persisted, text);
+}
+
+/// Leading-space input is kept out of plaintext persistence, matching the
+/// shell `ignorespace` convention that reverse search already follows. It is
+/// still recallable in this session.
+fn record_persisted(persisted: &mut DraftHistory, text: &str) {
+    if !text.starts_with(' ') {
+        persisted.record(text.to_owned());
+    }
 }

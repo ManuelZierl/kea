@@ -307,6 +307,21 @@ accessibility name/value API for this control. Assistive-technology exposure is
 an outstanding platform integration requirement, not provided by the label or
 pressed styling alone. The F4/composer-escape route supplies keyboard entry.
 
+### Scroll capture
+
+**Capture scroll** turns a visible selection into a capture region: the
+selection's bounding rectangle (a block selection gives exact columns). Starting
+from a frozen Kea-owned selection returns the view to live. Capture changes no
+input routing: wheel, keys and mouse reach the child exactly as without it, and
+Kea masks no extra accelerators. On every render whose region text changed, Kea
+keeps a snapshot (at most 2,000). Leaving live, switching tabs or resizing
+cancels the capture visibly. **Done** runs `terminal::stitch`, which keeps fixed
+edge rows once and joins snapshots only when exactly one vertical shift fits:
+every overlapping row agrees with at least three non-blank anchors, or at most
+two rows differ (a spinner or clock changing in place) with at least six. A
+transient half-drawn snapshot is skipped; anything else becomes a gap marker. The result is
+labelled as reconstructed and is copied only by an explicit viewer action.
+
 ## 6. Configuration
 
 `settings.conf` gains one positive boolean:

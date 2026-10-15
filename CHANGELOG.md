@@ -12,6 +12,46 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Authenticate shell-integration markers: each live terminal requires its own
+  random token in OSC 777/778/779 reports, so program output (`cat`, SSH banners,
+  TUIs) can no longer mark input ready, set cwd/PATH or forge blocks. Remote
+  integration uses an owner-only remote token and can never speak for `local`;
+  regenerate remote scripts with `--print-shell-integration`.
+- Install POSIX integration by sourcing a private, self-deleting file: no
+  bootstrap fragment is left on screen and the token is never displayed.
+- Persisted draft history is appended by a background worker under a file lock
+  instead of being rewritten on every submit; concurrent Kea instances no longer
+  overwrite each other's entries.
+- Updates: a slow installer download is no longer cut off after 30 seconds,
+  stale staged installers are removed, and installers are only taken from this
+  repository's release downloads.
+- Refuse unbracketed paste/Submit of text with control characters (they would
+  act as keystrokes such as an unconfirmed Ctrl-C); the draft is kept.
+- Keep an unreadable `settings.conf` as `settings.conf.rejected` before the first
+  in-app change replaces it.
+- Leading-space submissions stay out of persisted draft history (as in reverse
+  search); PowerShell completion also doubles typographic single quotes.
+- Status notices are no longer hidden behind earlier sticky warnings.
+- Copy text that scrolled out of view: **tmux history** reads a tmux tab's
+  pane history exactly through `capture-pane` (local or SSH), and **Capture
+  scroll** rebuilds a selected region while a full-screen app scrolls, marking
+  unalignable gaps instead of guessing. Both open a read-only review viewer;
+  nothing is copied without an explicit action.
+- Show composer drafts as **draft tabs** owned by their terminal tab: `---`,
+  Split and **+** open a new tab; titles follow the draft's first line; tabs can
+  be closed (reopenable) or moved to another terminal tab as text. New
+  `submitted_draft = close | keep` setting: by default a submitted tab closes and
+  the next one becomes active.
+- After a successful Submit, the first Undo in the fresh draft restores the
+  submitted text as an unsent draft, so input a TUI silently ignored is not lost.
+  Undo never re-sends anything.
+- Show a prominent **Not live** badge and composer banner (with **Return live**)
+  while viewing history, a frozen view or an ended process; a refused Submit
+  names the reason and confirms the draft was kept.
+- Keep Bash `PROMPT_COMMAND` values that end in `;`, `&` or a newline working:
+  Kea's prompt hooks are now newline-joined instead of producing `; ;`.
+- Space-prefix the zsh/sh bootstrap line so `HIST_IGNORE_SPACE`/`ignorespace`
+  keeps it out of shell history (Bash continues to delete it explicitly).
 
 ### Acceptance gate
 

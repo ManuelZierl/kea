@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "semicolon-joined-user-hook",
+      "files": [{ "path": "crates/kea-app/src/shell/mod.rs", "content": "const HOOK: &str = r#\"PROMPT_COMMAND=\"__kea_before_prompt; ${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt\"\"#;" }],
+      "expect": [{ "path": "crates/kea-app/src/shell/mod.rs", "code": "semicolon-join", "kind": "violation" }]
+    },
+    {
+      "name": "newline-joined-user-hook",
+      "files": [{ "path": "crates/kea-app/src/shell/mod.rs", "content": "const HOOK: &str = r#\"__kea_nl=$'\\n'; PROMPT_COMMAND=\"__kea_before_prompt${__kea_nl}${PROMPT_COMMAND:+$PROMPT_COMMAND${__kea_nl}}__kea_prompt\"\"#;" }],
+      "expect": []
+    }
+  ]
+}

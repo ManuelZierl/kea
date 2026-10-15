@@ -66,12 +66,18 @@ fn structural_splits_keep_other_entities_and_undo_restores_literal_marker(cx: &m
             assert_eq!(this.editor, original);
             assert_eq!(this.editor.read(cx).value().as_ref(), text);
             this.undo_composer_layout(true, window, cx);
+            let first = this.composer_workflow.sections[0].clone();
             let second = this.composer_workflow.sections[1].clone();
-            this.finish_section_submission(window, cx);
+            this.finish_section_submission("first", window, cx);
+            // Default: the submitted tab closes and the next tab takes over.
             assert_eq!(this.editor, second);
             assert_eq!(this.composer_workflow.sections.len(), 1);
-            assert!(this.composer_workflow.undo.is_empty());
             assert!(this.composer_workflow.redo.is_empty());
+            // Structural undo reopens the submitted tab with its text; nothing is sent.
+            this.undo_composer_layout(false, window, cx);
+            assert_eq!(this.composer_workflow.sections, [first.clone(), second]);
+            assert_eq!(this.editor, first);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "first");
         });
         Root::new(view, window, cx)
     });
@@ -99,10 +105,16 @@ fn failed_send_preserves_all_sections(cx: &mut TestAppContext) {
             this.navigate_composer(true, window, cx);
             assert_eq!(this.editor, sections[1]);
             assert_eq!(this.editor.read(cx).value().as_ref(), "second");
-            this.finish_section_submission(window, cx);
-            assert_eq!(this.composer_workflow.sections[0], sections[0]);
-            assert!(this.editor.read(cx).value().is_empty());
+            this.finish_section_submission("second", window, cx);
+            // Closing the last tab continues with the previous one.
+            assert_eq!(this.composer_workflow.sections, [sections[0].clone()]);
+            assert_eq!(this.editor, sections[0]);
             assert!(this.has_pending_sections(cx));
+            // The only remaining tab is emptied, never closed.
+            this.finish_section_submission("first\n", window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            assert!(this.editor.read(cx).value().is_empty());
+            assert!(!this.has_pending_sections(cx));
         });
         Root::new(view, window, cx)
     });
@@ -228,12 +240,127 @@ fn split_suggestion_rejects_changed_text_caret_and_section_limit(cx: &mut TestAp
     window.update(cx, |_, _, _| {}).unwrap();
 }
 
-#[test]
-fn split_editor_height_scales_with_font_and_counts_trailing_empty_lines() {
-    use super::rendering::section_editor_height;
-    use gpui::px;
-    assert_eq!(section_editor_height("", 16.), px(72.));
-    assert_eq!(section_editor_height("one\ntwo\nthree\n", 16.), px(92.));
-    assert_eq!(section_editor_height("one\ntwo\nthree\n", 32.), px(172.));
-    assert_eq!(section_editor_height(&"line\n".repeat(100), 16.), px(212.));
+#[gpui::test]
+fn keep_setting_empties_the_submitted_tab_in_place(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let view = make_view(window, cx);
+        view.update(cx, |this, cx| {
+            this.settings.submitted_draft = kea_app::config::settings::SubmittedDraft::Keep;
+            write_at(this, "first\nsecond", 6, window, cx);
+            this.split_composer(window, cx);
+            let sections = this.composer_workflow.sections.clone();
+            this.navigate_composer(false, window, cx);
+            this.finish_section_submission("first\n", window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 2);
+            assert_eq!(this.composer_workflow.active, 0);
+            assert_ne!(this.editor, sections[0]);
+            assert!(this.editor.read(cx).value().is_empty());
+            assert_eq!(this.composer_workflow.sections[1], sections[1]);
+        });
+        Root::new(view, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn draft_tabs_add_close_and_reopen_without_sending(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let view = make_view(window, cx);
+        view.update(cx, |this, cx| {
+            write_at(this, "echo one", 8, window, cx);
+            let original = this.editor.clone();
+            this.add_composer_section(window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 2);
+            assert_eq!(this.composer_workflow.active, 1);
+            assert!(this.editor.read(cx).value().is_empty());
+            assert_eq!(this.draft_tab_label(0, cx), "echo one");
+            assert_eq!(this.draft_tab_label(1, cx), "Draft 2");
+            // Closing an inactive tab keeps the active draft.
+            let added = this.editor.clone();
+            this.close_composer_section(0, window, cx);
+            assert_eq!(
+                this.composer_workflow.sections,
+                std::slice::from_ref(&added)
+            );
+            assert_eq!(this.editor, added);
+            this.undo_composer_layout(false, window, cx);
+            assert_eq!(this.composer_workflow.sections, [original.clone(), added]);
+            assert_eq!(original.read(cx).value().as_ref(), "echo one");
+            // The last tab cannot be closed.
+            this.close_composer_section(0, window, cx);
+            this.close_composer_section(0, window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+        });
+        Root::new(view, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn moved_drafts_get_new_editors_and_leave_the_source(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let source = make_view(window, cx);
+        let target = make_view(window, cx);
+        let moved = source.update(cx, |this, cx| {
+            write_at(this, "keep\nmove me", 5, window, cx);
+            this.split_composer(window, cx);
+            this.editor.clone()
+        });
+        target
+            .update(cx, |this, cx| {
+                this.receive_moved_draft("move me", window, cx)
+            })
+            .unwrap();
+        source.update(cx, |this, cx| {
+            this.complete_draft_move(&moved, window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "keep\n");
+            assert!(this.composer_workflow.undo.is_empty());
+        });
+        target.update(cx, |this, cx| {
+            let sections = &this.composer_workflow.sections;
+            assert_eq!(sections.len(), 2);
+            assert!(
+                !sections.contains(&moved),
+                "editors are never shared across tabs"
+            );
+            assert_eq!(sections[1].read(cx).value().as_ref(), "move me");
+            // A hidden tab only selects the moved draft once it is shown.
+            assert_eq!(this.composer_workflow.active, 0);
+            this.reveal_moved_draft(cx);
+            assert_eq!(this.composer_workflow.active, 1);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "move me");
+        });
+        Root::new(source, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn the_only_draft_can_be_moved_and_leaves_an_empty_draft(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let source = make_view(window, cx);
+        let target = make_view(window, cx);
+        let moved = source.update(cx, |this, cx| {
+            write_at(this, "only draft", 10, window, cx);
+            this.editor.clone()
+        });
+        target
+            .update(cx, |this, cx| {
+                this.receive_moved_draft("only draft", window, cx)
+            })
+            .unwrap();
+        source.update(cx, |this, cx| {
+            this.complete_draft_move(&moved, window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            assert_ne!(this.editor, moved);
+            assert!(this.editor.read(cx).value().is_empty());
+        });
+        Root::new(source, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
 }

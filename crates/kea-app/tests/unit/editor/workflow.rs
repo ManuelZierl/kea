@@ -128,3 +128,32 @@ fn placeholder_counts_and_replacements_use_identical_boundaries() {
     let plan = EditPlan::for_recommendation(text, 0, &rec, Some("server")).unwrap();
     assert_eq!(plan.sections, ["server {{{host}}} {{host}}}"]);
 }
+
+#[test]
+fn draft_titles_use_the_first_meaningful_line() {
+    assert_eq!(draft_title(""), None);
+    assert_eq!(draft_title("\n   \n---\n```bash\n"), None);
+    assert_eq!(draft_title("::split"), None);
+    assert_eq!(
+        draft_title("  cargo   test\n--locked").as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(draft_title("```sh\nls -la\n```").as_deref(), Some("ls -la"));
+    assert_eq!(
+        draft_title("---\nsecond part").as_deref(),
+        Some("second part")
+    );
+    assert_eq!(
+        draft_title("Please refactor the composer into tabs").as_deref(),
+        Some("Please refactor the comp…")
+    );
+    // Exactly the limit needs no ellipsis; Unicode is counted by character.
+    assert_eq!(
+        draft_title(&"ä".repeat(24)).as_deref(),
+        Some("ä".repeat(24).as_str())
+    );
+    assert_eq!(
+        draft_title(&"ä".repeat(25)),
+        Some(format!("{}…", "ä".repeat(24)))
+    );
+}

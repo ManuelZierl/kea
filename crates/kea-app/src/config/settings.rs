@@ -24,6 +24,17 @@ pub enum PostSubmitFocus {
     Editor,
 }
 
+/// What happens to a composer draft tab after it was successfully submitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SubmittedDraft {
+    /// Close the submitted tab and continue with the next one, so a split plan
+    /// can be stepped through. The only remaining tab is emptied instead.
+    #[default]
+    Close,
+    /// Keep the submitted tab, emptied. Undo still restores its text.
+    Keep,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub appearance: Appearance,
@@ -35,6 +46,7 @@ pub struct Settings {
     pub syntax_highlighting: bool,
     pub show_blocks: bool,
     pub post_submit_focus: PostSubmitFocus,
+    pub submitted_draft: SubmittedDraft,
     /// Keep submitted drafts across restarts in a plaintext owner-only file.
     /// Off by default: submissions can contain secrets.
     pub persist_history: bool,
@@ -65,6 +77,7 @@ impl Default for Settings {
             syntax_highlighting: true,
             show_blocks: false,
             post_submit_focus: PostSubmitFocus::Editor,
+            submitted_draft: SubmittedDraft::Close,
             persist_history: false,
             shift_mouse_selects_locally: true,
             animate_logo: true,
@@ -170,6 +183,13 @@ impl Settings {
                         _ => anyhow::bail!("post_submit_focus must be terminal or editor"),
                     }
                 }
+                "submitted_draft" => {
+                    settings.submitted_draft = match value {
+                        "close" => SubmittedDraft::Close,
+                        "keep" => SubmittedDraft::Keep,
+                        _ => anyhow::bail!("submitted_draft must be close or keep"),
+                    }
+                }
                 "history_persistence" => settings.history_persistence = boolean(value)?,
                 "confirm_ctrl_c" => settings.confirm_ctrl_c = boolean(value)?,
                 "composer_suggestions" => settings.composer_suggestions = boolean(value)?,
@@ -188,13 +208,56 @@ impl Settings {
 
     /// Persist a complete settings snapshot through a sibling temporary file so
     /// an interrupted write cannot truncate the previous configuration.
-    pub fn save(&self) -> Result<PathBuf> {
+    /// A settings file that does not parse is first kept as a backup (returned),
+    /// so the first change in the app never silently discards the user's file.
+    pub fn save(&self) -> Result<(PathBuf, Option<PathBuf>)> {
         let path = Self::path().context("the settings directory is unavailable on this system")?;
-        self.save_to(&path)?;
-        Ok(path)
+        let backup = self.save_to(&path)?;
+        Ok((path, backup))
     }
 
-    fn save_to(&self, path: &Path) -> Result<()> {
+    /// Keep an unparsable settings file under the first unused
+    /// `<name>.rejected[-N]` name. Never overwrites an existing file.
+    fn preserve_rejected(path: &Path) -> Result<Option<PathBuf>> {
+        let Ok(text) = fs::read_to_string(path) else {
+            return Ok(None);
+        };
+        if Self::parse(&text).is_ok() {
+            return Ok(None);
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        for attempt in 0..100 {
+            let suffix = if attempt == 0 {
+                ".rejected".to_owned()
+            } else {
+                format!(".rejected-{attempt}")
+            };
+            let backup = path.with_file_name(format!("{name}{suffix}"));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)
+            {
+                Ok(mut file) => {
+                    file.write_all(text.as_bytes())
+                        .and_then(|()| file.sync_all())
+                        .with_context(|| format!("cannot back up {}", path.display()))?;
+                    return Ok(Some(backup));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("cannot back up {}", path.display()))
+                }
+            }
+        }
+        anyhow::bail!(
+            "cannot back up {}: too many earlier backups",
+            path.display()
+        )
+    }
+
+    fn save_to(&self, path: &Path) -> Result<Option<PathBuf>> {
+        let backup = Self::preserve_rejected(path)?;
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -225,7 +288,7 @@ impl Settings {
             .persist(path)
             .map_err(|error| error.error)
             .with_context(|| format!("cannot replace {}", path.display()))?;
-        Ok(())
+        Ok(backup)
     }
 
     fn to_config(&self) -> String {
@@ -237,6 +300,10 @@ impl Settings {
         let post_submit_focus = match self.post_submit_focus {
             PostSubmitFocus::Terminal => "terminal",
             PostSubmitFocus::Editor => "editor",
+        };
+        let submitted_draft = match self.submitted_draft {
+            SubmittedDraft::Close => "close",
+            SubmittedDraft::Keep => "keep",
         };
         let font_family = self.font_family.as_deref().unwrap_or("system");
         let font_size = self
@@ -252,6 +319,7 @@ impl Settings {
             "# Kea settings. Changes made in the app are written here.\n\
 theme = {appearance}\n\
 post_submit_focus = {post_submit_focus}\n\
+submitted_draft = {submitted_draft}\n\
 persist_history = {}\n\
 history_persistence = {}\n\
 confirm_ctrl_c = {}\n\

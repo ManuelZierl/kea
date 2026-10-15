@@ -12,6 +12,14 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
     assert!(Settings::default().check_for_updates);
     assert!(!Settings::default().show_blocks);
     assert!(Settings::parse("show_blocks = true").unwrap().show_blocks);
+    assert_eq!(Settings::default().submitted_draft, SubmittedDraft::Close);
+    assert_eq!(
+        Settings::parse("submitted_draft = keep")
+            .unwrap()
+            .submitted_draft,
+        SubmittedDraft::Keep
+    );
+    assert!(Settings::parse("submitted_draft = remove").is_err());
 
     let settings = Settings::parse(
         "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\nanimate_logo = false\n",
@@ -75,6 +83,7 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
         syntax_highlighting: false,
         show_blocks: true,
         post_submit_focus: PostSubmitFocus::Terminal,
+        submitted_draft: SubmittedDraft::Keep,
         persist_history: true,
         history_persistence: true,
         shift_mouse_selects_locally: false,
@@ -85,7 +94,7 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
         check_for_updates: false,
     };
 
-    settings.save_to(&path).unwrap();
+    assert_eq!(settings.save_to(&path).unwrap(), None);
     assert_eq!(
         Settings::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
         settings
@@ -121,4 +130,22 @@ fn workflow_settings_round_trip_and_reject_ambiguous_prefixes() {
     }
     assert!(Settings::parse("composer_action_prefix = hello").is_err());
     assert!(Settings::parse("confirm_ctrl_c = smart").is_err());
+}
+
+#[test]
+fn an_unreadable_settings_file_is_kept_before_the_first_save() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("settings.conf");
+    let original = "# mine\ntheme = dark\nfuture_option = yes\n";
+    fs::write(&path, original).unwrap();
+    let backup = Settings::default().save_to(&path).unwrap().unwrap();
+    assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+    assert!(Settings::parse(&fs::read_to_string(&path).unwrap()).is_ok());
+    // A second rejected file never overwrites the first backup.
+    fs::write(&path, "broken =").unwrap();
+    let second = Settings::default().save_to(&path).unwrap().unwrap();
+    assert_ne!(second, backup);
+    assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+    // A valid file needs no backup.
+    assert_eq!(Settings::default().save_to(&path).unwrap(), None);
 }

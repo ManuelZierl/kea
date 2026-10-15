@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use kea_alacritty::Engine;
 use kea_core::{Kind, Projection, Recording, Size};
 
+const RETIRE_MARKER: &[u8] = b"\x1b]777;kea;";
+
 #[derive(Debug)]
 pub(crate) struct EchoFilter {
     needle: Vec<u8>,
@@ -38,22 +40,18 @@ impl EchoFilter {
         // its bytes verbatim. Once the private start marker appears, execution has
         // definitely begun; fail open rather than buffering real command output or
         // blocking future document submissions forever.
-        if find_bytes(&self.pending, b"\x1b]777;kea;start;").is_some()
-            || find_bytes(&self.pending, b"\x1b]777;kea;prompt;").is_some()
-        {
+        // Markers carry a session token after `kea;`, so any Kea marker means
+        // the integration is already running.
+        if find_bytes(&self.pending, RETIRE_MARKER).is_some() {
             visible.extend(std::mem::take(&mut self.pending));
             return (visible, true);
         }
 
-        let keep = [
-            self.needle.as_slice(),
-            b"\x1b]777;kea;start;",
-            b"\x1b]777;kea;prompt;",
-        ]
-        .into_iter()
-        .map(|prefix| suffix_prefix_len(&self.pending, prefix))
-        .max()
-        .unwrap_or(0);
+        let keep = [self.needle.as_slice(), RETIRE_MARKER]
+            .into_iter()
+            .map(|prefix| suffix_prefix_len(&self.pending, prefix))
+            .max()
+            .unwrap_or(0);
         let emit = self.pending.len().saturating_sub(keep);
         visible.extend(self.pending.drain(..emit));
         (visible, false)

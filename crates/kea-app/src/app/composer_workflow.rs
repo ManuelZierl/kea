@@ -3,6 +3,7 @@
 use super::*;
 use gpui_component::input::{Input, InputEvent};
 use kea_app::{
+    config::settings::SubmittedDraft,
     editor::workflow::{self, EditPlan, Recommendation},
     terminal::interrupt::KeyLatch,
 };
@@ -59,12 +60,12 @@ impl ComposerAction {
     fn label(&self) -> String {
         match self {
             Self::Split => "Split at cursor".into(),
-            Self::Add => "Add empty draft below".into(),
-            Self::Merge => "Merge with previous draft".into(),
-            Self::Previous => "Focus previous draft".into(),
-            Self::Next => "Focus next draft".into(),
-            Self::UndoLayout => "Undo composer split / merge".into(),
-            Self::RedoLayout => "Redo composer split / merge".into(),
+            Self::Add => "Add empty draft tab".into(),
+            Self::Merge => "Merge with previous draft tab".into(),
+            Self::Previous => "Previous draft tab".into(),
+            Self::Next => "Next draft tab".into(),
+            Self::UndoLayout => "Undo draft tab change (split, merge, close)".into(),
+            Self::RedoLayout => "Redo draft tab change".into(),
             Self::History => "Insert saved memory or submitted input".into(),
             Self::SendSelection => "Send selected text (keep draft)".into(),
             Self::Recommendation(rec) => rec.label(),
@@ -98,6 +99,10 @@ pub(super) struct ComposerWorkflow {
     pub sections: Vec<Entity<InputState>>,
     pub active: usize,
     pub menu: Option<ComposerMenu>,
+    /// Shows the "move to another terminal tab" targets for the active draft.
+    pub move_open: bool,
+    /// A draft moved here while this terminal tab was hidden; selected when shown.
+    pub reveal: Option<Entity<InputState>>,
     pub key_latch: KeyLatch,
     pub owned_keys: Vec<String>,
     scroll: ScrollHandle,
@@ -115,6 +120,8 @@ impl ComposerWorkflow {
             sections,
             active: 0,
             menu: None,
+            move_open: false,
+            reveal: None,
             key_latch: KeyLatch::default(),
             owned_keys: Vec::new(),
             scroll: ScrollHandle::new(),

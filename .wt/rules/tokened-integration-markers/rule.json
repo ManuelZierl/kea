@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "tokened-integration-markers",
+  "title": "Shell integration markers carry the session token",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/shell/**/*.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["text.v1"] },
+  "patterns": {
+    "untokened": "77[789];kea;(?:native-start|native-done|prompt|input|path|start|done|cwd)\\b"
+  },
+  "diagnostics": {
+    "untokened-marker": {
+      "kind": "violation",
+      "message": "AGENTS.md: live terminals ignore integration markers without the session token; an untokened marker never reaches Kea and a forged one must not.",
+      "help": "Emit `kea;<token>;<kind>;...` with the token placeholder the integration script defines."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

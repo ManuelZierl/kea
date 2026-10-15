@@ -80,6 +80,12 @@ impl Document {
         }
     }
 
+    /// Which integration markers this document trusts from now on. Documents
+    /// start in replay mode; a live session sets its token before new output.
+    pub fn set_marker_auth(&mut self, auth: kea_core::MarkerAuth) {
+        self.scanner.auth = auth;
+    }
+
     pub fn from_recording(recording: &Recording) -> Self {
         let mut document = Self::new();
         for event in recording.events() {

@@ -7,7 +7,9 @@ fn release(tag: &str, prerelease: bool, with_digest: bool) -> GithubRelease {
         prerelease,
         assets: vec![GithubAsset {
             name: format!("kea-{tag}-windows-x86_64-setup.exe"),
-            browser_download_url: format!("https://example.invalid/{tag}.exe"),
+            browser_download_url: format!(
+                "https://github.com/ManuelZierl/kea/releases/download/{tag}/kea-{tag}-windows-x86_64-setup.exe"
+            ),
             digest: with_digest.then(|| {
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()
             }),
@@ -114,4 +116,22 @@ fn mutation_after_staging_fails_the_restart_boundary_verification() {
         }
         other => panic!("unexpected verification result: {other:?}"),
     }
+}
+
+#[test]
+fn installers_outside_this_repository_are_never_selected() {
+    let current = Version::parse("0.0.1").unwrap();
+    let mut elsewhere = release("v0.0.2", false, true);
+    elsewhere.assets[0].browser_download_url = "https://example.invalid/kea.exe".into();
+    assert!(select_update(&current, &[elsewhere]).is_none());
+}
+
+#[test]
+fn stale_staged_installers_are_removed_but_nothing_else() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("kea-update-abc.exe"), b"old installer").unwrap();
+    std::fs::write(root.path().join("notes.txt"), b"keep").unwrap();
+    remove_staged_in(root.path());
+    assert!(!root.path().join("kea-update-abc.exe").exists());
+    assert!(root.path().join("notes.txt").exists());
 }

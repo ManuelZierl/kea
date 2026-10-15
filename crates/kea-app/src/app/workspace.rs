@@ -12,6 +12,14 @@ fn can_write_clipboard_store(visible: bool, historical: bool, frozen: bool) -> b
 }
 
 impl KeaView {
+    /// Which shell-integration markers this terminal trusts: a live terminal
+    /// requires its token; replay and demo views accept recorded markers.
+    pub(super) fn set_marker_auth(&mut self, auth: kea_core::MarkerAuth) {
+        self.document.set_marker_auth(auth.clone());
+        self.input_context.set_auth(auth.clone());
+        self.shell_metadata.set_auth(auth);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         session: Session,
@@ -138,6 +146,11 @@ impl KeaView {
                         }
                         this.pump_session(cx);
                         this.autoscroll_terminal_selection(window, cx);
+                        // History is written by a worker; surface its failure
+                        // when it happens, not only at the next submission.
+                        if this.visible {
+                            this.capture_draft_history_warning(cx);
+                        }
                         this.validate_workflow(window, cx);
                         if !this.focus.is_focused(window) {
                             this.session.terminal_selection_focus_lost();
@@ -189,6 +202,8 @@ impl KeaView {
             pending_run: None,
             composer_enter_down: false,
             composer_workflow,
+            draft_move_targets: Vec::new(),
+            scroll_capture: None,
             interrupt: interrupt::InterruptState::default(),
             terminal_composition,
             completion_rx: None,

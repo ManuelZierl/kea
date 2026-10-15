@@ -488,3 +488,60 @@ fn session(
         session_created,
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn isolated_tmux_history_is_joined_and_guarded() {
+    if std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+    let tempdir = tempfile::tempdir().unwrap();
+    let socket = format!("kea-history-{}", std::process::id());
+    let _ = isolated_tmux(tempdir.path(), &socket, ["kill-server"]);
+    // A narrow pane forces soft wraps; more lines than rows forces scrollback.
+    assert!(isolated_tmux(
+        tempdir.path(),
+        &socket,
+        [
+            "new-session",
+            "-d",
+            "-x",
+            "20",
+            "-y",
+            "5",
+            "-s",
+            "history",
+            "sh",
+            "-c",
+            "for i in $(seq 1 60); do echo \"line $i with a long tail ä\"; done; echo DONE; sleep 30",
+        ]
+    )
+    .status
+    .success());
+    let session = discover_isolated_session(tempdir.path(), &socket);
+    let mut text = String::new();
+    for _ in 0..200 {
+        let output = isolated_tmux(tempdir.path(), &socket, capture_args(&session).unwrap());
+        text = history_from_output(&output).unwrap();
+        if text.ends_with("DONE") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let lines = text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.first(), Some(&"line 1 with a long tail ä"), "{text}");
+    assert_eq!(lines.len(), 61, "{text}");
+    assert!(lines.iter().all(|line| line.trim_end() == *line));
+
+    let stale = TmuxSession {
+        session_created: session.session_created + 1,
+        ..session.clone()
+    };
+    let output = isolated_tmux(tempdir.path(), &socket, capture_args(&stale).unwrap());
+    assert!(history_from_output(&output).is_err());
+    let _ = isolated_tmux(tempdir.path(), &socket, ["kill-server"]);
+}

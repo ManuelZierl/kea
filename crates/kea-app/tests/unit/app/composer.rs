@@ -1,5 +1,5 @@
 use super::super::InitialFocus;
-use super::{next_completion_index, KeaView};
+use super::{next_completion_index, KeaView, NotLive};
 use gpui::{AppContext as _, TestAppContext};
 use gpui_component::{input::RopeExt as _, Root};
 use kea_app::config::{keybindings::Keymap, settings::Settings};
@@ -80,4 +80,20 @@ fn completion_rows_follow_geometry_not_an_assumed_grid_width() {
     assert_eq!(super::vertical_completion_index(1, &points, true), 3);
     assert_eq!(super::vertical_completion_index(3, &points, false), 1);
     assert_eq!(super::vertical_completion_index(0, &points, true), 2);
+}
+
+#[test]
+fn not_live_reason_names_every_state_that_refuses_submit() {
+    assert_eq!(NotLive::of(true, false, false), None);
+    assert_eq!(NotLive::of(true, true, false), Some(NotLive::History));
+    assert_eq!(NotLive::of(true, false, true), Some(NotLive::Frozen));
+    assert_eq!(NotLive::of(false, false, false), Some(NotLive::Ended));
+    // Reviewing history of an ended session still explains the view first.
+    assert_eq!(NotLive::of(false, true, false), Some(NotLive::History));
+    for reason in [NotLive::History, NotLive::Frozen, NotLive::Ended] {
+        assert!(reason.submit_refusal().contains("Nothing was sent"));
+    }
+    assert!(NotLive::History.can_return_live());
+    assert!(NotLive::Frozen.can_return_live());
+    assert!(!NotLive::Ended.can_return_live());
 }

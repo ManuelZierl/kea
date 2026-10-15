@@ -297,6 +297,8 @@ fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
     });
     window
         .update(cx, |_, window, cx| {
+            // As at startup: the seed entries are what the file already holds.
+            std::fs::write(&path, "old\n").unwrap();
             set_history_persistence(path.clone(), vec!["old".into()], cx);
             for (id, text) in [(0, "A"), (1, "B"), (0, "C")] {
                 activate_tab_history(id, cx);
@@ -305,6 +307,7 @@ fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
                 assert_eq!(submission_text(&draft, window, cx).as_deref(), Some(text));
                 new_draft(None, &Settings::default(), "", window, cx);
             }
+            cx.default_global::<DraftRecallGlobal>().persisted.flush();
             assert_eq!(
                 crate::editor::history::load_history_file(&path).unwrap(),
                 vec!["old", "A", "B", "C"]
@@ -326,4 +329,109 @@ fn closed_recall_contexts_do_not_accumulate(cx: &mut TestAppContext) {
         activate_tab_history(1000, cx);
         assert!(cx.default_global::<DraftRecallGlobal>().inactive.is_empty());
     });
+}
+
+struct DraftView(Entity<InputState>);
+
+impl gpui::Render for DraftView {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        use gpui::{ParentElement as _, Styled as _};
+        gpui::div()
+            .size_full()
+            .child(gpui_component::input::Input::new(&self.0))
+    }
+}
+
+/// Render the draft so that Undo/Redo travel the real action-dispatch path.
+fn undo_redo_after(
+    cx: &mut TestAppContext,
+    make: impl FnOnce(&mut Window, &mut App) -> Entity<InputState> + 'static,
+) -> (String, String, String, usize) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        register_languages();
+    });
+    let mut draft = None;
+    let window = cx.add_window(|window, cx| {
+        let editor = make(window, cx);
+        draft = Some(editor.clone());
+        let view = cx.new(|_| DraftView(editor));
+        Root::new(view, window, cx)
+    });
+    let draft = draft.unwrap();
+    let value = |cx: &mut TestAppContext| {
+        window
+            .update(cx, |_, _, cx| draft.read(cx).value().to_string())
+            .unwrap()
+    };
+    window
+        .update(cx, |_, window, cx| {
+            draft.update(cx, |s, cx| s.focus(window, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let initial = value(cx);
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(Box::new(gpui_component::input::Undo), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let undone = value(cx);
+    let history = window
+        .update(cx, |_, _, cx| submitted_history_len(cx))
+        .unwrap();
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(Box::new(gpui_component::input::Redo), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    (initial, undone, value(cx), history)
+}
+
+#[gpui::test]
+fn undo_in_fresh_draft_restores_submitted_text_without_resubmitting(cx: &mut TestAppContext) {
+    let (initial, undone, redone, history) = undo_redo_after(cx, |window, cx| {
+        // Mirror the host: history is committed explicitly before the fresh
+        // draft is created, which clears the submission candidate.
+        record_submission("swallowed ö😀", cx);
+        draft_after_submission(None, &Settings::default(), "swallowed ö😀", window, cx)
+    });
+    assert_eq!(initial, "");
+    assert_eq!(undone, "swallowed ö😀");
+    // Restoring is an edit of the current draft, never another submission.
+    assert_eq!(history, 1);
+    assert_eq!(redone, "");
+}
+
+#[gpui::test]
+fn non_submitted_drafts_start_without_undo_history(cx: &mut TestAppContext) {
+    let (initial, undone, _, history) = undo_redo_after(cx, |window, cx| {
+        new_draft(None, &Settings::default(), "edit as new", window, cx)
+    });
+    assert_eq!(initial, "edit as new");
+    assert_eq!(undone, "edit as new");
+    assert_eq!(history, 0);
+}
+
+#[gpui::test]
+fn leading_space_submissions_are_recallable_but_not_persisted(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        register_languages();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("drafts.txt");
+    cx.update(|cx| {
+        set_history_persistence(path.clone(), Vec::new(), cx);
+        record_submission("kept", cx);
+        record_submission(" export TOKEN=secret", cx);
+        assert_eq!(submitted_history_len(cx), 2);
+        cx.default_global::<DraftRecallGlobal>().persisted.flush();
+    });
+    assert_eq!(
+        crate::editor::history::load_history_file(&path).unwrap(),
+        vec!["kept"]
+    );
 }

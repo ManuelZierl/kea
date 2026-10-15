@@ -1,13 +1,14 @@
 ---
-title: Composer sections and actions
+title: Composer draft tabs and actions
 nav_order: 17
 ---
 
 # Deliberate terminal input
 
-Each terminal tab has one receiver and a stack of independently editable drafts.
-The default is still one editor. Sections do not create shells, execution queues,
-working directories, or independent environments.
+Each terminal tab has one receiver and its own set of independently editable
+**draft tabs**. The default is still one editor, shown without a tab strip. Draft
+tabs do not create shells, execution queues, working directories, or independent
+environments.
 
 ## Ctrl-C confirmation
 
@@ -36,24 +37,46 @@ does not cancel it. Kea does not infer whether interruption is safe from process
 names or screen text. Receiver reports remain unauthenticated interoperability
 metadata, not an atomic guarantee that the foreground process cannot change.
 
-## Independent pending drafts
+## Draft tabs
 
-**Split at cursor** (`Ctrl+Alt+Enter`) creates a structural boundary and puts the
-caret at the start of the following draft. The active section is visibly
-identified. Click a draft's header to focus it, or use `Alt+PageUp` /
-`Alt+PageDown` to focus the previous or
-next section. **Merge with previous** inserts a newline between the two drafts;
-Kea does not infer shell operators, command boundaries or dependencies.
-The **Merge ↑** control on each draft joins it to the previous one. Editor heights
-scale with your font size; clicking inside a draft preserves the list's reading
-position, while explicit draft navigation reveals its header.
+**Split at cursor** (`Ctrl+Alt+Enter`), **Split here** on a standalone `---`, and
+**+** create a new draft tab after the active one and focus it. A split or add
+applied from the **Actions** menu preview keeps the first part active, so a split
+plan can be sent in order. With two or more
+drafts, a tab strip appears above the editor; only the active draft is shown, at
+full composer size.
 
-Ctrl+Enter always submits the whole active section through the existing guarded
-submission path, even if some of its text is selected. After successful delivery,
-only that section is removed. The next section becomes active; when there is no
-following section, a fresh empty draft is created. Earlier drafts remain intact.
-`post_submit_focus` still controls editor versus terminal focus. Holding Submit
-cannot cascade through the remaining drafts.
+- **Titles are automatic:** the first meaningful line of the draft, shortened to
+  24 characters. Blank lines, code fences, `---` and `::` shorthand are skipped;
+  an empty draft is shown as *Draft N*. Hover a tab for its full first line.
+- **Switch** by clicking a tab or with `Alt+PageUp` / `Alt+PageDown`.
+- **Merge ←** joins the active draft to the previous tab with a newline. Kea does
+  not infer shell operators, command boundaries or dependencies.
+- **×** closes a draft tab without sending it. **Undo draft tab change** reopens
+  it with its text. The last remaining draft cannot be closed.
+- **Move to ⇄** in the composer header (shown when there is another terminal
+  tab, also with a single draft) moves the active draft
+  to another terminal tab. Only the text moves: the target gets a new editor, and
+  pending confirmations, completions and recall state never cross tabs. Nothing
+  is sent. The moved draft becomes that terminal's active draft when you switch
+  to it; the source cannot undo the move.
+
+Ctrl+Enter always submits the whole active draft through the existing guarded
+submission path, even if some of its text is selected. What happens to the tab
+after successful delivery is configurable:
+
+```text
+submitted_draft = close   # default: close it and continue with the next tab
+submitted_draft = keep    # keep the tab, emptied
+```
+
+With `close`, the tab that takes its place (or the previous one, at the end)
+becomes active, so a split plan can be stepped through. The last remaining tab is
+never closed; it is emptied instead. **Undo draft tab change** reopens a closed
+submitted tab with its text. With `keep`, or for the only tab, the emptied draft's
+first Ctrl+Z restores the submitted text as an unsent draft. Neither ever re-sends
+anything. `post_submit_focus` still controls editor versus terminal focus. Holding
+Submit cannot cascade through the remaining drafts.
 
 Submission success means that Kea's terminal write succeeded, not that the child
 command succeeded. Failed, cancelled and uncertain writes preserve all pending
@@ -61,9 +84,9 @@ text; nothing is retried automatically. Multiline input still requires negotiate
 bracketed paste. Submitted history contains exactly the submitted section, not
 its neighbours or the structural separators.
 
-Sections retain their editor entities, selections and native text undo histories
-when another section is sent. They stay with their terminal across tab switches.
-Closing a terminal checks all of its drafts, including inactive ones.
+Draft tabs retain their editor entities, selections and native text undo
+histories when another draft is sent. They stay with their terminal across tab
+switches. Closing a terminal checks all of its drafts, including inactive ones.
 
 **Send selected text (keep draft)** is a separate explicit action, unbound by
 default. It uses the same readiness/confirmation policy, records only the selected
@@ -72,14 +95,16 @@ changes Ctrl+Enter's submission scope.
 
 ### Structural undo
 
-**Undo composer split / merge** and **Redo composer split / merge** are available
-in the action menu and as configurable shortcuts. Ordinary Undo/Redo remains the
-component's text undo. Structural undo restores the retained editor entities and
-literal text, including an accepted separator. It refuses to discard intervening
-text edits; undo those first. Successful submission clears structural undo/redo,
-so it cannot resurrect a submitted draft or pretend to reverse process effects.
+**Undo draft tab change** and **Redo draft tab change** (split, merge, add,
+close) are available in the action menu and as configurable shortcuts. Ordinary
+Undo/Redo remains the component's text undo. Structural undo restores the
+retained editor entities and literal text, including an accepted separator. It
+refuses to discard intervening text edits; undo those first. A successful
+submission clears earlier structural history; with `submitted_draft = close` it
+records only the reopening of that submitted tab. Reopening restores text, never
+process effects.
 
-There are at most 32 live sections, eight retained structural edits, and an 8 MiB
+There are at most 32 live draft tabs, eight retained structural edits, and an 8 MiB
 accounting budget for retained structural text snapshots. Native editor undo has
 its own component-managed allocation. Transformations analyze at most 256 KiB per
 draft; oversized drafts remain editable and follow the existing submission limits.
@@ -150,7 +175,8 @@ Tab completion, Enter/newline, focus escape and platform IME behavior are retain
 
 ## Manual acceptance
 
-Test two tabs with different multi-section drafts, independent selection/undo,
+Test two terminal tabs with different sets of draft tabs, moving a draft between
+them, independent selection/undo,
 background output, close confirmation and retained drafts after failed sends.
 Check unknown/ready receivers, SSH and an arbitrary TUI, multiline paste support,
 held Submit after focus switches, and selected-text sends. Test Ctrl-C with and

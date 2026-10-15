@@ -18,7 +18,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 - Reuse platform services and established editor/terminal components instead of implementing another buffer, cursor, selection or undo engine.
 - Ordinary editor text/composition arrives through the component/platform input handler, not manual keycode-to-character conversion. Terminal committed IME text also uses the platform text-input bridge.
 - Copy means focused selection. Copy block/view/screen is explicit. Never silently replace selection-copy with whole-document copy.
-- Undo affects only the current draft, never execution or recorded output. Successful Submit creates a fresh draft. Edit as new preserves the prior command and never executes automatically.
+- Undo affects only the current draft, never execution or recorded output. Successful Submit creates a fresh, empty draft whose first undo step restores the submitted text as an unsent draft. Edit as new preserves the prior command and never executes automatically.
 - Read-only output must remain selectable, searchable and copyable. Keep editor entities stable across renders. Live output cannot reset a reading selection or unconditionally scroll to bottom.
 - Follow system appearance by default; use component/platform defaults unless the user explicitly overrides them.
 
@@ -42,7 +42,7 @@ Read README.md, docs/architecture.md, docs/unified-session.md, docs/active-input
 - No raw keystroke recording by default. Submitted command markers and output can contain secrets. Persistence is explicit, bounded and non-overwriting.
 - Bound retained data and UI entities. Surface quota exhaustion, disk failures, truncation and gaps; do not call incomplete history complete.
 - Replay checkpoints need full parser state, partial escapes/UTF-8, both buffers, modes, margins, tabs, cursor and colors. A grid clone is not a checkpoint.
-- Metadata markers are interoperability, not authentication. Imported terminal output is not trusted provenance.
+- Metadata markers are interoperability, not authentication. Imported terminal output is not trusted provenance. Live terminals accept integration markers only with their session token (remote token for non-`local` contexts, never PATH); never add a marker parser or emitter without the token.
 - Distinguish compilation, automated/component tests, graphical smoke tests and real platform validation.
 - Do not copy GPL Zed code into MIT Kea crates.
 

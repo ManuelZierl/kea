@@ -66,3 +66,22 @@ fn hunt_unterminated_oversized_marker_recovers_at_next_marker() {
     metadata.ingest(b"\x1b]778;kea;path;L3RtcA==\x07");
     assert_eq!(metadata.path(), Some("/tmp"));
 }
+
+#[test]
+fn live_path_reports_need_the_session_token() {
+    use kea_core::{MarkerAuth, MarkerToken};
+    let session = MarkerToken::from_bytes([3; 16]);
+    let remote = MarkerToken::from_bytes([4; 16]);
+    let mut metadata = ShellMetadata::default();
+    metadata.set_auth(MarkerAuth::Live {
+        session: session.clone(),
+        remote: Some(remote.clone()),
+    });
+    // PATH chooses which host directories completion scans: forged or remote
+    // reports are ignored.
+    metadata.ingest(b"\x1b]778;kea;path;L2Jpbg==\x07");
+    metadata.ingest(format!("\x1b]778;kea;{};path;L2Jpbg==\x07", remote.as_str()).as_bytes());
+    assert_eq!(metadata.path(), None);
+    metadata.ingest(format!("\x1b]778;kea;{};path;L2Jpbg==\x07", session.as_str()).as_bytes());
+    assert_eq!(metadata.path(), Some("/bin"));
+}
