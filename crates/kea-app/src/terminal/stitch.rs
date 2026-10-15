@@ -59,15 +59,25 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
     let mut window = 0usize; // where the previous snapshot starts in `document`
     let mut gaps = 0;
     let mut previous = middle(first, top, end);
+    let mut previous_full = first;
+    // Whether the content moved is judged on whole frames: rows that never
+    // change are taken out as chrome, so an unmoved frame's middle may hold
+    // nothing but the rows that changed and no anchors at all.
+    let shift_between = |previous_full: &[&str], previous: &[&str], next_full: &[&str]| {
+        if align(previous_full, next_full) == Some(0) {
+            Some(0)
+        } else {
+            align(previous, &middle(next_full, top, end))
+        }
+    };
     for index in 1..frames.len() {
         let next = middle(&frames[index], top, end);
-        let shift = align(&previous, &next);
+        let shift = shift_between(previous_full, &previous, &frames[index]);
         // A half-drawn redraw fits neither neighbour; skip it when the snapshot
         // after it lines up with (or returns to) the last accepted one.
         if shift.is_none()
             && frames.get(index + 1).is_some_and(|after| {
-                let after = middle(after, top, end);
-                after == previous || align(&previous, &after).is_some()
+                *after == *previous_full || shift_between(previous_full, &previous, after).is_some()
             })
         {
             continue;
@@ -86,6 +96,10 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
                     let at = window + offset;
                     if at >= document.len() {
                         document.push(row);
+                    } else if document[at].is_empty() {
+                        // Text drawn into a row that was blank (new output that
+                        // did not scroll) is new content, not a changing row.
+                        document[at] = row;
                     }
                 }
             }
@@ -97,6 +111,7 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
             }
         }
         previous = next;
+        previous_full = &frames[index];
     }
     let mut rows: Vec<&str> = first[..top].to_vec();
     rows.extend(document);
@@ -105,35 +120,63 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
 }
 
 /// The unique vertical shift that maps `next` onto `previous`: positive when
-/// the content moved up (scrolled towards newer text). Overlapping rows must
-/// agree, with at least `MIN_ANCHORS` non-blank matches; two differing rows are
-/// tolerated from `TOLERANT_ANCHORS` matches. `None` when no shift fits, or when
-/// more than one does (for example repeated lines), since either would be a guess.
+/// the content moved up (scrolled towards newer text), zero when it did not
+/// move. Overlapping rows must agree, with at least `MIN_ANCHORS` non-blank
+/// matches; two differing rows are tolerated from `TOLERANT_ANCHORS` matches.
+/// Without movement, text appearing in a previously blank row is new output,
+/// not a mismatch. `None` when no shift fits, or when more than one does (for
+/// example repeated lines), since either would be a guess.
 fn align(previous: &[&str], next: &[&str]) -> Option<isize> {
     let height = previous.len() as isize;
-    let consistent = |shift: isize| {
-        let (mut anchors, mut mismatches) = (0, 0);
-        for row in 0..height {
-            let other = row + shift;
-            if !(0..height).contains(&other) {
-                continue;
-            }
-            let (a, b) = (next[row as usize], previous[other as usize]);
-            if a == b {
-                anchors += usize::from(!a.is_empty());
-            } else {
-                mismatches += 1;
-            }
-        }
-        match mismatches {
-            0 => anchors >= MIN_ANCHORS,
-            1 | 2 => anchors >= TOLERANT_ANCHORS,
-            _ => false,
-        }
-    };
-    let mut fits = ((1 - height)..height).filter(|&shift| shift != 0 && consistent(shift));
+    let mut fits = ((1 - height)..height).filter(|&shift| fit(previous, next, shift).is_some());
     let shift = fits.next()?;
     fits.next().is_none().then_some(shift)
+}
+
+/// How `next` overlaps `previous` at `shift`, if it fits: the rows that differ
+/// and the previously blank rows that gained text (only counted unmoved).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Fit {
+    mismatches: usize,
+    filled: usize,
+}
+
+fn fit(previous: &[&str], next: &[&str], shift: isize) -> Option<Fit> {
+    let height = previous.len() as isize;
+    let (mut anchors, mut mismatches, mut filled) = (0, 0, 0);
+    for row in 0..height {
+        let other = row + shift;
+        if !(0..height).contains(&other) {
+            continue;
+        }
+        let (a, b) = (next[row as usize], previous[other as usize]);
+        if a == b {
+            anchors += usize::from(!a.is_empty());
+        } else if shift == 0 && b.is_empty() {
+            filled += 1;
+        } else {
+            mismatches += 1;
+        }
+    }
+    let fits = match mismatches {
+        0 => anchors >= MIN_ANCHORS,
+        1 | 2 => anchors >= TOLERANT_ANCHORS,
+        _ => false,
+    };
+    fits.then_some(Fit { mismatches, filled })
+}
+
+/// Whether `next` is `previous` with only tolerated in-place changes (a spinner
+/// or clock) and no movement or new text. Capturing it would add nothing, so
+/// the capture replaces its latest snapshot instead. Trailing spaces are ignored.
+pub fn only_changed_in_place(previous: &[String], next: &[String]) -> bool {
+    if previous.len() != next.len() {
+        return false;
+    }
+    let previous: Vec<&str> = previous.iter().map(|row| row.trim_end()).collect();
+    let next: Vec<&str> = next.iter().map(|row| row.trim_end()).collect();
+    fit(&previous, &next, 0).is_some_and(|fit| fit.filled == 0 && fit.mismatches > 0)
+        && align(&previous, &next) == Some(0)
 }
 
 fn finish(rows: Vec<&str>, gaps: usize) -> Stitched {

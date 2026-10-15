@@ -84,7 +84,18 @@ impl KeaView {
             self.notice = Some("Scroll capture cancelled: the terminal was resized.".into());
             return;
         };
-        if capture.snapshots.last() == Some(&rows) || capture.full {
+        if capture.full || capture.snapshots.last() == Some(&rows) {
+            return;
+        }
+        // A spinner or clock ticking in place adds nothing: replace the latest
+        // snapshot instead of spending the bounded snapshot budget on it, so
+        // later comparisons do not accumulate those changes either.
+        if let Some(last) = capture
+            .snapshots
+            .last_mut()
+            .filter(|last| stitch::only_changed_in_place(last, &rows))
+        {
+            *last = rows;
             return;
         }
         if capture.snapshots.len() >= stitch::MAX_SNAPSHOTS {

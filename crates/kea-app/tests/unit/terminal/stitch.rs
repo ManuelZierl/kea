@@ -262,3 +262,52 @@ fn padding_shared_by_every_line_is_removed() {
         .text
         .contains(&format!("\n{GAP_MARKER}\nmessage 5")));
 }
+
+#[test]
+fn an_unmoved_spinner_is_not_a_gap_or_a_duplicate() {
+    let content = transcript(30);
+    let frames: Vec<_> = ["⠋", "⠙", "⠹", "⠸"]
+        .iter()
+        .map(|spinner| {
+            let mut rows = frame(&content, 0, 10);
+            rows[4] = format!("{spinner} thinking");
+            rows
+        })
+        .collect();
+    let stitched = stitch(&frames);
+    assert_eq!(stitched.gaps, 0);
+    assert_eq!(stitched.text.matches("message 1:").count(), 1);
+    assert_eq!(stitched.text.matches("thinking").count(), 1);
+    // The capture would not even spend a snapshot on these ticks.
+    assert!(only_changed_in_place(&frames[0], &frames[1]));
+    assert!(!only_changed_in_place(&frames[0], &frames[0]));
+    assert!(!only_changed_in_place(
+        &frame(&content, 0, 10),
+        &frame(&content, 2, 10)
+    ));
+}
+
+#[test]
+fn a_torn_frame_then_the_same_frame_again_adds_nothing() {
+    let content = transcript(30);
+    let mut torn = frame(&content, 0, 8);
+    for row in &mut torn[2..7] {
+        *row = "~~ redraw ~~".into();
+    }
+    let stitched = stitch(&[frame(&content, 0, 8), torn, frame(&content, 0, 8)]);
+    assert_eq!(stitched.gaps, 0);
+    assert_eq!(stitched.text, expected(&content, 0..8));
+}
+
+#[test]
+fn unmoved_output_drawn_into_blank_rows_is_kept() {
+    let content = transcript(30);
+    let partial: Vec<String> = content[..5].to_vec();
+    let before = frame(&partial, 0, 10);
+    let after = frame(&content, 0, 10);
+    let stitched = stitch(&[before.clone(), after.clone()]);
+    assert_eq!(stitched.gaps, 0);
+    assert_eq!(stitched.text, expected(&content, 0..10));
+    // New text is not an in-place change; the capture must record it.
+    assert!(!only_changed_in_place(&before, &after));
+}
