@@ -6,7 +6,7 @@ export XDG_RUNTIME_DIR="$(mktemp -d)"
 chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
 export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
-printf 'theme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshow_blocks = true\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 kea_pid=''; window=''
@@ -107,7 +107,7 @@ key ctrl+a ctrl+c; assert_clip $'printf first\nprintf second'
 cleanup_app
 
 # Every Kea shortcut goes to the child while the actual terminal is focused.
-printf 'theme = dark\nshow_blocks = false\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\nshow_blocks = false\n' > "$KEA_SETTINGS"
 probe="$(pwd)/smoke-artifacts/raw-input.bin"
 start raw --direct -- python3 -u scripts/terminal-input-probe.py "$probe"
 for _ in $(seq 1 50); do [[ -f "${probe%.bin}.ready" ]] && break; sleep .1; done

@@ -365,7 +365,7 @@ fn build_dialog(
                 .when(update::supported(), |content| {
                     content.child(setting_group(
                         "Updates",
-                        "Windows updates use a current-user installer and never require elevation.",
+                        update::settings_description(),
                         vec![toggle_row(
                             "check-for-updates",
                             "Check for updates on startup",

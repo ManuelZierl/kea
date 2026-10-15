@@ -13,7 +13,7 @@ export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
 export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/memories"
 export HOME="$XDG_RUNTIME_DIR/home" HISTFILE="$XDG_RUNTIME_DIR/bash-history"
 mkdir -p "$HOME"
-printf 'theme = dark\ncheck_for_updates = false\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\ncheck_for_updates = false\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 window= pid=
 cleanup() {

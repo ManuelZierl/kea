@@ -9,7 +9,7 @@ chmod 700 "$XDG_RUNTIME_DIR"
 export KEA_SETTINGS="$XDG_RUNTIME_DIR/settings.conf"
 export KEA_KEYBINDINGS="$XDG_RUNTIME_DIR/keybindings.conf"
 export KEA_MEMORY_DIR="$XDG_RUNTIME_DIR/input-memory"
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 unset WAYLAND_DISPLAY
 received=smoke-artifacts/scroll-capture-input.bin

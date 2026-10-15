@@ -18,13 +18,15 @@ gpui.workspace = true
 gpui-component = { path = "../../vendor/gpui-component", version = "=0.5.1", default-features = false }
 gpui-component-assets = "=0.5.1"
 anyhow.workspace = true
-nix = { version = "0.28", features = ["fs", "signal", "process"] }
+nix = { version = "0.28", features = ["fs", "signal", "process", "user"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
 sha2 = "0.10"
 reqwest = { package = "zed-reqwest", version = "=0.12.15-zed", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 tempfile = "3"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 getrandom = "0.3"
 tree-sitter-bash = "=0.23.3"
 

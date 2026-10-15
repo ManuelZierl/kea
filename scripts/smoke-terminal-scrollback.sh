@@ -1,6 +1,6 @@
 # Sourced by smoke-linux.sh; uses its isolated display, app/clipboard helpers,
 # settings paths and cleanup trap. Also run via --terminal-scrollback.
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 drag_indicator_hash() {
   # The fixed-font fixture's first terminal-context words: "Selecting..."
   # while a local drag is held, "Local selection..." after it is released.

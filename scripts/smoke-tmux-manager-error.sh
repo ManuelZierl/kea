@@ -11,7 +11,7 @@ export KEA_TMUX_ERROR_MARKER="$XDG_RUNTIME_DIR/tmux-error-emitted"
 export PATH="$XDG_RUNTIME_DIR/fake-bin:$PATH"
 mkdir -p "$XDG_RUNTIME_DIR/fake-bin"
 chmod 700 "$XDG_RUNTIME_DIR"
-printf 'theme = dark\n' > "$KEA_SETTINGS"
+printf 'check_for_updates = false\ntheme = dark\n' > "$KEA_SETTINGS"
 : > "$KEA_KEYBINDINGS"
 cat > "$XDG_RUNTIME_DIR/fake-bin/tmux" <<'SH'
 #!/usr/bin/env bash
