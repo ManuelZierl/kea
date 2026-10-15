@@ -25,6 +25,7 @@ impl KeaView {
             SettingsChange::Appearance(value) => self.settings.appearance = value,
             SettingsChange::FontSize(value) => self.settings.font_size = value,
             SettingsChange::PostSubmitFocus(value) => self.settings.post_submit_focus = value,
+            SettingsChange::SubmittedDraft(value) => self.settings.submitted_draft = value,
             SettingsChange::LineNumbers(value) => self.settings.line_numbers = value,
             SettingsChange::SoftWrap(value) => self.settings.soft_wrap = value,
             SettingsChange::OutputWrap(value) => self.settings.output_wrap = value,
@@ -43,8 +44,8 @@ impl KeaView {
             SettingsChange::CheckForUpdates(value) => self.settings.check_for_updates = value,
         }
 
-        let path = match self.settings.save() {
-            Ok(path) => path,
+        let (path, backup) = match self.settings.save() {
+            Ok(saved) => saved,
             Err(error) => {
                 self.settings = previous;
                 self.notice = Some(format!("Settings were not changed: {error}."));
@@ -74,6 +75,13 @@ impl KeaView {
                 format!("Settings saved to {}.", path.display())
             },
         );
+        if let Some(backup) = backup {
+            self.notice = Some(format!(
+                "Settings saved to {}. Your previous file could not be read and was kept as {}.",
+                path.display(),
+                backup.display()
+            ));
+        }
         cx.notify();
     }
 

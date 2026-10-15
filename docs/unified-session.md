@@ -161,9 +161,9 @@ Compilation/unit tests, graphical acceptance and real OS testing are separate ev
 
 Window-level ownership and isolation are specified in [Terminal tabs](terminal-tabs.md).
 
-## Composer sections and guarded interrupts
+## Composer draft tabs and guarded interrupts
 
-See [Composer sections and actions](composer-workflow.md) for independently
+See [Composer draft tabs and actions](composer-workflow.md) for independently
 submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
 recommendations. A section is pending input for the existing receiver, not a
 separate shell or an execution queue.

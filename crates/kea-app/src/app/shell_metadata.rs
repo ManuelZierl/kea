@@ -1,7 +1,9 @@
 //! Live shell metadata that does not belong in the portable document model.
 //! Cwd/readiness use the recorded OSC 777 document protocol. The effective shell
 //! PATH is host-only completion context and arrives on OSC 778.
-const PREFIX: &[u8] = b"\x1b]778;kea;path;";
+use kea_core::{MarkerAuth, MarkerOrigin};
+
+const PREFIX: &[u8] = b"\x1b]778;kea;";
 const END: u8 = 0x07;
 const MAX_MARKER: usize = 128 * 1024;
 const MAX_PATH_BYTES: usize = 64 * 1024;
@@ -10,11 +12,18 @@ const MAX_PATH_BYTES: usize = 64 * 1024;
 pub struct ShellMetadata {
     pending: Vec<u8>,
     path: Option<String>,
+    auth: MarkerAuth,
 }
 
 impl ShellMetadata {
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
+    }
+
+    /// PATH drives host-filesystem completion, so a live session accepts it
+    /// only from the shell Kea integrated (its session token), never remotely.
+    pub fn set_auth(&mut self, auth: MarkerAuth) {
+        self.auth = auth;
     }
 
     /// Consume arbitrary PTY chunking.
@@ -46,7 +55,7 @@ impl ShellMetadata {
                 break;
             };
             let raw: Vec<u8> = self.pending.drain(..=end).collect();
-            if let Some(path) = parse(&raw) {
+            if let Some(path) = parse(&raw, &self.auth) {
                 if self.path.as_deref() != Some(&path) {
                     self.path = Some(path);
                 }
@@ -56,11 +65,16 @@ impl ShellMetadata {
     }
 }
 
-fn parse(raw: &[u8]) -> Option<String> {
+fn parse(raw: &[u8], auth: &MarkerAuth) -> Option<String> {
     if !raw.starts_with(PREFIX) || raw.last().copied() != Some(END) {
         return None;
     }
-    let encoded = std::str::from_utf8(&raw[PREFIX.len()..raw.len() - 1]).ok()?;
+    let body = std::str::from_utf8(&raw[PREFIX.len()..raw.len() - 1]).ok()?;
+    let (origin, body) = auth.check(body)?;
+    if origin == MarkerOrigin::Remote {
+        return None;
+    }
+    let encoded = body.strip_prefix("path;")?;
     if encoded.len() > MAX_MARKER || encoded.contains(';') {
         return None;
     }

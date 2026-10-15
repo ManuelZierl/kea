@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "fail-open-shell-integration",
+  "title": "Shell integration setup never prevents a terminal from opening",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/app/**/*.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["text.v1"] },
+  "patterns": {
+    "propagated_setup": "(?:posix_bootstrap\\([^;]*\\)|new_session_token\\(\\))\\s*\\?"
+  },
+  "diagnostics": {
+    "propagated-integration-failure": {
+      "kind": "violation",
+      "message": "AGENTS.md: missing structure must degrade to untracked execution; a bootstrap-file or token failure must not fail the terminal spawn.",
+      "help": "Run the shell untracked (no ShellFlavor) and set a visible session warning instead of returning the error."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

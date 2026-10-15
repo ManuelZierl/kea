@@ -12,6 +12,63 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Authenticate shell-integration markers: each live terminal requires its own
+  random token in OSC 777/778/779 reports, so program output (`cat`, SSH banners,
+  TUIs) can no longer mark input ready, set cwd/PATH or forge blocks. Remote
+  integration uses an owner-only remote token and can never speak for `local`;
+  regenerate remote scripts with `--print-shell-integration`.
+- Install POSIX integration by sourcing a private, self-deleting file: no
+  bootstrap fragment is left on screen and the token is never displayed.
+- Persisted draft history is appended by a background worker under a file lock
+  instead of being rewritten on every submit; concurrent Kea instances no longer
+  overwrite each other's entries.
+- Updates: a slow installer download is no longer cut off after 30 seconds,
+  stale staged installers are removed, and installers are only taken from this
+  repository's release downloads.
+- Refuse unbracketed paste/Submit of text with control characters (they would
+  act as keystrokes such as an unconfirmed Ctrl-C); the draft is kept.
+- Keep an unreadable `settings.conf` as `settings.conf.rejected` before the first
+  in-app change replaces it.
+- Leading-space submissions stay out of persisted draft history (as in reverse
+  search); PowerShell completion also doubles typographic single quotes.
+- Status notices are no longer hidden behind earlier sticky warnings.
+- Copy text that scrolled out of view: **tmux history** reads a tmux tab's
+  pane history exactly through `capture-pane` (local or SSH), and **Capture
+  scroll** rebuilds a selected region while a full-screen app scrolls, marking
+  unalignable gaps instead of guessing. Both open a read-only review viewer;
+  nothing is copied without an explicit action.
+- Show composer drafts as **draft tabs** owned by their terminal tab: `---`,
+  Split and **+** open a new tab; titles follow the draft's first line; tabs can
+  be closed (reopenable) or moved to another terminal tab as text. New
+  `submitted_draft = close | keep` setting: by default a submitted tab closes and
+  the next one becomes active.
+- After a successful Submit, the first Undo in the fresh draft restores the
+  submitted text as an unsent draft, so input a TUI silently ignored is not lost.
+  Undo never re-sends anything.
+- Show a prominent **Not live** badge and composer banner (with **Return live**)
+  while viewing history, a frozen view or an ended process; a refused Submit
+  names the reason and confirms the draft was kept.
+- Keep Bash `PROMPT_COMMAND` values that end in `;`, `&` or a newline working:
+  Kea's prompt hooks are now newline-joined instead of producing `; ;`.
+- Space-prefix the zsh/sh bootstrap line so `HIST_IGNORE_SPACE`/`ignorespace`
+  keeps it out of shell history (Bash continues to delete it explicitly).
+- Shell integration is fail-open: if the bootstrap file or session token cannot
+  be prepared, the terminal still opens, untracked, with a visible warning. Kea
+  deletes an unsourced bootstrap file itself and prefers a private
+  `$XDG_RUNTIME_DIR` for it.
+- tmux attach uses UTF-8 mode like discovery, and SSH attach keeps
+  `StrictHostKeyChecking=yes`. The history viewer's truncation note follows
+  tmux's own history size.
+- Quitting flushes queued draft-history appends (bounded wait); one oversized
+  draft is skipped with a warning instead of stopping persistence; compaction
+  works on Windows.
+- Updates compare the parsed installer URL (host, repository path, tag and
+  asset) and only remove staged installers older than a day.
+- A non-UTF-8 `settings.conf` is backed up byte for byte; C1 control characters
+  are also refused without bracketed paste.
+- Capture scroll no longer turns an unmoved spinner or a torn frame into gaps
+  and duplicated text. Sticky warnings show beside notices; tab labels and draft
+  move targets are always numbered.
 
 ### Acceptance gate
 
@@ -22,6 +79,18 @@
   synthetic tests or hosted compilation.
 - End-to-end self-update needs a newer eligible GitHub release or controlled test
   harness. The candidate cannot update to itself, and alpha.3 has no updater.
+
+### Known limits
+
+- The remote-integration token is one shared secret for every remote context.
+  Output replayed from, or forged on, any host where it is installed can claim
+  readiness for that host's non-`local` contexts in any tab; per-context tokens
+  and rotation are planned.
+- Output that arrives before a terminal's view exists (early rc/motd output) is
+  parsed without the token check; the live default should reject untokened
+  markers.
+- Marker tokens are interoperability capabilities, not proof about the
+  foreground process: anything running inside the integrated shell can read them.
 
 ## 0.0.1-alpha.3 — 2026-10-04
 

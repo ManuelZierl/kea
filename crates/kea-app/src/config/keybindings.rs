@@ -193,8 +193,8 @@ impl Action {
             Self::NextComposer => "Next composer section",
             Self::PreviousComposer => "Previous composer section",
             Self::SendSelection => "Send selected text (preserve section)",
-            Self::UndoComposerLayout => "Undo composer split or merge",
-            Self::RedoComposerLayout => "Redo composer split or merge",
+            Self::UndoComposerLayout => "Undo draft tab change (split, merge, close)",
+            Self::RedoComposerLayout => "Redo draft tab change",
         }
     }
 }

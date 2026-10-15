@@ -3,6 +3,7 @@ use crate::app::{InitialFocus, KeaView};
 use gpui::{App, AppContext as _, Entity, TestAppContext, Window};
 use gpui_component::Root;
 use kea_app::config::{keybindings::Keymap, settings::Settings};
+use kea_app::tmux::TmuxHost;
 use kea_document::Document;
 use kea_session::Session;
 
@@ -15,7 +16,10 @@ fn make_view(window: &mut Window, cx: &mut App) -> Entity<KeaView> {
             document,
             None,
             Keymap::parse("").unwrap(),
-            Settings::default(),
+            Settings {
+                check_for_updates: false,
+                ..Settings::default()
+            },
             InitialFocus::Editor,
             None,
             window,
@@ -88,6 +92,28 @@ fn tab_switch_and_close_transfer_held_keys_but_not_interrupts(cx: &mut TestAppCo
                 assert!(view.composer_workflow.key_latch.press("enter"));
                 assert!(view.interrupt.key_latch.press("enter"));
             });
+        });
+        Root::new(root, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn tmux_host_input_rejects_commands_without_starting_a_worker(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let view = make_view(window, cx);
+        let root = cx.new(|cx| KeaRoot::new(view, window, cx));
+        root.update(cx, |this, cx| {
+            this.tmux_host_input.update(cx, |input, cx| {
+                input.set_value("ssh work; whoami", window, cx)
+            });
+            let generation = this.tmux_generation;
+            this.connect_tmux_ssh(window, cx);
+            assert_eq!(this.tmux_host, TmuxHost::default());
+            assert_eq!(this.tmux_generation, generation);
+            assert!(!this.tmux_loading);
+            assert!(this.tmux_notice.as_ref().unwrap().contains("SSH alias"));
         });
         Root::new(root, window, cx)
     });

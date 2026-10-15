@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "direct-split-suggestion",
+  "title": "Keep the split suggestion a direct action",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/app/composer_workflow/rendering.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"] },
+  "patterns": {},
+  "diagnostics": {
+    "menu-only-suggestion": {
+      "kind": "violation",
+      "message": "Routing every composer suggestion directly to the actions menu prevents a one-click split.",
+      "help": "Dispatch the captured split plan directly; keep the menu for suggestions requiring a preview."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

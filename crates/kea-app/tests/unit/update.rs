@@ -7,7 +7,9 @@ fn release(tag: &str, prerelease: bool, with_digest: bool) -> GithubRelease {
         prerelease,
         assets: vec![GithubAsset {
             name: format!("kea-{tag}-windows-x86_64-setup.exe"),
-            browser_download_url: format!("https://example.invalid/{tag}.exe"),
+            browser_download_url: format!(
+                "https://github.com/ManuelZierl/kea/releases/download/{tag}/kea-{tag}-windows-x86_64-setup.exe"
+            ),
             digest: with_digest.then(|| {
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()
             }),
@@ -113,5 +115,54 @@ fn mutation_after_staging_fails_the_restart_boundary_verification() {
             assert!(error.contains("changed after download verification"));
         }
         other => panic!("unexpected verification result: {other:?}"),
+    }
+}
+
+#[test]
+fn installers_outside_this_repository_are_never_selected() {
+    let current = Version::parse("0.0.1").unwrap();
+    let mut elsewhere = release("v0.0.2", false, true);
+    elsewhere.assets[0].browser_download_url = "https://example.invalid/kea.exe".into();
+    assert!(select_update(&current, &[elsewhere]).is_none());
+}
+
+#[test]
+fn stale_staged_installers_are_removed_but_nothing_else() {
+    let root = tempfile::tempdir().unwrap();
+    let old = root.path().join("kea-update-abc.exe");
+    std::fs::write(&old, b"old installer").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - STALE_STAGED_AGE * 2)
+        .unwrap();
+    // Another running Kea may still need the installer it just staged.
+    std::fs::write(root.path().join("kea-update-fresh.exe"), b"fresh").unwrap();
+    std::fs::write(root.path().join("notes.txt"), b"keep").unwrap();
+    remove_staged_in(root.path(), STALE_STAGED_AGE);
+    assert!(!old.exists());
+    assert!(root.path().join("kea-update-fresh.exe").exists());
+    assert!(root.path().join("notes.txt").exists());
+}
+
+#[test]
+fn download_urls_are_compared_after_parsing() {
+    let tag = "v0.0.2";
+    let asset = "kea-v0.0.2-windows-x86_64-setup.exe";
+    let good = format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/{asset}");
+    assert!(is_release_download(&good, tag, asset));
+    for bad in [
+        format!("https://github.com/ManuelZierl/kea/releases/download/../../../other/repo/releases/download/{tag}/{asset}"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/%2e%2e/{asset}"),
+        format!("https://github.com.evil.example/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("https://user@github.com/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("https://github.com:8443/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("http://github.com/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("{good}?redirect=elsewhere"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/v0.0.3/{asset}"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/other.exe"),
+    ] {
+        assert!(!is_release_download(&bad, tag, asset), "{bad}");
     }
 }

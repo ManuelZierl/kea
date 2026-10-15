@@ -1,6 +1,21 @@
 use super::*;
 
 impl KeaView {
+    pub(in crate::app) fn accept_split_recommendation(
+        &mut self,
+        target: &Entity<InputState>,
+        plan: EditPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The rendered suggestion belongs to this exact editor, text and caret.
+        // Never reinterpret a stale click as an action on another draft.
+        if target != &self.editor || !self.editor_available(window, cx) {
+            return;
+        }
+        self.apply_composer_split(plan, window, cx);
+    }
+
     pub(in crate::app) fn composer_recommendations(&mut self, cx: &App) -> Vec<Recommendation> {
         let text = self.editor.read(cx).value();
         let cursor = self.editor.read(cx).cursor();

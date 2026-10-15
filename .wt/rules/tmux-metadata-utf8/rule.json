@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "tmux-metadata-utf8",
+  "title": "Keep tmux metadata independent of the remote locale",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/tmux.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["ast.v1"] },
+  "patterns": {},
+  "diagnostics": {
+    "locale-dependent-metadata": {
+      "kind": "violation",
+      "message": "tmux sanitizes metadata tabs without UTF-8 mode when SSH has a C locale.",
+      "help": "Use LIST_ARGS with tmux -u so session-list separators and Unicode names survive."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

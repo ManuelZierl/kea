@@ -5,11 +5,13 @@ mod document_view;
 mod interrupt;
 mod pointer;
 mod rendering;
+mod scroll_capture;
 mod settings_window;
 mod shell_metadata;
 mod startup;
 mod tabs;
 mod terminal_input;
+mod text_viewer;
 mod updater;
 use tabs::{KeaRoot, WorkspaceEvent};
 mod workspace;
@@ -73,6 +75,8 @@ struct KeaView {
     document: Document,
     shell_metadata: ShellMetadata,
     input_context: InputContext,
+    /// Deleted once the integrated shell reports, or when the tab closes.
+    bootstrap_file: Option<kea_app::shell::BootstrapFile>,
     shell: Option<ShellFlavor>,
     keymap: Keymap,
     settings: Settings,
@@ -90,6 +94,10 @@ struct KeaView {
     pending_run: Option<PendingRun>,
     composer_enter_down: bool,
     composer_workflow: composer_workflow::ComposerWorkflow,
+    /// Other terminal tabs a draft can move to, supplied by `KeaRoot`.
+    draft_move_targets: Vec<(kea_app::tabs::TabId, String)>,
+    /// Active explicit scroll capture of a selected screen rectangle.
+    scroll_capture: Option<scroll_capture::ScrollCapture>,
     interrupt: interrupt::InterruptState,
     terminal_composition: Entity<InputState>,
     completion_rx: Option<Receiver<CompletionResult>>,

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "untokened-ready-report",
+      "files": [{ "path": "crates/kea-app/src/shell/mod.rs", "content": "const R: &str = r#\"printf '\\033]779;kea;input;1;%s;posix;ready\\007' \"$c\"\"#;" }],
+      "expect": [{ "path": "crates/kea-app/src/shell/mod.rs", "code": "untokened-marker", "kind": "violation" }]
+    },
+    {
+      "name": "tokened-ready-report",
+      "files": [{ "path": "crates/kea-app/src/shell/mod.rs", "content": "const R: &str = r#\"printf '\\033]779;kea;%s;input;1;%s;posix;ready\\007' \"$t\" \"$c\"\"#;" }],
+      "expect": []
+    }
+  ]
+}

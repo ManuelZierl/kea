@@ -2,12 +2,13 @@
 use super::*;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent},
     ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, TitleBar,
     WindowExt as _,
 };
 use kea_app::{
     tabs::{TabId, Tabs, MAX_TERMINALS},
-    tmux::{self, TmuxSession},
+    tmux::{self, TmuxHost, TmuxSession},
 };
 use std::{
     sync::mpsc::{self, Sender},
@@ -19,14 +20,27 @@ use held_keys::HeldWorkflowKeys;
 
 pub(super) enum WorkspaceEvent {
     Action(Action),
+    MoveDraft(DraftMove),
     SettingsChanged(Settings, settings_window::SettingsChange),
 }
 impl EventEmitter<WorkspaceEvent> for KeaView {}
 
+/// Move a composer draft's text to another terminal tab. Only text moves:
+/// editors, pending submissions and recall state stay per tab.
+pub(super) struct DraftMove {
+    pub target: TabId,
+    pub label: String,
+    pub editor: Entity<InputState>,
+    pub text: String,
+}
+
 #[derive(Clone)]
 enum TerminalBacking {
     Process,
-    Tmux { session_name: String },
+    /// The exact session (id + server identity) this tab attached to.
+    Tmux {
+        session: TmuxSession,
+    },
 }
 
 struct TerminalTab {
@@ -36,6 +50,12 @@ struct TerminalTab {
     last_focus: InitialFocus,
     _events: Subscription,
     _changes: Subscription,
+}
+
+struct TmuxHistoryResult {
+    tab: TabId,
+    title: String,
+    text: Result<tmux::TmuxHistory, String>,
 }
 
 struct TmuxUiResult {
@@ -65,7 +85,13 @@ pub(super) struct KeaRoot {
     tmux_sessions: Vec<TmuxSession>,
     tmux_generation: u64,
     tmux_tx: Sender<TmuxUiResult>,
+    history_tx: Sender<TmuxHistoryResult>,
+    history_loading: Option<TabId>,
     _tmux_pump: Task<()>,
+    tmux_host: TmuxHost,
+    tmux_host_input: Entity<InputState>,
+    tmux_show_ssh: bool,
+    _tmux_host_events: Subscription,
 }
 
 #[derive(Clone)]
@@ -106,12 +132,17 @@ impl KeaRoot {
             }
         });
         let (tmux_tx, tmux_rx) = mpsc::channel::<TmuxUiResult>();
+        let (history_tx, history_rx) = mpsc::channel::<TmuxHistoryResult>();
         let tmux_pump = cx.spawn_in(window, async move |this, cx| loop {
             Timer::after(Duration::from_millis(50)).await;
             let disconnected = cx
-                .update(|_, cx| {
+                .update(|window, cx| {
                     this.update(cx, |this, cx| {
                         let mut changed = false;
+                        while let Ok(result) = history_rx.try_recv() {
+                            this.show_tmux_history(result, window, cx);
+                            changed = true;
+                        }
                         while let Ok(result) = tmux_rx.try_recv() {
                             if result.generation != this.tmux_generation {
                                 continue;
@@ -140,6 +171,14 @@ impl KeaRoot {
                 break;
             }
         });
+        let tmux_host_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("SSH alias or user@host"));
+        let tmux_host_events =
+            cx.subscribe_in(&tmux_host_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) && this.tmux_open {
+                    this.connect_tmux_ssh(window, cx);
+                }
+            });
         let mut root = Self {
             tabs: Tabs::default(),
             keymap,
@@ -161,7 +200,13 @@ impl KeaRoot {
             tmux_sessions: Vec::new(),
             tmux_generation: 0,
             tmux_tx,
+            history_tx,
+            history_loading: None,
             _tmux_pump: tmux_pump,
+            tmux_host: TmuxHost::default(),
+            tmux_host_input,
+            tmux_show_ssh: false,
+            _tmux_host_events: tmux_host_events,
         };
         let title = terminal_title(view.read(cx).shell, view.read(cx).session.is_running());
         root.attach(
@@ -194,6 +239,11 @@ impl KeaRoot {
             move |this, _, event, window, cx| match event {
                 WorkspaceEvent::Action(action) if this.tabs.active_id() == Some(id) => {
                     this.invoke_action(*action, window, cx);
+                }
+                WorkspaceEvent::MoveDraft(request)
+                    if this.tabs.active_id() == Some(id) && request.target != id =>
+                {
+                    this.move_draft(id, request, window, cx);
                 }
                 WorkspaceEvent::SettingsChanged(settings, change) => {
                     this.settings = settings.clone();
@@ -230,6 +280,39 @@ impl KeaRoot {
         self.reveal_active();
     }
 
+    fn move_draft(
+        &mut self,
+        source: TabId,
+        request: &DraftMove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let DraftMove {
+            target,
+            label,
+            editor,
+            text,
+        } = request;
+        let (Some(source_tab), Some(target_tab)) = (self.tabs.get(source), self.tabs.get(*target))
+        else {
+            return;
+        };
+        let source_view = source_tab.view.clone();
+        let target_view = target_tab.view.clone();
+        let received =
+            target_view.update(cx, |view, cx| view.receive_moved_draft(text, window, cx));
+        source_view.update(cx, |view, cx| {
+            match received {
+                Ok(()) => {
+                    view.complete_draft_move(editor, window, cx);
+                    view.notice = Some(format!("Moved the draft to {label}. Nothing was sent."));
+                }
+                Err(message) => view.notice = Some(message.into()),
+            }
+            cx.notify();
+        });
+    }
+
     fn reveal_active(&self) {
         if let Some(index) = self
             .tabs
@@ -253,6 +336,7 @@ impl KeaRoot {
         self.held_keys = Some(tab.view.update(cx, |view, cx| {
             let held = HeldWorkflowKeys::take(view);
             view.visible = false;
+            view.scroll_capture = None;
             view.cancel_workflow();
             view.pending_run = None;
             view.composer_enter_down = false;
@@ -276,6 +360,7 @@ impl KeaRoot {
                     held.restore(view);
                 }
                 view.visible = true;
+                view.reveal_moved_draft(cx);
                 // A hidden terminal keeps its last nonzero dimensions. Re-entering
                 // layout resizes only this session using its actual canvas.
                 view.terminal_bounds = None;
@@ -331,7 +416,12 @@ impl KeaRoot {
         }
         // Never repeat the startup command (which might be SSH or an arbitrary
         // program), nor reuse its --record path. New tabs are fresh local shells.
-        let (session, shell) = match startup::spawn_terminal(Vec::new(), None) {
+        let startup::SpawnedTerminal {
+            session,
+            shell,
+            token,
+            bootstrap,
+        } = match startup::spawn_terminal(Vec::new(), None) {
             Ok(value) => value,
             Err(error) => {
                 self.notice = Some(format!("Could not open terminal: {error:#}"));
@@ -348,7 +438,7 @@ impl KeaRoot {
             InitialFocus::Terminal
         };
         let view = cx.new(|cx| {
-            KeaView::new(
+            let mut view = KeaView::new(
                 session,
                 document,
                 shell,
@@ -358,7 +448,10 @@ impl KeaRoot {
                 None,
                 window,
                 cx,
-            )
+            );
+            view.set_marker_auth(kea_app::shell::token::live_auth(token));
+            view.bootstrap_file = bootstrap;
+            view
         });
         let label = terminal_title(shell, true);
         self.attach(
@@ -373,6 +466,76 @@ impl KeaRoot {
         self.focus_selected(window, cx);
     }
 
+    /// Read the active tmux tab's pane history off the UI thread.
+    fn request_tmux_history(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.tabs.active_id() else {
+            return;
+        };
+        let Some(TerminalBacking::Tmux { session }) = self.tabs.get(id).map(|tab| &tab.backing)
+        else {
+            return;
+        };
+        let session = session.clone();
+        if self.history_loading.is_some() {
+            self.notice = Some("Another tmux history read is still running.".into());
+            cx.notify();
+            return;
+        }
+        self.history_loading = Some(id);
+        let tx = self.history_tx.clone();
+        let title = format!(
+            "tmux history · {} on {}",
+            session.name(),
+            session.host().label()
+        );
+        std::thread::spawn(move || {
+            let text = tmux::capture_history(&session).map_err(|error| format!("{error:#}"));
+            let _ = tx.send(TmuxHistoryResult {
+                tab: id,
+                title,
+                text,
+            });
+        });
+        cx.notify();
+    }
+
+    fn show_tmux_history(
+        &mut self,
+        result: TmuxHistoryResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_loading = None;
+        // A result for a tab that is no longer shown is dropped, not misattributed.
+        if self.tabs.active_id() != Some(result.tab) {
+            self.notice = Some(format!(
+                "{} finished after you switched tabs; open it again from that tab.",
+                result.title
+            ));
+            return;
+        }
+        match result.text {
+            Ok(history) => {
+                let title = result.title.clone();
+                let opened = text_viewer::open(
+                    result.title,
+                    text_viewer::TextSource::Tmux {
+                        truncated: history.truncated,
+                    },
+                    history.text,
+                    window,
+                    cx,
+                );
+                if !opened {
+                    self.notice = Some(format!(
+                        "{title} is ready, but another dialog is open; close it and read the history again."
+                    ));
+                }
+            }
+            Err(error) => self.notice = Some(format!("Could not read tmux history: {error}")),
+        }
+    }
+
     fn next_tmux_generation(&mut self) -> u64 {
         self.tmux_generation = self.tmux_generation.saturating_add(1);
         self.tmux_generation
@@ -384,10 +547,17 @@ impl KeaRoot {
         }
         let generation = self.next_tmux_generation();
         let tx = self.tmux_tx.clone();
+        let host = self.tmux_host.clone();
         self.tmux_loading = true;
+        self.tmux_sessions.clear();
+        self.tmux_notice = None;
         std::thread::spawn(move || {
-            let sessions = tmux::list_sessions()
-                .map_err(|error| format!("Could not list local tmux sessions: {error:#}"));
+            let sessions = tmux::list_sessions_on(&host).map_err(|error| {
+                format!(
+                    "Could not list tmux sessions on {}: {error:#}",
+                    host.label()
+                )
+            });
             let _ = tx.send(TmuxUiResult {
                 generation,
                 notice: None,
@@ -397,12 +567,52 @@ impl KeaRoot {
         cx.notify();
     }
 
-    fn toggle_tmux_manager(&mut self, cx: &mut Context<Self>) {
+    fn toggle_tmux_manager(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tmux_open = !self.tmux_open;
         if self.tmux_open {
+            if !self.tmux_loading {
+                if let Some(TerminalTab {
+                    backing: TerminalBacking::Tmux { session },
+                    ..
+                }) = self.tabs.active()
+                {
+                    let host = session.host();
+                    self.tmux_host = host.clone();
+                    // The SSH row must agree with the host shown in the header;
+                    // a local tab never keeps a previous host's text around.
+                    self.tmux_show_ssh = host.destination().is_some();
+                    let destination = host.destination().unwrap_or_default().to_owned();
+                    self.tmux_host_input
+                        .update(cx, |input, cx| input.set_value(destination, window, cx));
+                }
+            }
             self.refresh_tmux(cx);
         } else {
+            if self.tmux_host_input.focus_handle(cx).is_focused(window) {
+                self.focus_selected(window, cx);
+            }
             cx.notify();
+        }
+    }
+
+    fn connect_tmux_ssh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tmux_loading
+            || self.tmux_host_input.update(cx, |input, cx| {
+                input.marked_text_range(window, cx).is_some()
+            })
+        {
+            return;
+        }
+        let destination = self.tmux_host_input.read(cx).value();
+        match TmuxHost::ssh(destination.trim()) {
+            Ok(host) => {
+                self.tmux_host = host;
+                self.refresh_tmux(cx);
+            }
+            Err(error) => {
+                self.tmux_notice = Some(error.to_string());
+                cx.notify();
+            }
         }
     }
 
@@ -412,7 +622,10 @@ impl KeaRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if window.has_active_dialog(cx) {
+        if window.has_active_dialog(cx)
+            || self.tmux_loading
+            || tmux_session.host() != &self.tmux_host
+        {
             return;
         }
         if self.tabs.is_full() {
@@ -433,7 +646,12 @@ impl KeaRoot {
         // Spawning only starts the guarded tmux client. Its stale-session
         // branch reports an error and exits; Kea must not infer a successful
         // persistent attach from spawn returning.
-        let (session, shell) = match startup::spawn_terminal(command, None) {
+        let startup::SpawnedTerminal {
+            session,
+            shell,
+            token,
+            bootstrap,
+        } = match startup::spawn_terminal(command, None) {
             Ok(value) => value,
             Err(error) => {
                 self.tmux_notice = Some(format!(
@@ -450,7 +668,7 @@ impl KeaRoot {
         let document = Document::from_recording(session.recording());
         let focus = InitialFocus::Terminal;
         let view = cx.new(|cx| {
-            KeaView::new(
+            let mut view = KeaView::new(
                 session,
                 document,
                 shell,
@@ -460,11 +678,22 @@ impl KeaRoot {
                 None,
                 window,
                 cx,
-            )
+            );
+            view.set_marker_auth(kea_app::shell::token::live_auth(token));
+            view.bootstrap_file = bootstrap;
+            view
         });
-        let title = format!("tmux · {}", tmux_session.name());
+        let title = if tmux_session.host().destination().is_some() {
+            format!(
+                "tmux · {} · {}",
+                tmux_session.host().label(),
+                tmux_session.name()
+            )
+        } else {
+            format!("tmux · {}", tmux_session.name())
+        };
         let backing = TerminalBacking::Tmux {
-            session_name: tmux_session.name().into(),
+            session: tmux_session.clone(),
         };
         self.attach(view, title, backing, focus, window, cx);
         self.tmux_open = false;
@@ -473,16 +702,17 @@ impl KeaRoot {
     }
 
     fn kill_tmux_session(&mut self, tmux_session: TmuxSession, cx: &mut Context<Self>) {
-        if self.tmux_loading {
+        if self.tmux_loading || tmux_session.host() != &self.tmux_host {
             return;
         }
         let generation = self.next_tmux_generation();
         let tx = self.tmux_tx.clone();
         let name = tmux_session.name().to_string();
+        let host = tmux_session.host().clone();
         self.tmux_loading = true;
         std::thread::spawn(move || {
             let (notice, sessions) = match tmux::kill_session(&tmux_session) {
-                Ok(()) => match tmux::list_sessions() {
+                Ok(()) => match tmux::list_sessions_on(&host) {
                     Ok(sessions) => (
                         Some(format!("Killed tmux session {name}.")),
                         Ok(sessions),
@@ -517,7 +747,7 @@ impl KeaRoot {
         if window.has_active_dialog(cx) {
             return;
         }
-        let name = tmux_session.name().to_string();
+        let name = format!("{} on {}", tmux_session.name(), tmux_session.host().label());
         let weak = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
@@ -560,12 +790,15 @@ impl KeaRoot {
                 format!("Close {}?", tab.title),
                 "Closing ends this terminal's process and discards its draft and temporary history. Saved recordings remain on disk. Other terminals keep running.".to_string(),
             ),
-            TerminalBacking::Tmux { session_name } => (
-                format!("Detach from tmux session {session_name}?"),
-                format!(
-                    "Closing ends only this Kea tmux client. The persistent tmux session {session_name} keeps running and can be attached again from the tmux manager."
-                ),
-            ),
+            TerminalBacking::Tmux { session } => {
+                let (name, host) = (session.name(), session.host().label());
+                (
+                    format!("Detach from tmux session {name} on {host}?"),
+                    format!(
+                        "Closing ends only this Kea tmux client. The persistent tmux session {name} on {host} keeps running and can be attached again from the tmux manager."
+                    ),
+                )
+            }
         };
         let weak = cx.entity().downgrade();
         let restore = weak.clone();
@@ -708,6 +941,7 @@ impl Render for KeaRoot {
             .flex_1()
             .overflow_x_scroll()
             .track_scroll(&self.scroll);
+        let mut labels = Vec::new();
         for (id, tab) in self.tabs.iter() {
             let view = tab.view.read(cx);
             // Context ids are explicit receiver reports, not guessed host names.
@@ -721,13 +955,14 @@ impl Render for KeaRoot {
             } else {
                 ""
             };
+            // Always numbered: two tabs on one tmux session or one SSH context
+            // must stay distinguishable, e.g. as draft move targets.
             let label = if !context.is_empty() && context != "local" {
-                format!("{} · {context}{suffix}", tab.title)
-            } else if matches!(&tab.backing, TerminalBacking::Process) {
-                format!("{} {}{suffix}", tab.title, id.0 + 1)
+                format!("{} {} · {context}{suffix}", tab.title, id.0 + 1)
             } else {
-                format!("{}{suffix}", tab.title)
+                format!("{} {}{suffix}", tab.title, id.0 + 1)
             };
+            labels.push((id, label.clone()));
             let drag = DraggedTab {
                 id,
                 label: label.clone(),
@@ -773,6 +1008,22 @@ impl Render for KeaRoot {
                             })),
                     ),
             );
+        }
+        if let Some(tab) = self.tabs.active() {
+            // Draft move targets are the other terminal tabs, labelled as in the strip.
+            let targets: Vec<_> = labels
+                .into_iter()
+                .filter(|(id, _)| Some(*id) != active)
+                .collect();
+            tab.view.update(cx, |view, cx| {
+                if view.draft_move_targets != targets {
+                    view.draft_move_targets = targets;
+                    if view.draft_move_targets.is_empty() {
+                        view.composer_workflow.move_open = false;
+                    }
+                    cx.notify();
+                }
+            });
         }
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let update_control = update::supported().then(|| {
@@ -876,8 +1127,24 @@ impl Render for KeaRoot {
                             div()
                                 .flex_1()
                                 .font_weight(FontWeight::BOLD)
-                                .child("Local tmux sessions"),
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(if self.tmux_host.destination().is_some() {
+                                    format!("SSH tmux · {}", self.tmux_host.label())
+                                } else { "Local tmux sessions".into() }),
                         )
+                        .child(Button::new("show-tmux-ssh")
+                            .label("SSH…")
+                            .tooltip("Manage tmux on an explicit SSH host")
+                            .ghost().small()
+                            .disabled(self.tmux_loading)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.tmux_show_ssh = true;
+                                this.tmux_host_input.update(cx, |input, cx| input.focus(window, cx));
+                                cx.notify();
+                            })))
                         .child(
                             Button::new("refresh-tmux")
                                 .label("Refresh")
@@ -892,10 +1159,7 @@ impl Render for KeaRoot {
                                 .tooltip("Close tmux manager")
                                 .ghost()
                                 .small()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.tmux_open = false;
-                                    cx.notify();
-                                })),
+                                .on_click(cx.listener(|this, _, window, cx| this.toggle_tmux_manager(window, cx))),
                         ),
                 )
                 .child(
@@ -904,6 +1168,22 @@ impl Render for KeaRoot {
                         .text_color(cx.theme().muted_foreground)
                         .child("tmux is the source of truth. Closing a Kea tab detaches only Kea; Kill ends the persistent session for all clients."),
                 );
+
+            if self.tmux_show_ssh {
+                panel = panel.child(div().flex().items_center().gap_2()
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.tmux_host_input).disabled(self.tmux_loading)))
+                    .child(Button::new("connect-tmux-ssh").label("Connect").small()
+                        .disabled(self.tmux_loading)
+                        .on_click(cx.listener(|this, _, window, cx| this.connect_tmux_ssh(window, cx))))
+                    .child(Button::new("local-tmux").label("Local").ghost().small()
+                        .disabled(self.tmux_loading)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.tmux_host = TmuxHost::default();
+                            this.refresh_tmux(cx);
+                        }))))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground)
+                        .child("Uses your SSH config, keys/agent and known hosts. Connect runs a remote tmux query; no installation or host scanning."));
+            }
 
             if let Some(notice) = &self.tmux_notice {
                 panel = panel.child(
@@ -917,14 +1197,14 @@ impl Render for KeaRoot {
                     div()
                         .py_2()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Refreshing local tmux sessions…"),
+                        .child(format!("Refreshing tmux sessions on {}…", self.tmux_host.label())),
                 );
             } else if self.tmux_sessions.is_empty() && self.tmux_notice.is_none() {
                 panel = panel.child(
                     div()
                         .py_2()
                         .text_color(cx.theme().muted_foreground)
-                        .child("No local tmux sessions are running."),
+                        .child(format!("No tmux sessions are running on {}.", self.tmux_host.label())),
                 );
             } else {
                 for (index, tmux_session) in self.tmux_sessions.clone().into_iter().enumerate() {
@@ -1040,14 +1320,41 @@ impl Render for KeaRoot {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(strip)
+                    .when(
+                        matches!(
+                            self.tabs.active().map(|tab| &tab.backing),
+                            Some(TerminalBacking::Tmux { .. })
+                        ),
+                        |bar| {
+                            bar.child(
+                                Button::new("tmux-history-button")
+                                    .label(if self.history_loading == self.tabs.active_id() {
+                                        "Reading history…"
+                                    } else {
+                                        "tmux history"
+                                    })
+                                    .tooltip(
+                                        "Show this tmux pane's history (up to 50,000 lines) to select and copy",
+                                    )
+                                    .ghost()
+                                    .small()
+                                    .disabled(self.history_loading.is_some())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.request_tmux_history(cx)
+                                    })),
+                            )
+                        },
+                    )
                     .child(
                         Button::new("tmux-manager-button")
                             .label("tmux")
-                            .tooltip("Manage local tmux sessions")
+                            .tooltip("Manage tmux sessions (local or over SSH)")
                             .ghost()
                             .small()
                             .selected(self.tmux_open)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_tmux_manager(cx))),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_tmux_manager(window, cx)
+                            })),
                     )
                     .child(
                         Button::new("new-terminal")

@@ -22,11 +22,12 @@ the running Kea version.
 
 ## tmux sessions
 
-The **tmux** button opens a visual manager for sessions in the local tmux server.
+The **tmux** button opens a visual manager for sessions in a local or explicitly
+chosen SSH host's default tmux server.
 Kea asks tmux for its session list instead of inferring session state from terminal
 output. The list shows the tmux session name, window count and attached-client
 count. **Open** starts a normal Kea terminal tab whose child process is
-`tmux attach-session`; **Kill** is a separate confirmed action against the
+`tmux attach-session` (over `ssh -tt` for remote hosts); **Kill** is a separate confirmed action against the
 persistent tmux session.
 
 A tmux session is not owned by the Kea tab attached to it. Closing that tab ends
@@ -36,13 +37,27 @@ persistent session for all clients, use **Kill** in the tmux manager. Kea target
 tmux's stable session ID for attach/kill operations while displaying the current
 session name.
 
-This first manager intentionally covers the **local default tmux server** only.
-Native tmux management is supported on Unix. On Windows the manager reports
-that limitation; it does not connect to WSL or a remote tmux server.
-An SSH process typed or launched in a terminal remains ordinary terminal input;
-Kea does not scrape it to discover a remote host or remote tmux state. Remote
-SSH-backed tmux management should compose an explicit host/connection resource
-with this tmux-session model rather than guessing from terminal bytes.
+To manage remote sessions, click **SSH…**, enter an SSH alias or `user@hostname`,
+then click **Connect** (or press Enter). Use **Local** to return to this computer.
+Kea uses the system `ssh` client and your existing SSH configuration for keys,
+ports and jump hosts. No remote Kea installation or shell integration is needed;
+the remote host must have `tmux` in its noninteractive command PATH and a
+POSIX-compatible command shell. Discovery uses key/agent authentication and
+already-trusted host keys, with a ten-second deadline and bounded output. If login
+or host verification is needed, connect with `ssh your-alias` in a terminal first,
+then retry. Password-only discovery is not supported. Kea does not enable agent
+or port forwarding for these connections.
+
+The selected host is shown in the manager, remote tab titles and Kill confirmation.
+Every discovered session retains its host as well as its server/session identity;
+attach and Kill never fall back to the local server on failure. Opening the manager
+from a Kea-created tmux tab selects that tab's host. A typed SSH command in an
+ordinary terminal is not detected: Kea does not scrape terminal output or scan
+processes/hosts. Host choices remain in memory for the window, not persisted.
+
+The manager currently requires a Unix Kea host; Windows reports that limitation
+for both local and SSH management. Custom tmux socket selection and WSL connection
+management are not supported.
 
 From composer/chrome, **Ctrl+Tab / Ctrl+Shift+Tab** switch terminals,
 **Ctrl+Shift+W** closes one, and **Ctrl+Shift+PageUp / PageDown** reorder it.
@@ -88,9 +103,11 @@ Test Windows PowerShell/SSH/OpenCode and actual platform IMEs separately from
 Rust unit/component tests. No session persistence or remote cwd inference is
 implied by successful graphical smoke tests.
 
-## Composer sections and guarded interrupts
+## Composer draft tabs and guarded interrupts
 
-See [Composer sections and actions](composer-workflow.md) for independently
+See [Composer draft tabs and actions](composer-workflow.md) for independently
 submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
-recommendations. A section is pending input for the existing receiver, not a
-separate shell or an execution queue.
+recommendations. A draft tab is pending input for the existing receiver, not a
+separate shell or an execution queue. **Move to ⇄** transfers a draft's text to
+another terminal tab, which creates its own editor for it; editor entities,
+pending confirmations, completions and recall state are never shared.

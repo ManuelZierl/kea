@@ -28,7 +28,7 @@ Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatche
 
 Submit applies only to the focused command editor, not a block, filter, embedded find field or terminal. Explicit ready input submits immediately; other states require confirmation. Submission never wraps the draft in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
 
-A successful submission replaces the draft editor with a fresh entity and fresh undo history. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
+A successful submission replaces the draft editor with a fresh, empty entity whose only undo step restores the submitted text as an unsent draft. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
 
 The terminal and editor are separated by a draggable platform-component divider. Resizing changes presentation and the measured PTY dimensions; it does not create another session or execution mode.
 
@@ -105,9 +105,9 @@ standalone feature; implementing a second editor engine in Kea is out of scope.
 Terminal Alt-drag block selection is a separate, implemented terminal-surface
 feature (see terminal-text-selection.md), not composer multicursor.
 
-## Composer sections and guarded interrupts
+## Composer draft tabs and guarded interrupts
 
-See [Composer sections and actions](composer-workflow.md) for independently
+See [Composer draft tabs and actions](composer-workflow.md) for independently
 submitted drafts, opt-in Ctrl-C confirmation and explicitly accepted pattern
 recommendations. A section is pending input for the existing receiver, not a
 separate shell or an execution queue.

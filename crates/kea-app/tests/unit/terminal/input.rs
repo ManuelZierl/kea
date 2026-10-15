@@ -108,6 +108,20 @@ fn paste_cannot_inject_a_bracket_terminator() {
     // Explicit paste preserves control bytes as clipboard data; it is not a
     // physical Ctrl-C keystroke and does not enter the interrupt guard.
     assert_eq!(paste("\x03", true).unwrap(), b"\x1b[200~\x03\x1b[201~");
+    // Unbracketed, the same bytes would be keystrokes (interrupt, EOF, suspend).
+    // C1 controls too: U+009B is a one-character CSI for some programs.
+    for control in [
+        "a\x03b",
+        "\x04",
+        "x\x1az",
+        "\x7f",
+        "a\u{9b}2J",
+        "\u{85}",
+        "\u{80}",
+    ] {
+        assert!(paste(control, false).is_err(), "{control:?}");
+    }
+    assert_eq!(paste("a\tb ä", false).unwrap(), "a\tb ä".as_bytes());
 }
 
 #[test]

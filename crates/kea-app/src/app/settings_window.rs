@@ -5,7 +5,7 @@ use gpui_component::{
     Sizable as _, WindowExt as _,
 };
 use kea_app::{
-    config::settings::{Appearance, PostSubmitFocus, Settings},
+    config::settings::{Appearance, PostSubmitFocus, Settings, SubmittedDraft},
     update,
 };
 
@@ -21,6 +21,7 @@ pub(super) enum SettingsChange {
     Appearance(Appearance),
     FontSize(Option<f32>),
     PostSubmitFocus(PostSubmitFocus),
+    SubmittedDraft(SubmittedDraft),
     LineNumbers(bool),
     SoftWrap(bool),
     OutputWrap(bool),
@@ -292,6 +293,27 @@ fn build_dialog(
                             ],
                             cx,
                         ),
+                        choice_row(
+                            "Submitted draft tab",
+                            "Close it and continue with the next tab, or keep it empty. Undo restores the text either way.",
+                            vec![
+                                choice(
+                                    "submitted-draft-close",
+                                    "Close",
+                                    settings.submitted_draft == SubmittedDraft::Close,
+                                    SettingsChange::SubmittedDraft(SubmittedDraft::Close),
+                                    view,
+                                ),
+                                choice(
+                                    "submitted-draft-keep",
+                                    "Keep",
+                                    settings.submitted_draft == SubmittedDraft::Keep,
+                                    SettingsChange::SubmittedDraft(SubmittedDraft::Keep),
+                                    view,
+                                ),
+                            ],
+                            cx,
+                        ),
                         toggle_row(
                             "confirm-ctrl-c",
                             "Confirm Ctrl-C before forwarding",
@@ -322,7 +344,7 @@ fn build_dialog(
                         toggle_row(
                             "persist-history",
                             "Persist submitted drafts after restart",
-                            "Takes effect on the next launch. The history is plaintext and may contain secrets.",
+                            "Takes effect on the next launch. The history is plaintext and may contain secrets; input starting with a space is never saved.",
                             settings.persist_history,
                             SettingsChange::PersistHistory,
                             view,

@@ -60,8 +60,12 @@ default. The opt-in `persist_history = true` setting stores submitted drafts in
 startup. The text is plaintext; Unix files are owner-only. Disabling the setting
 does not remove a previously written file.
 
-Draft-history updates write and sync a complete sibling before replacing the
-previous file. A write failure stops draft persistence and remains visibly
-reported while in-memory recall continues for the current process. Loading is
+Each submission is appended (one line, synced) by a background writer, never
+blocking the UI. Appends take an exclusive lock on `draft-history.txt.lock`, so
+several Kea instances add to the same history instead of overwriting each other's
+entries. Past 4 MiB the file is compacted to the newest 500 entries by writing
+and syncing a complete sibling under the same lock. Submissions starting with a
+space are not written. A write failure stops draft persistence and is reported
+visibly while in-memory recall continues for the current process. Loading is
 bounded to the newest 500 entries and rejects files larger than 16 MiB rather
 than reading unbounded input during startup.

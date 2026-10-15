@@ -82,7 +82,40 @@ assert Windows's unsupported-platform contract and supply their own PTY terminal
 type; the attach fixture waits for observed pane output rather than killing the
 server after a fixed sleep. Ten local unset-`TERM` runs passed after correction.
 
+## Composer/SSH-tmux follow-up evidence
+
+Local Linux checks on the uncommitted follow-up based on `6b87b80` passed locked
+workspace tests, workspace Clippy with `-D warnings`, the debug build, formatting,
+and Watchtower validation/fixtures (zero blocking findings; the two advisories
+above remain). The real loopback-SSH/X11 fixture passed discovery, attach,
+detach-only tab close, remote Kill cancellation/confirmation, local-session
+preservation and no input leakage to the underlying PTY.
+The composer graphical suite passed one-click marker splitting, draft-header
+focus/merge, independent sections and the existing input guards. The local tmux
+lifecycle and discovery-error graphical fixtures also passed.
+
+The first SSH run failed because tmux sanitized tab separators to underscores in
+a non-UTF-8 remote locale. A controlled probe isolated that behavior; discovery
+now requests `tmux -u`. Both an isolated tmux unit test and the SSH fixture verify
+`LC_ALL=C` explicitly. No remote locale change or permissive parser is used.
+
+The full Linux smoke run remains **FAIL** at its history Return-live assertion
+(`scripts/smoke-linux.sh`, expected `Ready. The error has disappeared` in copied
+output). The copied output still showed the earlier error frame. Its cause and
+relationship to this follow-up have not been established; do not treat the
+historical candidate PASS above as a pass for this runtime revision.
+
 ## What needs your judgment
+
+The composer/SSH-tmux follow-up changes require fresh acceptance; the historical
+candidate results above do not certify a later runtime revision. In addition to
+the checks below, verify a one-click `---` split, focus/edit/merge across drafts,
+and **tmux → SSH… → alias → Connect** against a disposable remote session. Check
+the displayed host before Open or Kill, cancel Kill once, then verify tab close
+only detaches. Test connection/authentication failure without a local fallback.
+`scripts/smoke-tmux-ssh.sh` provides isolated loopback-SSH coverage when OpenSSH
+server/client and tmux are installed; it does not certify your actual SSH server,
+agent, jump-host setup or compositor.
 
 Use sample data, disposable sessions and the exact candidate executable. Close
 older Kea instances first. Record commit, executable path, OS/compositor, shell,

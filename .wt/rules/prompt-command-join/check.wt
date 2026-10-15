@@ -1,0 +1,3 @@
+for m in rx::find_all(file, "semicolon_join") {
+    emit(m.span, "semicolon-join");
+}

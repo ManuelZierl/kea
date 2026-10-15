@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "attach-without-utf8-and-host-key",
+      "files": [{ "path": "crates/kea-app/src/tmux.rs", "content": "fn command() { if interactive { command.push(\"-tt\".into()); } }\nfn attach() { let args = guarded_command_args(session, &format!(\"attach-session -t {target}\"), None); }" }],
+      "expect": [
+        { "path": "crates/kea-app/src/tmux.rs", "code": "interactive-without-host-key", "kind": "violation" },
+        { "path": "crates/kea-app/src/tmux.rs", "code": "attach-without-utf8", "kind": "violation" }
+      ]
+    },
+    {
+      "name": "utf8-attach-with-strict-host-key",
+      "files": [{ "path": "crates/kea-app/src/tmux.rs", "content": "fn command() { if interactive { command.extend([\"-tt\", \"-o\", \"StrictHostKeyChecking=yes\"].map(String::from)); } }\nfn attach() { let mut args = vec![\"-u\".to_owned()]; args.extend(guarded_command_args(session, &format!(\"attach-session -t {target}\"), None)); }" }],
+      "expect": []
+    }
+  ]
+}

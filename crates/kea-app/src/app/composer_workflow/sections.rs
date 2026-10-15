@@ -66,7 +66,6 @@ impl KeaView {
         self.composer_workflow.active = index;
         self.editor = editor;
         self.observe_composer(cx);
-        self.composer_workflow.scroll.scroll_to_item(index);
         cx.notify();
     }
 
@@ -87,6 +86,7 @@ impl KeaView {
             (active + count - 1) % count
         };
         self.select_composer_section(index, cx);
+        self.composer_workflow.scroll.scroll_to_item(index);
         self.focus_editor(window, cx);
     }
 
@@ -126,6 +126,7 @@ impl KeaView {
         self.composer_workflow.subscriptions =
             observe_sections(&self.composer_workflow.sections, cx);
         self.select_composer_section(active, cx);
+        self.composer_workflow.scroll.scroll_to_item(active);
         self.focus_editor(window, cx);
     }
 
@@ -149,7 +150,7 @@ impl KeaView {
         let text = self.editor.read(cx).value();
         let cursor = self.editor.read(cx).cursor();
         if let Some(plan) = EditPlan::split(&text, cursor) {
-            self.apply_composer_plan(plan, window, cx);
+            self.apply_composer_split(plan, window, cx);
         } else {
             self.notice = Some(
                 "This draft exceeds the 256 KiB editor-action limit; it was not changed.".into(),
@@ -164,6 +165,25 @@ impl KeaView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.apply_composer_plan_at(plan, 0, window, cx);
+    }
+
+    pub(in crate::app) fn apply_composer_split(
+        &mut self,
+        plan: EditPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_composer_plan_at(plan, 1, window, cx);
+    }
+
+    fn apply_composer_plan_at(
+        &mut self,
+        plan: EditPlan,
+        active_offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.editor_available(window, cx)
             || !plan.is_current(&self.editor.read(cx).value(), self.editor.read(cx).cursor())
         {
@@ -174,8 +194,7 @@ impl KeaView {
         }
         let new_count = self.composer_workflow.sections.len() - 1 + plan.sections.len();
         if plan.sections.is_empty() || new_count > workflow::MAX_SECTIONS {
-            self.notice =
-                Some("At most 32 composer sections are allowed. Nothing was changed.".into());
+            self.notice = Some("At most 32 draft tabs are allowed. Nothing was changed.".into());
             cx.notify();
             return;
         }
@@ -211,8 +230,17 @@ impl KeaView {
                 .iter()
                 .map(|text| command_editor::new_draft(self.shell, &self.settings, text, window, cx))
                 .collect::<Vec<_>>();
+            if active_offset == 1 {
+                replacements[1].update(cx, |state, cx| {
+                    state.set_cursor_position(
+                        gpui_component::input::Position::default(),
+                        window,
+                        cx,
+                    );
+                });
+            }
             editors.splice(index..index + 1, replacements);
-            self.install_layout(editors, index, window, cx);
+            self.install_layout(editors, index + active_offset, window, cx);
             self.retain_layout_change(before, cx);
         }
         self.composer_workflow.menu = None;
@@ -280,17 +308,194 @@ impl KeaView {
         self.composer_workflow.redo.clear();
     }
 
+    /// How to reopen a closed draft tab, naming the configured shortcut.
+    fn reopen_hint(&self) -> String {
+        match self.keymap.label_or(Action::UndoComposerLayout, "") {
+            shortcut if !shortcut.is_empty() => {
+                format!("Undo draft tab change ({shortcut}) reopens it.")
+            }
+            _ => format!(
+                "Actions ({}) → Undo draft tab change reopens it.",
+                self.keymap.label(Action::ComposerActions)
+            ),
+        }
+    }
+
+    /// Returns a notice when the submitted tab was closed, for the caller to
+    /// show after reporting the submission result.
     pub(in crate::app) fn finish_section_submission(
         &mut self,
+        submitted: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         // Only a completed PTY write reaches here. Never wait for child completion.
         self.clear_composer_layout_history();
         let index = self.composer_workflow.active;
         let mut editors = self.composer_workflow.sections.clone();
+        if editors.len() == 1 || self.settings.submitted_draft == SubmittedDraft::Keep {
+            // The tab stays; its fresh draft's first Undo restores the text.
+            editors[index] = command_editor::draft_after_submission(
+                self.shell,
+                &self.settings,
+                submitted,
+                window,
+                cx,
+            );
+            self.install_layout(editors, index, window, cx);
+            return None;
+        }
+        // Close the submitted tab and continue with the one that takes its
+        // place (or the previous one at the end). Structural undo reopens it
+        // with its text; nothing is ever re-sent.
+        let before = self.snapshot_layout(cx);
         editors.remove(index);
-        if index == editors.len() {
+        let next = index.min(editors.len() - 1);
+        self.install_layout(editors, next, window, cx);
+        if before.bytes().saturating_mul(2) <= MAX_LAYOUT_HISTORY_BYTES {
+            self.retain_layout_change(before, cx);
+            Some(format!(
+                "Sent; the draft tab closed. {}",
+                self.reopen_hint()
+            ))
+        } else {
+            Some("Sent; the draft tab closed. Recall the text with submitted-draft history.".into())
+        }
+    }
+
+    /// Insert an empty draft tab after the active one and focus it.
+    pub(in crate::app) fn add_composer_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer_workflow.sections.len() >= workflow::MAX_SECTIONS {
+            self.notice = Some("At most 32 draft tabs are allowed. Nothing was changed.".into());
+            cx.notify();
+            return;
+        }
+        // Never let creating an empty draft look like a completed submission.
+        command_editor::cancel_submission_candidate(cx);
+        let before = self.snapshot_layout(cx);
+        let index = self.composer_workflow.active + 1;
+        let mut editors = before.editors.clone();
+        editors.insert(
+            index,
+            command_editor::new_draft(self.shell, &self.settings, "", window, cx),
+        );
+        self.install_layout(editors, index, window, cx);
+        self.retain_layout_change(before, cx);
+    }
+
+    /// Close a draft tab without sending it. Structural undo reopens it.
+    pub(in crate::app) fn close_composer_section(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.composer_workflow.sections.len();
+        if count < 2 || index >= count {
+            return;
+        }
+        let before = self.snapshot_layout(cx);
+        if before.bytes().saturating_mul(2) > MAX_LAYOUT_HISTORY_BYTES {
+            // Closing must stay reversible; never drop a large draft silently.
+            self.notice = Some(
+                "These drafts are too large to reopen after closing. Nothing was closed; merge or clear the draft first."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        command_editor::cancel_submission_candidate(cx);
+        let active = self.composer_workflow.active;
+        let mut editors = before.editors.clone();
+        editors.remove(index);
+        let next = if index < active {
+            active - 1
+        } else {
+            active.min(editors.len() - 1)
+        };
+        self.install_layout(editors, next, window, cx);
+        self.retain_layout_change(before, cx);
+        self.notice = Some(format!(
+            "Draft tab closed; nothing was sent. {}",
+            self.reopen_hint()
+        ));
+        cx.notify();
+    }
+
+    /// Ask the window to move the active draft's text to another terminal tab.
+    pub(in crate::app) fn request_draft_move(
+        &mut self,
+        target: kea_app::tabs::TabId,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.visible {
+            return;
+        }
+        let Some((_, label)) = self
+            .draft_move_targets
+            .iter()
+            .find(|(id, _)| *id == target)
+            .cloned()
+        else {
+            return;
+        };
+        self.composer_workflow.move_open = false;
+        let editor = self.editor.clone();
+        let text = editor.read(cx).value().to_string();
+        cx.emit(WorkspaceEvent::MoveDraft(tabs::DraftMove {
+            target,
+            label,
+            editor,
+            text,
+        }));
+    }
+
+    /// Receive a moved draft while this terminal tab is hidden. The text gets a
+    /// new editor owned only by this tab; it is selected when the tab is shown.
+    pub(in crate::app) fn receive_moved_draft(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), &'static str> {
+        if self.composer_workflow.sections.len() >= workflow::MAX_SECTIONS {
+            return Err("The target terminal already has 32 draft tabs. Nothing was moved.");
+        }
+        let editor = command_editor::detached_draft(self.shell, &self.settings, text, window, cx);
+        self.composer_workflow.sections.push(editor.clone());
+        self.composer_workflow.subscriptions =
+            observe_sections(&self.composer_workflow.sections, cx);
+        self.clear_composer_layout_history();
+        self.composer_workflow.reveal = Some(editor);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Remove a draft that now lives in another terminal tab. Structural undo
+    /// is cleared: reopening it here would duplicate the moved text.
+    pub(in crate::app) fn complete_draft_move(
+        &mut self,
+        editor: &Entity<InputState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .composer_workflow
+            .sections
+            .iter()
+            .position(|section| section == editor)
+        else {
+            return;
+        };
+        command_editor::cancel_submission_candidate(cx);
+        let active = self.composer_workflow.active;
+        let mut editors = self.composer_workflow.sections.clone();
+        editors.remove(index);
+        if editors.is_empty() {
             editors.push(command_editor::new_draft(
                 self.shell,
                 &self.settings,
@@ -299,7 +504,29 @@ impl KeaView {
                 cx,
             ));
         }
-        self.install_layout(editors, index, window, cx);
+        let next = if index < active {
+            active - 1
+        } else {
+            active.min(editors.len() - 1)
+        };
+        self.clear_composer_layout_history();
+        self.install_layout(editors, next, window, cx);
+    }
+
+    /// Select a draft that was moved here while the tab was hidden.
+    pub(in crate::app) fn reveal_moved_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.composer_workflow.reveal.take() else {
+            return;
+        };
+        if let Some(index) = self
+            .composer_workflow
+            .sections
+            .iter()
+            .position(|section| *section == editor)
+        {
+            self.select_composer_section(index, cx);
+            self.composer_workflow.scroll.scroll_to_item(index);
+        }
     }
 
     pub(in crate::app) fn send_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {

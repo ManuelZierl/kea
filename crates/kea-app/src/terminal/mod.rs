@@ -4,3 +4,4 @@ pub mod interrupt;
 pub mod mouse;
 pub mod recovery;
 pub mod selection;
+pub mod stitch;

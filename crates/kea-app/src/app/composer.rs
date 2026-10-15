@@ -3,7 +3,69 @@ use gpui_component::input as edit;
 use kea_app::{editor::completion, reverse_search::InputKind, terminal::input};
 use std::path::PathBuf;
 
+/// Why the active terminal currently refuses input. Shown prominently, because
+/// a silently paused Submit is otherwise indistinguishable from a broken one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NotLive {
+    /// Rewound into recorded history; the live process keeps running.
+    History,
+    /// The visible screen is frozen for selection; live output continues.
+    Frozen,
+    /// The terminal process ended or never started.
+    Ended,
+}
+
+impl NotLive {
+    pub(super) fn of(running: bool, history: bool, frozen: bool) -> Option<Self> {
+        if history {
+            Some(Self::History)
+        } else if frozen {
+            Some(Self::Frozen)
+        } else if !running {
+            Some(Self::Ended)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn badge(self) -> &'static str {
+        match self {
+            Self::History => "Not live · History",
+            Self::Frozen => "Not live · Frozen",
+            Self::Ended => "Ended",
+        }
+    }
+
+    pub(super) fn banner(self) -> &'static str {
+        match self {
+            Self::History => "Not live: you are viewing recorded history. Submit and terminal input are paused until you return live.",
+            Self::Frozen => "Not live: the terminal view is frozen for selection. Submit and terminal input are paused until you return live.",
+            Self::Ended => "The terminal process has ended. Submit has nowhere to send; open a new terminal tab.",
+        }
+    }
+
+    pub(super) fn submit_refusal(self) -> &'static str {
+        match self {
+            Self::History => "Not live (viewing history). Nothing was sent; your draft is kept. Return live, then Submit again.",
+            Self::Frozen => "Not live (frozen view). Nothing was sent; your draft is kept. Return live, then Submit again.",
+            Self::Ended => "The terminal process has ended. Nothing was sent; your draft is kept.",
+        }
+    }
+
+    pub(super) fn can_return_live(self) -> bool {
+        !matches!(self, Self::Ended)
+    }
+}
+
 impl KeaView {
+    pub(super) fn not_live(&self) -> Option<NotLive> {
+        NotLive::of(
+            self.session.is_running(),
+            self.session.is_history(),
+            self.session.is_frozen(),
+        )
+    }
+
     /// `run_shell` is retained as a configuration alias. Both old actions now
     /// submit authored text to the current receiver, never shell driver source.
     pub(super) fn run_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -22,12 +84,11 @@ impl KeaView {
     ) {
         if !self.visible || !self.session.input_allowed() {
             self.pending_run = None;
-            self.result(
-                Err(anyhow::anyhow!(
-                    "Return to a live terminal before submitting."
-                )),
-                cx,
+            let message = self.not_live().map_or(
+                "This terminal is not visible. Nothing was sent.",
+                NotLive::submit_refusal,
             );
+            self.result(Err(anyhow::anyhow!(message)), cx);
             return;
         }
         let Some(draft) = command_editor::submission_text(&self.editor, window, cx) else {
@@ -84,6 +145,7 @@ impl KeaView {
             self.session.send(bytes)
         });
         self.pending_run = None;
+        let mut closed = None;
         if result.is_ok() {
             if shell_ready
                 && !text.is_empty()
@@ -108,7 +170,7 @@ impl KeaView {
             command_editor::record_submission(&text, cx);
             self.clear_composer_layout_history();
             if consume {
-                self.finish_section_submission(window, cx);
+                closed = self.finish_section_submission(&text, window, cx);
             }
 
             self.dismiss_completion();
@@ -120,6 +182,9 @@ impl KeaView {
             self.document_ui.dirty = true;
         }
         self.result(result, cx);
+        if closed.is_some() {
+            self.notice = closed;
+        }
         self.capture_draft_history_warning(cx);
     }
 

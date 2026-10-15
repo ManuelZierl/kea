@@ -35,7 +35,10 @@ pub(super) fn run() -> Result<()> {
             let flavor =
                 ShellFlavor::from_program(&name.to_string_lossy()).context("unsupported shell")?;
             use std::io::Write as _;
-            std::io::stdout().write_all(&flavor.integration_for(&[name], context))?;
+            // Remote/nested hooks use the persistent remote token; it never
+            // speaks for the local shell (see kea_app::shell::token).
+            let token = kea_app::shell::token::remote_token()?;
+            std::io::stdout().write_all(&flavor.integration_for(&[name], context, &token))?;
             return Ok(());
         }
         if arg == "--" {
@@ -104,8 +107,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
         );
     }
 
-    let (session, shell) = if demo {
-        (Session::demo()?, None)
+    let mut bootstrap = None;
+    let (session, shell, marker_auth) = if demo {
+        (Session::demo()?, None, kea_core::MarkerAuth::Replay)
     } else if let Some(path) = replay {
         let loaded = kea_core::read_from(File::open(path)?)?;
         let mut session = Session::from_recording(loaded.recording)?;
@@ -114,9 +118,15 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             session.warning =
                 Some("Recovered complete events; the final recording frame was truncated.".into());
         }
-        (session, None)
+        (session, None, kea_core::MarkerAuth::Replay)
     } else {
-        spawn_terminal(command, record.as_deref())?
+        let spawned = spawn_terminal(command, record.as_deref())?;
+        bootstrap = spawned.bootstrap;
+        (
+            spawned.session,
+            spawned.shell,
+            kea_app::shell::token::live_auth(spawned.token),
+        )
     };
 
     let document = Document::from_recording(session.recording());
@@ -161,6 +171,9 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
     if let Some(update_notice) = update::startup_failure_notice() {
         warnings.push(update_notice);
     }
+    if update::supported() {
+        update::remove_stale_staged_updates();
+    }
     let notice = (!warnings.is_empty()).then(|| format!("Warning: {}", warnings.join(" ")));
 
     Application::new()
@@ -172,6 +185,11 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             if let Some((path, entries)) = persisted_history {
                 command_editor::set_history_persistence(path, entries, cx);
             }
+            cx.on_app_quit(|cx| {
+                command_editor::flush_history_persistence(cx);
+                async {}
+            })
+            .detach();
             view::install(cx);
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
@@ -198,7 +216,7 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             if let Err(error) = cx.open_window(options, |window, cx| {
                 rendering::apply_appearance(&settings, window, cx);
                 let view = cx.new(|cx| {
-                    KeaView::new(
+                    let mut view = KeaView::new(
                         session,
                         document,
                         shell,
@@ -208,7 +226,10 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
                         notice,
                         window,
                         cx,
-                    )
+                    );
+                    view.set_marker_auth(marker_auth);
+                    view.bootstrap_file = bootstrap;
+                    view
                 });
                 let weak = view.downgrade();
                 window.defer(cx, move |window, cx| {
@@ -263,23 +284,42 @@ pub(super) fn show_message(message: String) {
     });
 }
 
+/// A freshly spawned terminal and what its view needs to observe it.
+pub(super) struct SpawnedTerminal {
+    pub session: Session,
+    /// `None` when Kea did not integrate the shell; it then runs untracked.
+    pub shell: Option<ShellFlavor>,
+    /// Embedded in the integration when the shell is integrated, otherwise
+    /// known to nobody, so printed markers are inert.
+    pub token: kea_core::MarkerToken,
+    /// Deleted when dropped; the view drops it once the shell has reported.
+    pub bootstrap: Option<kea_app::shell::BootstrapFile>,
+}
+
 /// Shared startup path for a fresh local terminal. Never changes process-wide cwd.
 /// The caller alone supplies explicit command/recording options for the first tab.
+/// Integration is optional: if it cannot be prepared, the shell still starts,
+/// untracked, with a visible warning. Only spawning the process itself can fail.
 pub(super) fn spawn_terminal(
     mut command: Vec<OsString>,
     record: Option<&std::path::Path>,
-) -> Result<(Session, Option<ShellFlavor>)> {
+) -> Result<SpawnedTerminal> {
     #[cfg(windows)]
     if command.is_empty() {
         command = vec!["powershell.exe".into(), "-NoLogo".into(), "-NoExit".into()];
     }
-    let shell = ShellFlavor::detect(&command);
+    let detected = ShellFlavor::detect(&command);
+    let (token, mut integration_error) = match kea_app::shell::token::new_session_token() {
+        Ok(token) => (token, None),
+        Err(error) => (kea_app::shell::token::fallback_token(), Some(error)),
+    };
+    let mut shell = detected.filter(|_| integration_error.is_none());
     // Install after the user's profile; do not inject source through PSReadLine.
     if shell == Some(ShellFlavor::PowerShell) {
         if command.is_empty() {
             command.push(std::env::var_os("SHELL").context("PowerShell executable unavailable")?);
         }
-        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command))?;
+        let script = String::from_utf8(ShellFlavor::PowerShell.integration(&command, &token))?;
         if !command
             .iter()
             .any(|arg| arg.to_string_lossy().eq_ignore_ascii_case("-noexit"))
@@ -289,9 +329,49 @@ pub(super) fn spawn_terminal(
         command.push("-Command".into());
         command.push(script.into());
     }
+    // Prepare the file before spawning, so a failure leaves nothing typed.
+    let bootstrap = if shell == Some(ShellFlavor::Posix) {
+        let preferred = kea_app::shell::bootstrap_directory();
+        let fallback = std::env::temp_dir();
+        match ShellFlavor::posix_bootstrap(&command, &token, &preferred).or_else(|error| {
+            if preferred == fallback {
+                Err(error)
+            } else {
+                ShellFlavor::posix_bootstrap(&command, &token, &fallback)
+            }
+        }) {
+            Ok(bootstrap) => Some(bootstrap),
+            Err(error) => {
+                integration_error = Some(error);
+                shell = None;
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut session = Session::spawn(&command, kea_core::Size::new(100, 26)?, record)?;
-    if shell == Some(ShellFlavor::Posix) {
-        session.send_hidden(ShellFlavor::Posix.integration(&command))?;
+    let bootstrap = match bootstrap {
+        Some((line, file)) => match session.send_hidden(line) {
+            Ok(()) => Some(file),
+            Err(error) => {
+                integration_error = Some(error);
+                shell = None;
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(error) = integration_error.filter(|_| detected.is_some()) {
+        session.warning = Some(format!(
+            "Shell integration is off for this terminal ({error:#}); \
+             it runs untracked, so Submit asks for confirmation."
+        ));
     }
-    Ok((session, shell))
+    Ok(SpawnedTerminal {
+        session,
+        shell,
+        token,
+        bootstrap,
+    })
 }

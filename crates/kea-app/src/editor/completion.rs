@@ -286,7 +286,20 @@ fn shell_quote(value: &str, shell: Option<ShellFlavor>) -> String {
     }
     match shell {
         Some(ShellFlavor::Posix) => format!("'{}'", value.replace('\'', "'\"'\"'")),
-        Some(ShellFlavor::PowerShell) => format!("'{}'", value.replace('\'', "''")),
+        // PowerShell also ends single-quoted strings at typographic single
+        // quotes; doubling each keeps the whole name literal.
+        Some(ShellFlavor::PowerShell) => {
+            let mut quoted = String::with_capacity(value.len() + 2);
+            quoted.push('\'');
+            for ch in value.chars() {
+                if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+                    quoted.push(ch);
+                }
+                quoted.push(ch);
+            }
+            quoted.push('\'');
+            quoted
+        }
         None => value.to_owned(),
     }
 }

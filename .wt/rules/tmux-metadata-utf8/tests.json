@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "locale-dependent-list",
+      "files": [{ "path": "crates/kea-app/src/tmux.rs", "content": "fn query() { host.run([\"list-sessions\", \"-F\", LIST_FORMAT].map(String::from).into()); }" }],
+      "expect": [{ "path": "crates/kea-app/src/tmux.rs", "code": "locale-dependent-metadata", "kind": "violation" }]
+    },
+    {
+      "name": "explicit-utf8-list",
+      "files": [{ "path": "crates/kea-app/src/tmux.rs", "content": "const LIST_ARGS: [&str; 4] = [\"-u\", \"list-sessions\", \"-F\", LIST_FORMAT]; fn query() { host.run(LIST_ARGS.map(String::from).into()); }" }],
+      "expect": []
+    }
+  ]
+}
