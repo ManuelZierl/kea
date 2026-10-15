@@ -12,6 +12,16 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- After a successful Submit, the first Undo in the fresh draft restores the
+  submitted text as an unsent draft, so input a TUI silently ignored is not lost.
+  Undo never re-sends anything.
+- Show a prominent **Not live** badge and composer banner (with **Return live**)
+  while viewing history, a frozen view or an ended process; a refused Submit
+  names the reason and confirms the draft was kept.
+- Keep Bash `PROMPT_COMMAND` values that end in `;`, `&` or a newline working:
+  Kea's prompt hooks are now newline-joined instead of producing `; ;`.
+- Space-prefix the zsh/sh bootstrap line so `HIST_IGNORE_SPACE`/`ignorespace`
+  keeps it out of shell history (Bash continues to delete it explicitly).
 
 ### Acceptance gate
 

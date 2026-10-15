@@ -83,8 +83,15 @@ aliases for this same guarded behavior; Ctrl+Shift+Enter is no longer a separate
 workflow or a bypass. Multiline submission requires negotiated bracketed paste;
 otherwise the draft is preserved instead of risking line-by-line execution.
 
-A successful submission creates a fresh draft and fresh undo history. Undo edits
-text, not process side effects. Observational shell hooks provide optional block
+A successful submission creates a fresh, empty draft. Its first Undo step
+restores the submitted text as an unsent draft, so input that the receiver
+ignored (for example a TUI that was not accepting text) costs one Ctrl+Z, not a
+retype. Undo edits text, not process side effects, and never sends anything.
+
+Submit only reaches a **live** terminal. While you view history, keep a frozen
+selection view, or after the terminal process ends, the terminal header shows an
+orange **Not live** badge and the composer shows a banner with **Return live**
+(F9 by default). Submit then sends nothing and keeps your draft. Observational shell hooks provide optional block
 boundaries without wrapping authored commands. See the full
 [active-input contract](active-input.md), including its compatibility limits.
 
