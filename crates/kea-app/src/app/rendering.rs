@@ -153,12 +153,22 @@ impl Render for KeaView {
                 .size_full(),
             );
 
-        let terminal_mode = if self.session.is_frozen() {
-            "Frozen selection"
-        } else if self.session.is_history() {
-            "History"
-        } else {
-            "Live"
+        let not_live = self.not_live();
+        let terminal_mode = match not_live {
+            Some(reason) => div()
+                .id("terminal-not-live")
+                .flex_shrink_0()
+                .px_1()
+                .rounded_sm()
+                .bg(cx.theme().warning)
+                .text_color(cx.theme().warning_foreground)
+                .font_weight(FontWeight::BOLD)
+                .child(reason.badge()),
+            None => div()
+                .id("terminal-live")
+                .flex_shrink_0()
+                .text_color(cx.theme().success)
+                .child("● Live"),
         };
         let terminal_context = if self
             .terminal_gesture
@@ -201,7 +211,7 @@ impl Render for KeaView {
                         .child("Terminal"),
                 )
             })
-            .child(div().flex_shrink_0().child(terminal_mode))
+            .child(terminal_mode)
             .when(!compact_chrome, |header| {
                 header.child(
                     div()
@@ -556,6 +566,31 @@ impl Render for KeaView {
                         })),
                     ),
             )
+            .when_some(not_live, |panel, reason| {
+                panel.child(
+                    div()
+                        .id("composer-not-live")
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(cx.theme().warning)
+                        .text_color(cx.theme().warning_foreground)
+                        .child(div().flex_1().min_w_0().child(reason.banner()))
+                        .when(reason.can_return_live(), |banner| {
+                            banner.child(self.control(
+                                "composer-return-live",
+                                action_label(&self.keymap, "Return live", Action::GoLive),
+                                Action::GoLive,
+                                cx,
+                            ))
+                        }),
+                )
+            })
             .when(self.pending_run.is_some(), |panel| panel.child(
                 div().id("submit-confirmation").px_2().py_1().text_sm()
                     .text_color(cx.theme().danger)
