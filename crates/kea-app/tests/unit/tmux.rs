@@ -100,6 +100,8 @@ fn ssh_discovery_is_noninteractive_and_attach_allocates_a_remote_pty() {
         true,
     );
     assert!(attach.iter().any(|arg| arg == "-tt"));
+    // Attach may prompt for a password, but never trusts an unknown host key.
+    assert!(attach.iter().any(|arg| arg == "StrictHostKeyChecking=yes"));
     assert!(!attach.iter().any(|arg| arg == "BatchMode=yes"));
     assert_eq!(host.timeout(), SSH_COMMAND_TIMEOUT);
     assert_eq!(TmuxHost::default().timeout(), COMMAND_TIMEOUT);
@@ -116,7 +118,12 @@ fn ssh_remote_shell_preserves_every_tmux_operand_and_guard() {
     let script = format!("tmux() {{ printf '%s\\0' \"$@\"; }}; {remote}");
     let output = run_command("sh", ["-c", &script], Duration::from_secs(1)).unwrap();
     assert!(output.status.success());
-    let expected = guarded_command_args(&selected, "attach-session -t $12", None);
+    let mut expected = vec!["-u".to_owned()];
+    expected.extend(guarded_command_args(
+        &selected,
+        "attach-session -t $12",
+        None,
+    ));
     let mut bytes = Vec::new();
     for arg in expected {
         bytes.extend(arg.as_bytes());
@@ -187,6 +194,7 @@ fn attach_command_targets_stable_tmux_id_without_a_shell() {
         rendered,
         [
             "tmux",
+            "-u",
             "if-shell",
             "-F",
             "-t",
@@ -526,7 +534,9 @@ fn isolated_tmux_history_is_joined_and_guarded() {
     let mut text = String::new();
     for _ in 0..200 {
         let output = isolated_tmux(tempdir.path(), &socket, capture_args(&session).unwrap());
-        text = history_from_output(&output).unwrap();
+        let history = history_from_output(&output).unwrap();
+        assert!(!history.truncated);
+        text = history.text;
         if text.ends_with("DONE") {
             break;
         }
@@ -544,4 +554,27 @@ fn isolated_tmux_history_is_joined_and_guarded() {
     let output = isolated_tmux(tempdir.path(), &socket, capture_args(&stale).unwrap());
     assert!(history_from_output(&output).is_err());
     let _ = isolated_tmux(tempdir.path(), &socket, ["kill-server"]);
+}
+
+#[test]
+#[cfg(unix)]
+fn history_truncation_follows_tmux_history_size_not_joined_line_count() {
+    use std::os::unix::process::ExitStatusExt;
+    let output = |stdout: String| Output {
+        status: std::process::ExitStatus::from_raw(0),
+        stdout: stdout.into_bytes(),
+        stderr: Vec::new(),
+    };
+    // Joined wrapped rows: far fewer lines than the cap, but tmux had more rows.
+    let over = output(format!(
+        "{HISTORY_SIZE_PREFIX}{}\nshort\nlines\n\n",
+        MAX_HISTORY_LINES + 1
+    ));
+    let history = history_from_output(&over).unwrap();
+    assert!(history.truncated);
+    assert_eq!(history.text, "short\nlines");
+    let complete = output(format!("{HISTORY_SIZE_PREFIX}{MAX_HISTORY_LINES}\nall\n"));
+    assert!(!history_from_output(&complete).unwrap().truncated);
+    // A missing size is an error, never an unlabelled possibly-partial history.
+    assert!(history_from_output(&output("text only\n".into())).is_err());
 }

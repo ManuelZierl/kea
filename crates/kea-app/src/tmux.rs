@@ -91,7 +91,9 @@ impl TmuxHost {
             "ForwardAgent=no".into(),
         ];
         if interactive {
-            command.push("-tt".into());
+            // Password and passphrase prompts stay usable in the terminal, but
+            // the host key must already be trusted exactly as for discovery.
+            command.extend(["-tt", "-o", "StrictHostKeyChecking=yes"].map(String::from));
         } else {
             command.extend(
                 [
@@ -263,7 +265,13 @@ pub fn attach_command(session: &TmuxSession) -> Result<Vec<std::ffi::OsString>> 
     #[cfg(unix)]
     {
         let target = validated_target(&session.id)?;
-        let args = guarded_command_args(session, &format!("attach-session -t {target}"), None);
+        // Kea's terminal is UTF-8; without -u a C-locale server draws text as `_`.
+        let mut args = vec!["-u".to_owned()];
+        args.extend(guarded_command_args(
+            session,
+            &format!("attach-session -t {target}"),
+            None,
+        ));
         let command = session.host.command(args, true);
         Ok(command.into_iter().map(Into::into).collect())
     }
@@ -272,7 +280,7 @@ pub fn attach_command(session: &TmuxSession) -> Result<Vec<std::ffi::OsString>> 
 /// Read the text history of the session's active pane through tmux's own API
 /// (`capture-pane`), guarded against a restarted server or replaced session.
 /// Wrapped lines are joined; nothing is inferred from terminal output.
-pub fn capture_history(session: &TmuxSession) -> Result<String> {
+pub fn capture_history(session: &TmuxSession) -> Result<TmuxHistory> {
     #[cfg(not(unix))]
     {
         let _ = session;
@@ -294,14 +302,29 @@ pub fn capture_history(session: &TmuxSession) -> Result<String> {
     }
 }
 
-/// tmux argv (after the program) that prints the guarded pane history.
+/// Pane history read through tmux, with whether older rows exceeded the cap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmuxHistory {
+    pub text: String,
+    /// tmux reported more history rows than were requested. Joined wrapped
+    /// lines and trimmed blank rows make the text's line count unreliable.
+    pub truncated: bool,
+}
+
+const HISTORY_SIZE_PREFIX: &str = "KEA_TMUX_HISTORY_SIZE=";
+
+/// tmux argv (after the program) that prints the guarded pane history,
+/// preceded by the pane's history size from the same guarded command.
 fn capture_args(session: &TmuxSession) -> Result<Vec<String>> {
     let target = validated_target(&session.id)?;
     let mut args = vec!["-u".to_owned()];
     #[cfg(unix)]
     args.extend(guarded_command_args(
         session,
-        &format!("capture-pane -p -J -S -{MAX_HISTORY_LINES} -t {target}"),
+        &format!(
+            "display-message -p -t {target} '{HISTORY_SIZE_PREFIX}#{{history_size}}'; \
+             capture-pane -p -J -S -{MAX_HISTORY_LINES} -t {target}"
+        ),
         None,
     ));
     #[cfg(not(unix))]
@@ -309,7 +332,7 @@ fn capture_args(session: &TmuxSession) -> Result<Vec<String>> {
     Ok(args)
 }
 
-fn history_from_output(output: &Output) -> Result<String> {
+fn history_from_output(output: &Output) -> Result<TmuxHistory> {
     if !output.status.success() {
         bail!("tmux capture-pane failed: {}", command_error(output))
     }
@@ -317,6 +340,11 @@ fn history_from_output(output: &Output) -> Result<String> {
     if text.trim_end() == STALE_SESSION_MESSAGE {
         bail!("The tmux session changed since this tab attached; nothing was read")
     }
+    let (size_line, text) = text.split_once('\n').unwrap_or((&text, ""));
+    let history_size = size_line
+        .strip_prefix(HISTORY_SIZE_PREFIX)
+        .and_then(|size| size.trim_end().parse::<usize>().ok())
+        .context("tmux did not report the pane's history size")?;
     // -J keeps trailing cell padding, and the visible screen is padded with
     // empty rows below the content; neither is part of the text.
     let lines = text.lines().map(str::trim_end).collect::<Vec<_>>();
@@ -324,7 +352,10 @@ fn history_from_output(output: &Output) -> Result<String> {
         .iter()
         .rposition(|line| !line.is_empty())
         .map_or(0, |i| i + 1);
-    Ok(lines[..end].join("\n"))
+    Ok(TmuxHistory {
+        text: lines[..end].join("\n"),
+        truncated: history_size > MAX_HISTORY_LINES,
+    })
 }
 
 fn parse_sessions(bytes: &[u8]) -> Result<Vec<TmuxSession>> {

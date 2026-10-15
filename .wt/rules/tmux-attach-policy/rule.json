@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "tmux-attach-policy",
+  "title": "Attach to tmux in UTF-8 mode with a trusted SSH host key",
+  "mode": "enforced",
+  "severity": "error",
+  "execution": "file",
+  "scope": { "include": ["crates/kea-app/src/tmux.rs"], "exclude": [], "require_files": [] },
+  "code": { "file": "check.wt", "language": "wt-rule-1", "capabilities": ["text.v1"] },
+  "patterns": {
+    "attach_without_utf8": "let\\s+(?:mut\\s+)?args\\s*=\\s*guarded_command_args\\(\\s*session,\\s*&format!\\(\"attach-session",
+    "interactive_without_host_key": "command\\.push\\(\\s*\"-tt\"\\.into\\(\\)\\s*\\)"
+  },
+  "diagnostics": {
+    "attach-without-utf8": {
+      "kind": "violation",
+      "message": "Kea's terminal is UTF-8; a tmux client attached without -u under a C locale draws non-ASCII text as `_`.",
+      "help": "Start the attach argv with \"-u\" before the guarded if-shell command, as discovery does."
+    },
+    "interactive-without-host-key": {
+      "kind": "violation",
+      "message": "SSH attach must not fall back to the user's StrictHostKeyChecking; discovery and attach promise the same trusted host key.",
+      "help": "Add -o StrictHostKeyChecking=yes next to -tt; password prompts still work in the terminal."
+    }
+  },
+  "documentation": { "file": "rule.md" },
+  "tests_file": "tests.json"
+}

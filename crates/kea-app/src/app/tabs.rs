@@ -55,7 +55,7 @@ struct TerminalTab {
 struct TmuxHistoryResult {
     tab: TabId,
     title: String,
-    text: Result<String, String>,
+    text: Result<tmux::TmuxHistory, String>,
 }
 
 struct TmuxUiResult {
@@ -509,16 +509,15 @@ impl KeaRoot {
             return;
         }
         match result.text {
-            Ok(text) => {
-                let truncated = text.lines().count() >= tmux::MAX_HISTORY_LINES;
-                text_viewer::open(
-                    result.title,
-                    text_viewer::TextSource::Tmux { truncated },
-                    text,
-                    window,
-                    cx,
-                )
-            }
+            Ok(history) => text_viewer::open(
+                result.title,
+                text_viewer::TextSource::Tmux {
+                    truncated: history.truncated,
+                },
+                history.text,
+                window,
+                cx,
+            ),
             Err(error) => self.notice = Some(format!("Could not read tmux history: {error}")),
         }
     }
@@ -565,12 +564,12 @@ impl KeaRoot {
                 {
                     let host = session.host();
                     self.tmux_host = host.clone();
-                    if let Some(destination) = host.destination() {
-                        self.tmux_show_ssh = true;
-                        self.tmux_host_input.update(cx, |input, cx| {
-                            input.set_value(destination.to_owned(), window, cx)
-                        });
-                    }
+                    // The SSH row must agree with the host shown in the header;
+                    // a local tab never keeps a previous host's text around.
+                    self.tmux_show_ssh = host.destination().is_some();
+                    let destination = host.destination().unwrap_or_default().to_owned();
+                    self.tmux_host_input
+                        .update(cx, |input, cx| input.set_value(destination, window, cx));
                 }
             }
             self.refresh_tmux(cx);

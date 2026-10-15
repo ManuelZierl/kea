@@ -1,0 +1,6 @@
+for m in rx::find_all(file, "attach_without_utf8") {
+    emit(m.span, "attach-without-utf8");
+}
+for m in rx::find_all(file, "interactive_without_host_key") {
+    emit(m.span, "interactive-without-host-key");
+}
