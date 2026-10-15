@@ -67,6 +67,13 @@ TUI that renders untrusted text therefore cannot forge Kea state. Terminals
 without integration (tmux clients, arbitrary programs) still get a token that
 nobody knows, so markers there are inert.
 
+Integration is optional. If Kea cannot write the private bootstrap file (Kea
+prefers an owner-only `$XDG_RUNTIME_DIR`, then the temp directory) or cannot
+obtain system randomness, the shell still starts, untracked, with a visible
+warning; Submit then asks for confirmation as for any unknown receiver. Kea
+deletes the bootstrap file once the shell reports, or when the tab closes, even
+if the shell never finished sourcing it.
+
 Remote and nested integrations use the user's **remote token**, created
 owner-only next to `settings.conf` as `remote-integration-token` the first time
 `--print-shell-integration` runs. A remote-token marker can report readiness and
@@ -74,6 +81,12 @@ cwd for its own context, but never for `local` and never PATH, so it cannot
 unlock local filesystem completion. Delete that file to revoke remote scripts;
 regenerate them afterwards. Replay of saved recordings accepts tokened and
 older untokened markers, since replay never sends input.
+
+The remote token is currently one shared secret for every remote context: a
+marker carrying it, from any host where it is installed (or replayed from a
+recording made there), can report readiness for any non-`local` context in any
+tab. Per-context tokens and rotation are planned. Output that arrives before a
+terminal's view exists is not yet token-checked.
 
 Tokens are interoperability capabilities, not proof about the foreground
 process: anything running inside the integrated shell can read them. They do

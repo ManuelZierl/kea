@@ -52,6 +52,23 @@
   Kea's prompt hooks are now newline-joined instead of producing `; ;`.
 - Space-prefix the zsh/sh bootstrap line so `HIST_IGNORE_SPACE`/`ignorespace`
   keeps it out of shell history (Bash continues to delete it explicitly).
+- Shell integration is fail-open: if the bootstrap file or session token cannot
+  be prepared, the terminal still opens, untracked, with a visible warning. Kea
+  deletes an unsourced bootstrap file itself and prefers a private
+  `$XDG_RUNTIME_DIR` for it.
+- tmux attach uses UTF-8 mode like discovery, and SSH attach keeps
+  `StrictHostKeyChecking=yes`. The history viewer's truncation note follows
+  tmux's own history size.
+- Quitting flushes queued draft-history appends (bounded wait); one oversized
+  draft is skipped with a warning instead of stopping persistence; compaction
+  works on Windows.
+- Updates compare the parsed installer URL (host, repository path, tag and
+  asset) and only remove staged installers older than a day.
+- A non-UTF-8 `settings.conf` is backed up byte for byte; C1 control characters
+  are also refused without bracketed paste.
+- Capture scroll no longer turns an unmoved spinner or a torn frame into gaps
+  and duplicated text. Sticky warnings show beside notices; tab labels and draft
+  move targets are always numbered.
 
 ### Acceptance gate
 
@@ -62,6 +79,18 @@
   synthetic tests or hosted compilation.
 - End-to-end self-update needs a newer eligible GitHub release or controlled test
   harness. The candidate cannot update to itself, and alpha.3 has no updater.
+
+### Known limits
+
+- The remote-integration token is one shared secret for every remote context.
+  Output replayed from, or forged on, any host where it is installed can claim
+  readiness for that host's non-`local` contexts in any tab; per-context tokens
+  and rotation are planned.
+- Output that arrives before a terminal's view exists (early rc/motd output) is
+  parsed without the token check; the live default should reject untokened
+  markers.
+- Marker tokens are interoperability capabilities, not proof about the
+  foreground process: anything running inside the integrated shell can read them.
 
 ## 0.0.1-alpha.3 — 2026-10-04
 
