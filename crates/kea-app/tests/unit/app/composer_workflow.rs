@@ -338,3 +338,29 @@ fn moved_drafts_get_new_editors_and_leave_the_source(cx: &mut TestAppContext) {
     });
     window.update(cx, |_, _, _| {}).unwrap();
 }
+
+#[gpui::test]
+fn the_only_draft_can_be_moved_and_leaves_an_empty_draft(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let source = make_view(window, cx);
+        let target = make_view(window, cx);
+        let moved = source.update(cx, |this, cx| {
+            write_at(this, "only draft", 10, window, cx);
+            this.editor.clone()
+        });
+        target
+            .update(cx, |this, cx| {
+                this.receive_moved_draft("only draft", window, cx)
+            })
+            .unwrap();
+        source.update(cx, |this, cx| {
+            this.complete_draft_move(&moved, window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            assert_ne!(this.editor, moved);
+            assert!(this.editor.read(cx).value().is_empty());
+        });
+        Root::new(source, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}

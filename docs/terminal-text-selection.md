@@ -316,9 +316,10 @@ input routing: wheel, keys and mouse reach the child exactly as without it, and
 Kea masks no extra accelerators. On every render whose region text changed, Kea
 keeps a snapshot (at most 2,000). Leaving live, switching tabs or resizing
 cancels the capture visibly. **Done** runs `terminal::stitch`, which keeps fixed
-edge rows once and joins snapshots only when exactly one vertical shift makes
-every overlapping row agree with at least three non-blank anchors; a transient
-half-drawn snapshot is skipped, anything else becomes a gap marker. The result is
+edge rows once and joins snapshots only when exactly one vertical shift fits:
+every overlapping row agrees with at least three non-blank anchors, or at most
+two rows differ (a spinner or clock changing in place) with at least six. A
+transient half-drawn snapshot is skipped; anything else becomes a gap marker. The result is
 labelled as reconstructed and is copied only by an explicit viewer action.
 
 ## 6. Configuration

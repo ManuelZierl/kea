@@ -140,7 +140,7 @@ pub fn new_draft(
     if let Some(submitted) = submitted {
         let recall = cx.default_global::<DraftRecallGlobal>();
         recall.history.record(submitted.clone());
-        recall.persisted.record(submitted);
+        record_persisted(&mut recall.persisted, &submitted);
     }
 
     let editor = detached_draft(shell, settings, text, window, cx);
@@ -391,5 +391,14 @@ pub fn record_submission(text: &str, cx: &mut App) {
     let recall = cx.default_global::<DraftRecallGlobal>();
     recall.submission_candidate = None;
     recall.history.record(text.to_owned());
-    recall.persisted.record(text.to_owned());
+    record_persisted(&mut recall.persisted, text);
+}
+
+/// Leading-space input is kept out of plaintext persistence, matching the
+/// shell `ignorespace` convention that reverse search already follows. It is
+/// still recallable in this session.
+fn record_persisted(persisted: &mut DraftHistory, text: &str) {
+    if !text.starts_with(' ') {
+        persisted.record(text.to_owned());
+    }
 }

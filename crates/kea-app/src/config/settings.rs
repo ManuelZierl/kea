@@ -208,13 +208,56 @@ impl Settings {
 
     /// Persist a complete settings snapshot through a sibling temporary file so
     /// an interrupted write cannot truncate the previous configuration.
-    pub fn save(&self) -> Result<PathBuf> {
+    /// A settings file that does not parse is first kept as a backup (returned),
+    /// so the first change in the app never silently discards the user's file.
+    pub fn save(&self) -> Result<(PathBuf, Option<PathBuf>)> {
         let path = Self::path().context("the settings directory is unavailable on this system")?;
-        self.save_to(&path)?;
-        Ok(path)
+        let backup = self.save_to(&path)?;
+        Ok((path, backup))
     }
 
-    fn save_to(&self, path: &Path) -> Result<()> {
+    /// Keep an unparsable settings file under the first unused
+    /// `<name>.rejected[-N]` name. Never overwrites an existing file.
+    fn preserve_rejected(path: &Path) -> Result<Option<PathBuf>> {
+        let Ok(text) = fs::read_to_string(path) else {
+            return Ok(None);
+        };
+        if Self::parse(&text).is_ok() {
+            return Ok(None);
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        for attempt in 0..100 {
+            let suffix = if attempt == 0 {
+                ".rejected".to_owned()
+            } else {
+                format!(".rejected-{attempt}")
+            };
+            let backup = path.with_file_name(format!("{name}{suffix}"));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)
+            {
+                Ok(mut file) => {
+                    file.write_all(text.as_bytes())
+                        .and_then(|()| file.sync_all())
+                        .with_context(|| format!("cannot back up {}", path.display()))?;
+                    return Ok(Some(backup));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("cannot back up {}", path.display()))
+                }
+            }
+        }
+        anyhow::bail!(
+            "cannot back up {}: too many earlier backups",
+            path.display()
+        )
+    }
+
+    fn save_to(&self, path: &Path) -> Result<Option<PathBuf>> {
+        let backup = Self::preserve_rejected(path)?;
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -245,7 +288,7 @@ impl Settings {
             .persist(path)
             .map_err(|error| error.error)
             .with_context(|| format!("cannot replace {}", path.display()))?;
-        Ok(())
+        Ok(backup)
     }
 
     fn to_config(&self) -> String {

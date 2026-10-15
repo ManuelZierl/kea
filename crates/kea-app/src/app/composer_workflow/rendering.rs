@@ -55,9 +55,9 @@ impl KeaView {
             .min_h_0();
         if sections.len() > 1 {
             column = column.child(self.render_draft_tabs(&sections, active, cx));
-            if self.composer_workflow.move_open {
-                column = column.child(self.render_draft_move_targets(cx));
-            }
+        }
+        if self.composer_workflow.move_open && !self.draft_move_targets.is_empty() {
+            column = column.child(self.render_draft_move_targets(cx));
         }
         // Only the active draft is shown, at full composer size. Inactive drafts
         // keep their entities, text, selection and undo history.
@@ -196,20 +196,22 @@ impl KeaView {
                         this.merge_composer(window, cx);
                     })),
             )
-            .when(!self.draft_move_targets.is_empty(), |strip| {
-                strip.child(
-                    Button::new(("move-composer-section", editor.entity_id()))
-                        .label("Move to ⇄")
-                        .tooltip("Move the active draft to another terminal tab")
-                        .ghost()
-                        .xsmall()
-                        .selected(self.composer_workflow.move_open)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.composer_workflow.move_open = !this.composer_workflow.move_open;
-                            cx.notify();
-                        })),
-                )
+            .into_any_element()
+    }
+
+    /// Shown in the composer header whenever another terminal tab exists.
+    pub(in crate::app) fn render_draft_move_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.draft_move_targets.is_empty() {
+            return div().into_any_element();
+        }
+        button("move-composer-section", "Move to ⇄")
+            .when(self.composer_workflow.move_open, |button| {
+                button.bg(cx.theme().accent)
             })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.composer_workflow.move_open = !this.composer_workflow.move_open;
+                cx.notify();
+            }))
             .into_any_element()
     }
 

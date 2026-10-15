@@ -40,7 +40,9 @@ metadata, not an atomic guarantee that the foreground process cannot change.
 ## Draft tabs
 
 **Split at cursor** (`Ctrl+Alt+Enter`), **Split here** on a standalone `---`, and
-**+** create a new draft tab after the active one and focus it. With two or more
+**+** create a new draft tab after the active one and focus it. A split or add
+applied from the **Actions** menu preview keeps the first part active, so a split
+plan can be sent in order. With two or more
 drafts, a tab strip appears above the editor; only the active draft is shown, at
 full composer size.
 
@@ -52,7 +54,8 @@ full composer size.
   not infer shell operators, command boundaries or dependencies.
 - **×** closes a draft tab without sending it. **Undo draft tab change** reopens
   it with its text. The last remaining draft cannot be closed.
-- **Move to ⇄** (shown when there is another terminal tab) moves the active draft
+- **Move to ⇄** in the composer header (shown when there is another terminal
+  tab, also with a single draft) moves the active draft
   to another terminal tab. Only the text moves: the target gets a new editor, and
   pending confirmations, completions and recall state never cross tabs. Nothing
   is sent. The moved draft becomes that terminal's active draft when you switch

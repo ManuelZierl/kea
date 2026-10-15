@@ -202,6 +202,15 @@ pub fn paste(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
     if !bracketed && text.contains('\n') {
         anyhow::bail!("Multiline paste requires bracketed-paste support in the running program.");
     }
+    // Without bracketed paste, control bytes act as keystrokes: 0x03 would be
+    // an unconfirmed interrupt and 0x04 can end a shell. Tab stays ordinary text.
+    if !bracketed
+        && text
+            .chars()
+            .any(|c| (c.is_ascii_control() && c != '\t') || c == '\x7f')
+    {
+        anyhow::bail!("This text contains control characters, and the running program has not enabled bracketed paste. Nothing was sent.");
+    }
     Ok(if bracketed {
         format!("\x1b[200~{text}\x1b[201~").into_bytes()
     } else {

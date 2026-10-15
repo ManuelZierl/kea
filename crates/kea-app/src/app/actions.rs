@@ -44,8 +44,8 @@ impl KeaView {
             SettingsChange::CheckForUpdates(value) => self.settings.check_for_updates = value,
         }
 
-        let path = match self.settings.save() {
-            Ok(path) => path,
+        let (path, backup) = match self.settings.save() {
+            Ok(saved) => saved,
             Err(error) => {
                 self.settings = previous;
                 self.notice = Some(format!("Settings were not changed: {error}."));
@@ -75,6 +75,13 @@ impl KeaView {
                 format!("Settings saved to {}.", path.display())
             },
         );
+        if let Some(backup) = backup {
+            self.notice = Some(format!(
+                "Settings saved to {}. Your previous file could not be read and was kept as {}.",
+                path.display(),
+                backup.display()
+            ));
+        }
         cx.notify();
     }
 

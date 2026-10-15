@@ -37,10 +37,8 @@ pub(super) struct DraftMove {
 #[derive(Clone)]
 enum TerminalBacking {
     Process,
+    /// The exact session (id + server identity) this tab attached to.
     Tmux {
-        session_name: String,
-        host: TmuxHost,
-        /// The exact session (id + server identity) this tab attached to.
         session: TmuxSession,
     },
 }
@@ -465,12 +463,14 @@ impl KeaRoot {
         let Some(id) = self.tabs.active_id() else {
             return;
         };
-        let Some(TerminalBacking::Tmux { session, .. }) =
-            self.tabs.get(id).map(|tab| tab.backing.clone())
+        let Some(TerminalBacking::Tmux { session }) = self.tabs.get(id).map(|tab| &tab.backing)
         else {
             return;
         };
+        let session = session.clone();
         if self.history_loading.is_some() {
+            self.notice = Some("Another tmux history read is still running.".into());
+            cx.notify();
             return;
         }
         self.history_loading = Some(id);
@@ -500,16 +500,23 @@ impl KeaRoot {
         self.history_loading = None;
         // A result for a tab that is no longer shown is dropped, not misattributed.
         if self.tabs.active_id() != Some(result.tab) {
+            self.notice = Some(format!(
+                "{} finished after you switched tabs; open it again from that tab.",
+                result.title
+            ));
             return;
         }
         match result.text {
-            Ok(text) => text_viewer::open(
-                result.title,
-                text_viewer::TextSource::Exact,
-                text,
-                window,
-                cx,
-            ),
+            Ok(text) => {
+                let truncated = text.lines().count() >= tmux::MAX_HISTORY_LINES;
+                text_viewer::open(
+                    result.title,
+                    text_viewer::TextSource::Tmux { truncated },
+                    text,
+                    window,
+                    cx,
+                )
+            }
             Err(error) => self.notice = Some(format!("Could not read tmux history: {error}")),
         }
     }
@@ -550,10 +557,11 @@ impl KeaRoot {
         if self.tmux_open {
             if !self.tmux_loading {
                 if let Some(TerminalTab {
-                    backing: TerminalBacking::Tmux { host, .. },
+                    backing: TerminalBacking::Tmux { session },
                     ..
                 }) = self.tabs.active()
                 {
+                    let host = session.host();
                     self.tmux_host = host.clone();
                     if let Some(destination) = host.destination() {
                         self.tmux_show_ssh = true;
@@ -662,8 +670,6 @@ impl KeaRoot {
             format!("tmux · {}", tmux_session.name())
         };
         let backing = TerminalBacking::Tmux {
-            session_name: tmux_session.name().into(),
-            host: tmux_session.host().clone(),
             session: tmux_session.clone(),
         };
         self.attach(view, title, backing, focus, window, cx);
@@ -761,14 +767,15 @@ impl KeaRoot {
                 format!("Close {}?", tab.title),
                 "Closing ends this terminal's process and discards its draft and temporary history. Saved recordings remain on disk. Other terminals keep running.".to_string(),
             ),
-            TerminalBacking::Tmux {
-                session_name, host, ..
-            } => (
-                format!("Detach from tmux session {session_name} on {}?", host.label()),
-                format!(
-                    "Closing ends only this Kea tmux client. The persistent tmux session {session_name} on {} keeps running and can be attached again from the tmux manager.", host.label()
-                ),
-            ),
+            TerminalBacking::Tmux { session } => {
+                let (name, host) = (session.name(), session.host().label());
+                (
+                    format!("Detach from tmux session {name} on {host}?"),
+                    format!(
+                        "Closing ends only this Kea tmux client. The persistent tmux session {name} on {host} keeps running and can be attached again from the tmux manager."
+                    ),
+                )
+            }
         };
         let weak = cx.entity().downgrade();
         let restore = weak.clone();
@@ -927,10 +934,10 @@ impl Render for KeaRoot {
             };
             let label = if !context.is_empty() && context != "local" {
                 format!("{} · {context}{suffix}", tab.title)
-            } else if matches!(&tab.backing, TerminalBacking::Process) {
-                format!("{} {}{suffix}", tab.title, id.0 + 1)
             } else {
-                format!("{}{suffix}", tab.title)
+                // Numbered like process tabs: two tabs on one tmux session must
+                // stay distinguishable, e.g. as draft move targets.
+                format!("{} {}{suffix}", tab.title, id.0 + 1)
             };
             labels.push((id, label.clone()));
             let drag = DraggedTab {
@@ -1298,13 +1305,13 @@ impl Render for KeaRoot {
                         |bar| {
                             bar.child(
                                 Button::new("tmux-history-button")
-                                    .label(if self.history_loading.is_some() {
+                                    .label(if self.history_loading == self.tabs.active_id() {
                                         "Reading history…"
                                     } else {
                                         "tmux history"
                                     })
                                     .tooltip(
-                                        "Show this tmux pane's full history as exact text to select and copy",
+                                        "Show this tmux pane's history (up to 50,000 lines) to select and copy",
                                     )
                                     .ghost()
                                     .small()
@@ -1318,7 +1325,7 @@ impl Render for KeaRoot {
                     .child(
                         Button::new("tmux-manager-button")
                             .label("tmux")
-                            .tooltip("Manage local tmux sessions")
+                            .tooltip("Manage tmux sessions (local or over SSH)")
                             .ghost()
                             .small()
                             .selected(self.tmux_open)

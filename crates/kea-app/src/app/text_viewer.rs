@@ -11,8 +11,9 @@ use gpui_component::{
 /// Where the text came from. Reconstructed text must say so.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TextSource {
-    /// Exact text from an application API (tmux `capture-pane`).
-    Exact,
+    /// Text from tmux `capture-pane`: wrapped lines joined, trailing spaces
+    /// trimmed. `truncated` when the line cap may have cut older history.
+    Tmux { truncated: bool },
     /// Rebuilt from screen snapshots; may contain marked gaps.
     Reconstructed { gaps: usize },
 }
@@ -38,7 +39,12 @@ pub(super) fn open(
     });
     viewer.update(cx, |state, cx| state.focus(window, cx));
     let note = match source {
-        TextSource::Exact => format!("{lines} lines · exact text · select to copy, or Copy all"),
+        TextSource::Tmux { truncated: false } => format!(
+            "{lines} lines from tmux · wrapped lines joined · select to copy, or Copy all"
+        ),
+        TextSource::Tmux { truncated: true } => format!(
+            "Last {lines} lines from tmux · older history was not read · wrapped lines joined"
+        ),
         TextSource::Reconstructed { gaps: 0 } => format!(
             "{lines} lines · reconstructed from screen snapshots · check before copying"
         ),
@@ -62,11 +68,13 @@ pub(super) fn open(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(if matches!(source, TextSource::Exact) {
-                                cx.theme().muted_foreground
-                            } else {
-                                cx.theme().warning
-                            })
+                            .text_color(
+                                if matches!(source, TextSource::Tmux { truncated: false }) {
+                                    cx.theme().muted_foreground
+                                } else {
+                                    cx.theme().warning
+                                },
+                            )
                             .child(note.clone()),
                     ),
             )

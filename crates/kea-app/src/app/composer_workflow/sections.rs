@@ -194,8 +194,7 @@ impl KeaView {
         }
         let new_count = self.composer_workflow.sections.len() - 1 + plan.sections.len();
         if plan.sections.is_empty() || new_count > workflow::MAX_SECTIONS {
-            self.notice =
-                Some("At most 32 composer sections are allowed. Nothing was changed.".into());
+            self.notice = Some("At most 32 draft tabs are allowed. Nothing was changed.".into());
             cx.notify();
             return;
         }
@@ -309,12 +308,27 @@ impl KeaView {
         self.composer_workflow.redo.clear();
     }
 
+    /// How to reopen a closed draft tab, naming the configured shortcut.
+    fn reopen_hint(&self) -> String {
+        match self.keymap.label_or(Action::UndoComposerLayout, "") {
+            shortcut if !shortcut.is_empty() => {
+                format!("Undo draft tab change ({shortcut}) reopens it.")
+            }
+            _ => format!(
+                "Actions ({}) → Undo draft tab change reopens it.",
+                self.keymap.label(Action::ComposerActions)
+            ),
+        }
+    }
+
+    /// Returns a notice when the submitted tab was closed, for the caller to
+    /// show after reporting the submission result.
     pub(in crate::app) fn finish_section_submission(
         &mut self,
         submitted: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         // Only a completed PTY write reaches here. Never wait for child completion.
         self.clear_composer_layout_history();
         let index = self.composer_workflow.active;
@@ -329,7 +343,7 @@ impl KeaView {
                 cx,
             );
             self.install_layout(editors, index, window, cx);
-            return;
+            return None;
         }
         // Close the submitted tab and continue with the one that takes its
         // place (or the previous one at the end). Structural undo reopens it
@@ -340,6 +354,12 @@ impl KeaView {
         self.install_layout(editors, next, window, cx);
         if before.bytes().saturating_mul(2) <= MAX_LAYOUT_HISTORY_BYTES {
             self.retain_layout_change(before, cx);
+            Some(format!(
+                "Sent; the draft tab closed. {}",
+                self.reopen_hint()
+            ))
+        } else {
+            Some("Sent; the draft tab closed. Recall the text with submitted-draft history.".into())
         }
     }
 
@@ -350,8 +370,7 @@ impl KeaView {
         cx: &mut Context<Self>,
     ) {
         if self.composer_workflow.sections.len() >= workflow::MAX_SECTIONS {
-            self.notice =
-                Some("At most 32 composer sections are allowed. Nothing was changed.".into());
+            self.notice = Some("At most 32 draft tabs are allowed. Nothing was changed.".into());
             cx.notify();
             return;
         }
@@ -379,8 +398,17 @@ impl KeaView {
         if count < 2 || index >= count {
             return;
         }
-        command_editor::cancel_submission_candidate(cx);
         let before = self.snapshot_layout(cx);
+        if before.bytes().saturating_mul(2) > MAX_LAYOUT_HISTORY_BYTES {
+            // Closing must stay reversible; never drop a large draft silently.
+            self.notice = Some(
+                "These drafts are too large to reopen after closing. Nothing was closed; merge or clear the draft first."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        command_editor::cancel_submission_candidate(cx);
         let active = self.composer_workflow.active;
         let mut editors = before.editors.clone();
         editors.remove(index);
@@ -390,14 +418,11 @@ impl KeaView {
             active.min(editors.len() - 1)
         };
         self.install_layout(editors, next, window, cx);
-        if before.bytes().saturating_mul(2) <= MAX_LAYOUT_HISTORY_BYTES {
-            self.retain_layout_change(before, cx);
-            if !self.composer_workflow.undo.is_empty() {
-                self.notice = Some(
-                    "Draft tab closed; nothing was sent. Undo draft tab change reopens it.".into(),
-                );
-            }
-        }
+        self.retain_layout_change(before, cx);
+        self.notice = Some(format!(
+            "Draft tab closed; nothing was sent. {}",
+            self.reopen_hint()
+        ));
         cx.notify();
     }
 
@@ -407,7 +432,7 @@ impl KeaView {
         target: kea_app::tabs::TabId,
         cx: &mut Context<Self>,
     ) {
-        if !self.visible || self.composer_workflow.sections.len() < 2 {
+        if !self.visible {
             return;
         }
         let Some((_, label)) = self

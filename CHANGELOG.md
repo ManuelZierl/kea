@@ -12,6 +12,13 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Refuse unbracketed paste/Submit of text with control characters (they would
+  act as keystrokes such as an unconfirmed Ctrl-C); the draft is kept.
+- Keep an unreadable `settings.conf` as `settings.conf.rejected` before the first
+  in-app change replaces it.
+- Leading-space submissions stay out of persisted draft history (as in reverse
+  search); PowerShell completion also doubles typographic single quotes.
+- Status notices are no longer hidden behind earlier sticky warnings.
 - Copy text that scrolled out of view: **tmux history** reads a tmux tab's
   pane history exactly through `capture-pane` (local or SSH), and **Capture
   scroll** rebuilds a selected region while a full-screen app scrolls, marking

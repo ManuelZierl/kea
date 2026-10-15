@@ -11,6 +11,10 @@ pub const GAP_MARKER: &str = "⟨gap: could not align⟩";
 pub const MAX_SNAPSHOTS: usize = 2_000;
 /// Overlap needs at least this many matching non-blank rows.
 const MIN_ANCHORS: usize = 3;
+/// With this many anchors, up to two overlapping rows may differ: one row that
+/// changes in place (a spinner, clock or status text inside the captured area)
+/// mismatches once in each snapshot. The previously captured row is kept.
+const TOLERANT_ANCHORS: usize = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stitched {
@@ -59,11 +63,12 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
         let next = middle(&frames[index], top, end);
         let shift = align(&previous, &next);
         // A half-drawn redraw fits neither neighbour; skip it when the snapshot
-        // after it lines up with the last accepted one again.
+        // after it lines up with (or returns to) the last accepted one.
         if shift.is_none()
-            && frames
-                .get(index + 1)
-                .is_some_and(|after| align(&previous, &middle(after, top, end)).is_some())
+            && frames.get(index + 1).is_some_and(|after| {
+                let after = middle(after, top, end);
+                after == previous || align(&previous, &after).is_some()
+            })
         {
             continue;
         }
@@ -100,27 +105,31 @@ pub fn stitch(snapshots: &[Vec<String>]) -> Stitched {
 }
 
 /// The unique vertical shift that maps `next` onto `previous`: positive when
-/// the content moved up (scrolled towards newer text). Every overlapping row
-/// must agree, with at least `MIN_ANCHORS` non-blank matches. `None` when no
-/// shift fits, or when more than one does (for example repeated lines), since
-/// either choice would be a guess.
+/// the content moved up (scrolled towards newer text). Overlapping rows must
+/// agree, with at least `MIN_ANCHORS` non-blank matches; two differing rows are
+/// tolerated from `TOLERANT_ANCHORS` matches. `None` when no shift fits, or when
+/// more than one does (for example repeated lines), since either would be a guess.
 fn align(previous: &[&str], next: &[&str]) -> Option<isize> {
     let height = previous.len() as isize;
     let consistent = |shift: isize| {
-        let mut anchors = 0;
+        let (mut anchors, mut mismatches) = (0, 0);
         for row in 0..height {
             let other = row + shift;
             if !(0..height).contains(&other) {
                 continue;
             }
             let (a, b) = (next[row as usize], previous[other as usize]);
-            if a != b {
-                // A live-changing row makes this shift unusable, not "probably right".
-                return false;
+            if a == b {
+                anchors += usize::from(!a.is_empty());
+            } else {
+                mismatches += 1;
             }
-            anchors += usize::from(!a.is_empty());
         }
-        anchors >= MIN_ANCHORS
+        match mismatches {
+            0 => anchors >= MIN_ANCHORS,
+            1 | 2 => anchors >= TOLERANT_ANCHORS,
+            _ => false,
+        }
     };
     let mut fits = ((1 - height)..height).filter(|&shift| shift != 0 && consistent(shift));
     let shift = fits.next()?;
@@ -201,7 +210,13 @@ pub fn region_rows(screen: &kea_alacritty::Screen, region: &Region) -> Option<Ve
             .rows
             .clone()
             .map(|row| {
-                screen.cells[row * width + region.columns.start..row * width + region.columns.end]
+                // A region starting on the right half of a wide character keeps
+                // that character instead of silently dropping it.
+                let mut start = row * width + region.columns.start;
+                if region.columns.start > 0 && screen.cells[start].spacer {
+                    start -= 1;
+                }
+                screen.cells[start..row * width + region.columns.end]
                     .iter()
                     .filter(|cell| !cell.spacer)
                     .map(|cell| cell.text.as_str())

@@ -46,12 +46,15 @@ impl KeaView {
         // The selection would only be invalidated by scrolling; the region is kept.
         self.session.clear_terminal_selection();
         if self.session.is_frozen() {
+            // The first clear above acted on the frozen view; this one on live.
             self.session.go_live();
             self.prompt_line.invalidate();
             self.pending_run = None;
             self.session.clear_terminal_selection();
         }
         let Some(first) = stitch::region_rows(&self.session.screen(), &region) else {
+            self.notice = Some("Scroll capture did not start: the terminal was resized.".into());
+            cx.notify();
             return;
         };
         self.scroll_capture = Some(ScrollCapture {

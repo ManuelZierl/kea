@@ -411,3 +411,23 @@ fn non_submitted_drafts_start_without_undo_history(cx: &mut TestAppContext) {
     assert_eq!(undone, "edit as new");
     assert_eq!(history, 0);
 }
+
+#[gpui::test]
+fn leading_space_submissions_are_recallable_but_not_persisted(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        register_languages();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("drafts.txt");
+    cx.update(|cx| {
+        set_history_persistence(path.clone(), Vec::new(), cx);
+        record_submission("kept", cx);
+        record_submission(" export TOKEN=secret", cx);
+        assert_eq!(submitted_history_len(cx), 2);
+    });
+    assert_eq!(
+        crate::editor::history::load_history_file(&path).unwrap(),
+        vec!["kept"]
+    );
+}

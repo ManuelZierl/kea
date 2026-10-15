@@ -451,8 +451,10 @@ impl Render for KeaView {
                     .warning()
                     .map(ToOwned::to_owned)
             });
-        let status_is_warning = status_warning.is_some();
-        let status = status_warning.or_else(|| self.notice.clone()).unwrap_or_else(|| {
+        // A notice reports the latest action ("Nothing was sent…") and clears on
+        // the next one; a sticky warning must not hide it, and shows again after.
+        let status_is_warning = self.notice.is_none() && status_warning.is_some();
+        let status = self.notice.clone().or(status_warning).unwrap_or_else(|| {
             if self.session.is_frozen() {
                 "Frozen terminal view · Return live to interact".into()
             } else if self.session.is_history() {
@@ -547,6 +549,7 @@ impl Render for KeaView {
                     .child(div().flex_1().min_w_0())
                     .child(button("composer-actions", "Actions")
                         .on_click(cx.listener(|this, _, window, cx| this.open_composer_actions(window, cx))))
+                    .child(self.render_draft_move_button(cx))
                     .child(
                         button(
                             "run-draft",

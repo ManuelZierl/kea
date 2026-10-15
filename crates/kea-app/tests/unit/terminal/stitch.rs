@@ -91,13 +91,39 @@ fn repeated_or_changing_rows_are_gaps_not_guesses() {
     let stitched = stitch(&[frame(&periodic, 0, 8), frame(&periodic, 1, 8)]);
     assert_eq!(stitched.gaps, 1);
 
-    // A spinner inside the captured rows changes between snapshots.
-    let content = transcript(30);
-    let mut first = frame(&content, 0, 8);
-    let mut second = frame(&content, 2, 8);
+    // A spinner fixed on screen inside the captured area mismatches in both
+    // snapshots; with enough anchors that is tolerated and the first capture of
+    // the row is kept.
+    let content = transcript(40);
+    let mut first = frame(&content, 0, 12);
+    let mut second = frame(&content, 2, 12);
     first[5] = "⠋ thinking".into();
     second[5] = "⠙ thinking".into();
+    let stitched = stitch(&[first.clone(), second.clone()]);
+    assert_eq!(stitched.gaps, 0);
+    assert!(stitched.text.contains("message 14:"));
+    assert!(!stitched.text.contains("⠙"));
+    // A second changing row is too much to trust the join.
+    first[8] = "12:00:01".into();
+    second[8] = "12:00:02".into();
     assert_eq!(stitch(&[first, second]).gaps, 1);
+}
+
+#[test]
+fn a_torn_frame_between_identical_frames_is_skipped() {
+    let content = transcript(30);
+    let mut torn = frame(&content, 0, 8);
+    torn[3] = "partially redrawn".into();
+    torn[4] = "garbage".into();
+    let frames = vec![
+        frame(&content, 0, 8),
+        torn,
+        frame(&content, 0, 8),
+        frame(&content, 3, 8),
+    ];
+    let stitched = stitch(&frames);
+    assert_eq!(stitched.gaps, 0);
+    assert_eq!(stitched.text, expected(&content, 0..11));
 }
 
 #[test]
@@ -154,6 +180,22 @@ fn screen(rows: &[&str], selected: impl Fn(usize, usize) -> bool) -> kea_alacrit
         local_caret: None,
         selection_invalidated: false,
     }
+}
+
+#[test]
+fn a_region_starting_inside_a_wide_character_keeps_it() {
+    let mut screen = screen(&["ab日x", "cd本y"], |_, c| c >= 3);
+    // Mark the cell after each wide glyph as its spacer, like the emulator does.
+    for row in 0..2 {
+        screen.cells[row * 4 + 2].wide = true;
+        screen.cells[row * 4 + 3].text = String::new();
+        screen.cells[row * 4 + 3].spacer = true;
+    }
+    let region = Region {
+        rows: 0..2,
+        columns: 3..4,
+    };
+    assert_eq!(region_rows(&screen, &region).unwrap(), ["日", "本"]);
 }
 
 #[test]

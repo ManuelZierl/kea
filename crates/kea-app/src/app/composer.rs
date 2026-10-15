@@ -145,6 +145,7 @@ impl KeaView {
             self.session.send(bytes)
         });
         self.pending_run = None;
+        let mut closed = None;
         if result.is_ok() {
             if shell_ready
                 && !text.is_empty()
@@ -169,7 +170,7 @@ impl KeaView {
             command_editor::record_submission(&text, cx);
             self.clear_composer_layout_history();
             if consume {
-                self.finish_section_submission(&text, window, cx);
+                closed = self.finish_section_submission(&text, window, cx);
             }
 
             self.dismiss_completion();
@@ -181,6 +182,9 @@ impl KeaView {
             self.document_ui.dirty = true;
         }
         self.result(result, cx);
+        if closed.is_some() {
+            self.notice = closed;
+        }
         self.capture_draft_history_warning(cx);
     }
 

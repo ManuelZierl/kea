@@ -344,7 +344,7 @@ fn build_dialog(
                         toggle_row(
                             "persist-history",
                             "Persist submitted drafts after restart",
-                            "Takes effect on the next launch. The history is plaintext and may contain secrets.",
+                            "Takes effect on the next launch. The history is plaintext and may contain secrets; input starting with a space is never saved.",
                             settings.persist_history,
                             SettingsChange::PersistHistory,
                             view,
