@@ -90,6 +90,8 @@ struct KeaView {
     pending_run: Option<PendingRun>,
     composer_enter_down: bool,
     composer_workflow: composer_workflow::ComposerWorkflow,
+    /// Other terminal tabs a draft can move to, supplied by `KeaRoot`.
+    draft_move_targets: Vec<(kea_app::tabs::TabId, String)>,
     interrupt: interrupt::InterruptState,
     terminal_composition: Entity<InputState>,
     completion_rx: Option<Receiver<CompletionResult>>,

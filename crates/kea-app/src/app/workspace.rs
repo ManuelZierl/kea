@@ -189,6 +189,7 @@ impl KeaView {
             pending_run: None,
             composer_enter_down: false,
             composer_workflow,
+            draft_move_targets: Vec::new(),
             interrupt: interrupt::InterruptState::default(),
             terminal_composition,
             completion_rx: None,

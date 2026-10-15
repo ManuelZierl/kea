@@ -24,6 +24,17 @@ pub enum PostSubmitFocus {
     Editor,
 }
 
+/// What happens to a composer draft tab after it was successfully submitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SubmittedDraft {
+    /// Close the submitted tab and continue with the next one, so a split plan
+    /// can be stepped through. The only remaining tab is emptied instead.
+    #[default]
+    Close,
+    /// Keep the submitted tab, emptied. Undo still restores its text.
+    Keep,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub appearance: Appearance,
@@ -35,6 +46,7 @@ pub struct Settings {
     pub syntax_highlighting: bool,
     pub show_blocks: bool,
     pub post_submit_focus: PostSubmitFocus,
+    pub submitted_draft: SubmittedDraft,
     /// Keep submitted drafts across restarts in a plaintext owner-only file.
     /// Off by default: submissions can contain secrets.
     pub persist_history: bool,
@@ -65,6 +77,7 @@ impl Default for Settings {
             syntax_highlighting: true,
             show_blocks: false,
             post_submit_focus: PostSubmitFocus::Editor,
+            submitted_draft: SubmittedDraft::Close,
             persist_history: false,
             shift_mouse_selects_locally: true,
             animate_logo: true,
@@ -170,6 +183,13 @@ impl Settings {
                         _ => anyhow::bail!("post_submit_focus must be terminal or editor"),
                     }
                 }
+                "submitted_draft" => {
+                    settings.submitted_draft = match value {
+                        "close" => SubmittedDraft::Close,
+                        "keep" => SubmittedDraft::Keep,
+                        _ => anyhow::bail!("submitted_draft must be close or keep"),
+                    }
+                }
                 "history_persistence" => settings.history_persistence = boolean(value)?,
                 "confirm_ctrl_c" => settings.confirm_ctrl_c = boolean(value)?,
                 "composer_suggestions" => settings.composer_suggestions = boolean(value)?,
@@ -238,6 +258,10 @@ impl Settings {
             PostSubmitFocus::Terminal => "terminal",
             PostSubmitFocus::Editor => "editor",
         };
+        let submitted_draft = match self.submitted_draft {
+            SubmittedDraft::Close => "close",
+            SubmittedDraft::Keep => "keep",
+        };
         let font_family = self.font_family.as_deref().unwrap_or("system");
         let font_size = self
             .font_size
@@ -252,6 +276,7 @@ impl Settings {
             "# Kea settings. Changes made in the app are written here.\n\
 theme = {appearance}\n\
 post_submit_focus = {post_submit_focus}\n\
+submitted_draft = {submitted_draft}\n\
 persist_history = {}\n\
 history_persistence = {}\n\
 confirm_ctrl_c = {}\n\

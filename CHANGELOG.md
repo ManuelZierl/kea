@@ -12,6 +12,11 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Show composer drafts as **draft tabs** owned by their terminal tab: `---`,
+  Split and **+** open a new tab; titles follow the draft's first line; tabs can
+  be closed (reopenable) or moved to another terminal tab as text. New
+  `submitted_draft = close | keep` setting: by default a submitted tab closes and
+  the next one becomes active.
 - After a successful Submit, the first Undo in the fresh draft restores the
   submitted text as an unsent draft, so input a TUI silently ignored is not lost.
   Undo never re-sends anything.

@@ -20,9 +20,19 @@ use held_keys::HeldWorkflowKeys;
 
 pub(super) enum WorkspaceEvent {
     Action(Action),
+    MoveDraft(DraftMove),
     SettingsChanged(Settings, settings_window::SettingsChange),
 }
 impl EventEmitter<WorkspaceEvent> for KeaView {}
+
+/// Move a composer draft's text to another terminal tab. Only text moves:
+/// editors, pending submissions and recall state stay per tab.
+pub(super) struct DraftMove {
+    pub target: TabId,
+    pub label: String,
+    pub editor: Entity<InputState>,
+    pub text: String,
+}
 
 #[derive(Clone)]
 enum TerminalBacking {
@@ -215,6 +225,11 @@ impl KeaRoot {
                 WorkspaceEvent::Action(action) if this.tabs.active_id() == Some(id) => {
                     this.invoke_action(*action, window, cx);
                 }
+                WorkspaceEvent::MoveDraft(request)
+                    if this.tabs.active_id() == Some(id) && request.target != id =>
+                {
+                    this.move_draft(id, request, window, cx);
+                }
                 WorkspaceEvent::SettingsChanged(settings, change) => {
                     this.settings = settings.clone();
                     let others: Vec<_> = this
@@ -248,6 +263,39 @@ impl KeaRoot {
             "terminal capacity checked before spawning"
         );
         self.reveal_active();
+    }
+
+    fn move_draft(
+        &mut self,
+        source: TabId,
+        request: &DraftMove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let DraftMove {
+            target,
+            label,
+            editor,
+            text,
+        } = request;
+        let (Some(source_tab), Some(target_tab)) = (self.tabs.get(source), self.tabs.get(*target))
+        else {
+            return;
+        };
+        let source_view = source_tab.view.clone();
+        let target_view = target_tab.view.clone();
+        let received =
+            target_view.update(cx, |view, cx| view.receive_moved_draft(text, window, cx));
+        source_view.update(cx, |view, cx| {
+            match received {
+                Ok(()) => {
+                    view.complete_draft_move(editor, window, cx);
+                    view.notice = Some(format!("Moved the draft to {label}. Nothing was sent."));
+                }
+                Err(message) => view.notice = Some(message.into()),
+            }
+            cx.notify();
+        });
     }
 
     fn reveal_active(&self) {
@@ -296,6 +344,7 @@ impl KeaRoot {
                     held.restore(view);
                 }
                 view.visible = true;
+                view.reveal_moved_draft(cx);
                 // A hidden terminal keeps its last nonzero dimensions. Re-entering
                 // layout resizes only this session using its actual canvas.
                 view.terminal_bounds = None;
@@ -787,6 +836,7 @@ impl Render for KeaRoot {
             .flex_1()
             .overflow_x_scroll()
             .track_scroll(&self.scroll);
+        let mut labels = Vec::new();
         for (id, tab) in self.tabs.iter() {
             let view = tab.view.read(cx);
             // Context ids are explicit receiver reports, not guessed host names.
@@ -807,6 +857,7 @@ impl Render for KeaRoot {
             } else {
                 format!("{}{suffix}", tab.title)
             };
+            labels.push((id, label.clone()));
             let drag = DraggedTab {
                 id,
                 label: label.clone(),
@@ -852,6 +903,22 @@ impl Render for KeaRoot {
                             })),
                     ),
             );
+        }
+        if let Some(tab) = self.tabs.active() {
+            // Draft move targets are the other terminal tabs, labelled as in the strip.
+            let targets: Vec<_> = labels
+                .into_iter()
+                .filter(|(id, _)| Some(*id) != active)
+                .collect();
+            tab.view.update(cx, |view, cx| {
+                if view.draft_move_targets != targets {
+                    view.draft_move_targets = targets;
+                    if view.draft_move_targets.is_empty() {
+                        view.composer_workflow.move_open = false;
+                    }
+                    cx.notify();
+                }
+            });
         }
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let update_control = update::supported().then(|| {

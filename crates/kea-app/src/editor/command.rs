@@ -143,19 +143,7 @@ pub fn new_draft(
         recall.persisted.record(submitted);
     }
 
-    let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
-        "bash"
-    } else {
-        "text"
-    };
-    let editor = cx.new(|cx| {
-        InputState::new(window, cx)
-            .code_editor(language)
-            .line_number(settings.line_numbers)
-            .soft_wrap(settings.soft_wrap)
-            .searchable(true)
-            .default_value(text.to_string())
-    });
+    let editor = detached_draft(shell, settings, text, window, cx);
     let recall = cx.default_global::<DraftRecallGlobal>();
     recall.current_editor = Some(editor.clone());
     recall.submission_candidate = None;
@@ -182,6 +170,31 @@ pub fn new_draft(
     }
 
     editor
+}
+
+/// A draft editor that does not become the current recall target. Use it for a
+/// draft created on behalf of a hidden terminal tab (for example a draft moved
+/// there), which must not disturb the active tab's recall or submission state.
+pub fn detached_draft(
+    shell: Option<ShellFlavor>,
+    settings: &Settings,
+    text: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    let language = if settings.syntax_highlighting && shell == Some(ShellFlavor::Posix) {
+        "bash"
+    } else {
+        "text"
+    };
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .code_editor(language)
+            .line_number(settings.line_numbers)
+            .soft_wrap(settings.soft_wrap)
+            .searchable(true)
+            .default_value(text.to_string())
+    })
 }
 
 /// The empty draft that replaces a successfully submitted one. Its only undo

@@ -108,7 +108,7 @@ key Return
 assert_bytes '1b5b3230307e66697273740a2d2d2d0a7365636f6e641b5b3230317e0d'
 
 # The marker hint is a direct mouse action, not another menu. Focus moves to the
-# following draft; both headers and Merge remain usable with native list scrolling.
+# following draft tab; tabs are titled from their first line and stay usable.
 start_fixture direct-split
 put_clipboard $'first\n---\nsecond'
 key ctrl+v
@@ -117,18 +117,12 @@ smoke_click 100 730 # Accept Split here exactly once.
 assert_draft second
 assert_bytes ''
 import -window "$window" smoke-artifacts/composer-direct-split.png
-xdotool mousemove --window "$window" 800 665
-sleep .2
-xdotool click --repeat 3 --delay 150 4
-sleep .3
-smoke_click 105 622 # Focus Draft 1 through its visible header.
+smoke_click 75 615 # Focus the "first" draft tab.
 assert_draft first
 assert_bytes ''
-xdotool mousemove --window "$window" 800 622
-sleep .2
-xdotool click --repeat 3 --delay 150 5
-sleep .3
-smoke_click 990 665 # Merge Draft 2 with Draft 1, without sending either.
+smoke_click 170 615 # Back to the "second" tab.
+assert_draft second
+smoke_click 1010 615 # Merge it into the previous tab, without sending either.
 assert_draft $'first\nsecond'
 assert_bytes ''
 
@@ -279,4 +273,4 @@ xdotool keyup Return
 sleep .2
 assert_draft 'printf untouched'
 assert_bytes '1b5b3230307e677561726465641b5b3230317e0d'
-echo 'Composer literal input, one-click marker split, draft header focus and merge, explicit previews, independent sections, protected Ctrl-C/Ctrl-Shift-C, held confirmation, frozen busy-terminal selection and recovery, tab isolation, cancellation and local Copy passed.'
+echo 'Composer literal input, one-click marker split, draft tab focus and merge, explicit previews, independent sections, protected Ctrl-C/Ctrl-Shift-C, held confirmation, frozen busy-terminal selection and recovery, tab isolation, cancellation and local Copy passed.'

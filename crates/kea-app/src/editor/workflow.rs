@@ -131,6 +131,29 @@ impl EditPlan {
     }
 }
 
+/// Characters shown in an automatic draft tab title before an ellipsis.
+pub const DRAFT_TITLE_CHARS: usize = 24;
+
+/// A short tab title derived from the draft: its first meaningful line, with
+/// code fences, `---` markers and action shorthand skipped. `None` means the
+/// draft has nothing title-worthy yet and the caller shows a numbered name.
+pub fn draft_title(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|line| {
+        !line.is_empty()
+            && *line != "---"
+            && !line.starts_with("```")
+            && !line.starts_with("~~~")
+            && !line.starts_with("::")
+    })?;
+    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut title: String = line.chars().take(DRAFT_TITLE_CHARS).collect();
+    if line.chars().nth(DRAFT_TITLE_CHARS).is_some() {
+        title = title.trim_end().to_owned();
+        title.push('…');
+    }
+    Some(title)
+}
+
 pub fn valid_prefix(prefix: &str) -> bool {
     prefix.is_empty()
         || (prefix.len() <= 16

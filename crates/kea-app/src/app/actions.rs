@@ -25,6 +25,7 @@ impl KeaView {
             SettingsChange::Appearance(value) => self.settings.appearance = value,
             SettingsChange::FontSize(value) => self.settings.font_size = value,
             SettingsChange::PostSubmitFocus(value) => self.settings.post_submit_focus = value,
+            SettingsChange::SubmittedDraft(value) => self.settings.submitted_draft = value,
             SettingsChange::LineNumbers(value) => self.settings.line_numbers = value,
             SettingsChange::SoftWrap(value) => self.settings.soft_wrap = value,
             SettingsChange::OutputWrap(value) => self.settings.output_wrap = value,

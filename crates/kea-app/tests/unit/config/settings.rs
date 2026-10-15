@@ -12,6 +12,14 @@ fn defaults_are_composer_first_and_overrides_are_explicit() {
     assert!(Settings::default().check_for_updates);
     assert!(!Settings::default().show_blocks);
     assert!(Settings::parse("show_blocks = true").unwrap().show_blocks);
+    assert_eq!(Settings::default().submitted_draft, SubmittedDraft::Close);
+    assert_eq!(
+        Settings::parse("submitted_draft = keep")
+            .unwrap()
+            .submitted_draft,
+        SubmittedDraft::Keep
+    );
+    assert!(Settings::parse("submitted_draft = remove").is_err());
 
     let settings = Settings::parse(
         "theme = dark\nfont_size = 16\nsoft_wrap = false\npost_submit_focus = terminal\nshift_mouse_selects_locally = false\nanimate_logo = false\n",
@@ -75,6 +83,7 @@ fn saved_settings_round_trip_and_replace_the_previous_snapshot() {
         syntax_highlighting: false,
         show_blocks: true,
         post_submit_focus: PostSubmitFocus::Terminal,
+        submitted_draft: SubmittedDraft::Keep,
         persist_history: true,
         history_persistence: true,
         shift_mouse_selects_locally: false,
