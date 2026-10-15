@@ -12,6 +12,19 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Authenticate shell-integration markers: each live terminal requires its own
+  random token in OSC 777/778/779 reports, so program output (`cat`, SSH banners,
+  TUIs) can no longer mark input ready, set cwd/PATH or forge blocks. Remote
+  integration uses an owner-only remote token and can never speak for `local`;
+  regenerate remote scripts with `--print-shell-integration`.
+- Install POSIX integration by sourcing a private, self-deleting file: no
+  bootstrap fragment is left on screen and the token is never displayed.
+- Persisted draft history is appended by a background worker under a file lock
+  instead of being rewritten on every submit; concurrent Kea instances no longer
+  overwrite each other's entries.
+- Updates: a slow installer download is no longer cut off after 30 seconds,
+  stale staged installers are removed, and installers are only taken from this
+  repository's release downloads.
 - Refuse unbracketed paste/Submit of text with control characters (they would
   act as keystrokes such as an unconfirmed Ctrl-C); the draft is kept.
 - Keep an unreadable `settings.conf` as `settings.conf.rejected` before the first

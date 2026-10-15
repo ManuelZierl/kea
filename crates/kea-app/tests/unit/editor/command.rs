@@ -297,6 +297,8 @@ fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
     });
     window
         .update(cx, |_, window, cx| {
+            // As at startup: the seed entries are what the file already holds.
+            std::fs::write(&path, "old\n").unwrap();
             set_history_persistence(path.clone(), vec!["old".into()], cx);
             for (id, text) in [(0, "A"), (1, "B"), (0, "C")] {
                 activate_tab_history(id, cx);
@@ -305,6 +307,7 @@ fn interleaved_tabs_share_one_persistence_writer(cx: &mut TestAppContext) {
                 assert_eq!(submission_text(&draft, window, cx).as_deref(), Some(text));
                 new_draft(None, &Settings::default(), "", window, cx);
             }
+            cx.default_global::<DraftRecallGlobal>().persisted.flush();
             assert_eq!(
                 crate::editor::history::load_history_file(&path).unwrap(),
                 vec!["old", "A", "B", "C"]
@@ -425,6 +428,7 @@ fn leading_space_submissions_are_recallable_but_not_persisted(cx: &mut TestAppCo
         record_submission("kept", cx);
         record_submission(" export TOKEN=secret", cx);
         assert_eq!(submitted_history_len(cx), 2);
+        cx.default_global::<DraftRecallGlobal>().persisted.flush();
     });
     assert_eq!(
         crate::editor::history::load_history_file(&path).unwrap(),
