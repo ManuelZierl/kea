@@ -12,8 +12,9 @@ impl KeaRoot {
     pub(super) fn begin_update_check(&mut self, manual: bool, cx: &mut Context<Self>) {
         if !update::supported() {
             if manual {
-                self.update_notice =
-                    Some("In-app updates are currently available on Windows x86_64.".into());
+                self.update_notice = Some(
+                    "In-app updates are currently available on Windows and Linux x86_64.".into(),
+                );
                 cx.notify();
             }
             return;
@@ -124,9 +125,16 @@ impl KeaRoot {
                         return;
                     };
                     match update::launch_staged_update(&staged) {
-                        Ok(()) => {
+                        Ok(update::Applied::Restarting) => {
                             self.close_allowed = true;
                             window.defer(cx, |window, _| window.remove_window());
+                        }
+                        Ok(update::Applied::InstalledNotRestarted(error)) => {
+                            self.update_staged = None;
+                            self.notice = Some(format!(
+                                "Kea v{} is installed but could not be started: {error}. This window stays open; start Kea again to use the new version.",
+                                staged.version
+                            ));
                         }
                         Err(error) => {
                             self.notice = Some(format!("Could not start update: {error:#}"));
@@ -151,13 +159,14 @@ impl KeaRoot {
             return;
         };
         let version = staged.version.clone();
+        let explanation = staged.restart_explanation();
         let weak = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let staged = staged.clone();
             dialog
                 .title(format!("Restart to update Kea to v{version}?"))
-                .child("Kea will close all terminal processes and discard unsaved transient state before running the verified current-user installer. Save anything you want to keep first.")
+                .child(explanation.clone())
                 .confirm()
                 .on_ok(move |_, _, cx| {
                     let _ = weak.update(cx, |this, cx| {

@@ -251,9 +251,9 @@ Configuration directories:
 - macOS: `~/Library/Application Support/Kea/`
 - Windows: `%APPDATA%\Kea\`
 
-`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files. On supported Windows
-builds, `check_for_updates = false` disables the once-per-startup GitHub Release
-check without disabling manual checks.
+`KEA_KEYBINDINGS` and `KEA_SETTINGS` select explicit files. On Windows and Linux
+x86_64 builds, `check_for_updates = false` disables the once-per-startup GitHub
+Release check without disabling manual checks.
 
 Use the Settings button in the main toolbar to change appearance, composer and
 workflow preferences. Choices are saved automatically to `settings.conf`; theme,
@@ -379,6 +379,35 @@ leaving the original portable files untouched.
 This verifies release-asset integrity but does not provide Windows publisher
 identity. Release executables and installers remain unsigned for
 Authenticode/SmartScreen purposes.
+
+## Linux installation and updates
+
+Extract the release archive and copy `kea` to a directory you own that is on
+your `PATH`, for example:
+
+```sh
+sha256sum -c SHA256SUMS
+tar -xzf kea-v<version>-linux-x86_64.tar.gz ./kea
+install -m 0755 kea ~/.local/bin/kea
+```
+
+Linux x86_64 builds use the same startup check, title-bar **Update v…** control
+and restart confirmation as Windows. Kea downloads the release's
+`kea-<tag>-linux-x86_64.tar.gz` and verifies it against the SHA-256 digest
+GitHub attaches to that asset. It then extracts only the archive's regular
+`kea` file into a hidden `.kea-update-…` file beside the running executable and
+runs its `--help`; a build that cannot run on this system, for example because
+it needs a newer glibc, is rejected before anything changes. The running
+executable stays untouched until you confirm **Restart for v…**. Kea then checks
+the staged file's hash again, renames it over the executable in one atomic step
+and starts the new version.
+
+Kea only replaces an executable that belongs to you, in a directory you can
+write. It refuses Cargo build outputs (`target/debug`, `target/release`) and
+system-wide installs; those report the failure and keep running unchanged.
+Interrupted attempts leave at most a `.kea-update-…` file, which is removed after
+a day. Release binaries remain unsigned; integrity rests on GitHub's asset
+digest.
 
 ## Architecture
 

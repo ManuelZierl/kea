@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add in-app updates for Linux x86_64. Kea finds the newer release's Linux
+  archive, verifies GitHub's SHA-256 asset digest, extracts only its `kea`
+  executable beside the running one and checks that it runs on this system.
+  After an explicit restart confirmation, it atomically replaces the executable
+  and starts the new version. Only user-owned, user-writable installs (for
+  example `~/.local/bin/kea`) are updated; Cargo build outputs and system
+  installs are refused.
+
 ## 0.0.1-alpha.4 — Prepared, not published
 
 - Add a Windows current-user installer under `%LOCALAPPDATA%\\Programs\\Kea`; installation and updates do not require elevation.
