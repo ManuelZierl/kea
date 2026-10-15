@@ -74,9 +74,11 @@
 
 - See [alpha.4 acceptance](docs/alpha4-acceptance.md) for automated evidence and
   maintainer checks. Publication requires explicit manual sign-off.
-- Real Windows installer/update behavior, macOS/Windows GUI interaction, native
-  Wayland, physical keyboard/IME and accessibility are not certified by Linux
-  synthetic tests or hosted compilation.
+- Native Wayland and X11 (Xwayland) were exercised interactively in an isolated
+  headless GNOME Shell with synthetic input and a real compositor clipboard.
+  Real Windows installer/update behavior, macOS/Windows GUI interaction,
+  physical keyboard/IME, scaling and accessibility are still not certified by
+  Linux synthetic tests or hosted compilation.
 - End-to-end self-update needs a newer eligible GitHub release or controlled test
   harness. The candidate cannot update to itself, and alpha.3 has no updater.
 
