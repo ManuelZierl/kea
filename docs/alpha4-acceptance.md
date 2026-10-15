@@ -126,7 +126,7 @@ Local Linux checks on the final head:
 | Check | Result |
 |---|---|
 | `cargo fmt --all -- --check` | PASS |
-| `cargo test --locked --workspace` | PASS, 359 tests; one ignored documentation example |
+| `cargo test --locked --workspace` | PASS, 340 tests; one ignored documentation example |
 | `cargo clippy --locked --workspace --all-targets -- -D warnings` | PASS |
 | `cargo build --locked -p kea-app`, reverse-search harness | PASS |
 | `wt validate` / `wt test` / `wt check --no-global --no-host-ignores --no-cache` | PASS, 0 blocking; 9 advisories inspected |
