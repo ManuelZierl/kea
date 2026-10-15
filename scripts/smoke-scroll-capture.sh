@@ -57,7 +57,7 @@ for _ in $(seq 1 15); do
 done
 sleep .5
 import -silent -window "$window" smoke-artifacts/scroll-capture-active.png
-smoke_click 523 119 # Done: review before copying
+smoke_click 413 119 # Done: review before copying
 sleep 1.5
 import -silent -window "$window" smoke-artifacts/scroll-capture-review.png
 printf 'kea-capture-sentinel' | xclip -selection clipboard
