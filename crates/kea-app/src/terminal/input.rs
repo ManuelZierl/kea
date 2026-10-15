@@ -203,12 +203,10 @@ pub fn paste(text: &str, bracketed: bool) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("Multiline paste requires bracketed-paste support in the running program.");
     }
     // Without bracketed paste, control bytes act as keystrokes: 0x03 would be
-    // an unconfirmed interrupt and 0x04 can end a shell. Tab stays ordinary text.
-    if !bracketed
-        && text
-            .chars()
-            .any(|c| (c.is_ascii_control() && c != '\t') || c == '\x7f')
-    {
+    // an unconfirmed interrupt and 0x04 can end a shell. C1 controls such as
+    // U+009B (a one-character CSI) are acted on by some programs as well.
+    // Tab stays ordinary text.
+    if !bracketed && text.chars().any(|c| c.is_control() && c != '\t') {
         anyhow::bail!("This text contains control characters, and the running program has not enabled bracketed paste. Nothing was sent.");
     }
     Ok(if bracketed {

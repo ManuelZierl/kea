@@ -149,3 +149,14 @@ fn an_unreadable_settings_file_is_kept_before_the_first_save() {
     // A valid file needs no backup.
     assert_eq!(Settings::default().save_to(&path).unwrap(), None);
 }
+
+#[test]
+fn a_non_utf8_settings_file_is_backed_up_byte_for_byte() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("settings.conf");
+    let original = b"theme = dark\n# caf\xe9 in Latin-1\n".to_vec();
+    fs::write(&path, &original).unwrap();
+    let backup = Settings::default().save_to(&path).unwrap().unwrap();
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    assert!(Settings::parse(&fs::read_to_string(&path).unwrap()).is_ok());
+}

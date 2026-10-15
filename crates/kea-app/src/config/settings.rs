@@ -218,11 +218,19 @@ impl Settings {
 
     /// Keep an unparsable settings file under the first unused
     /// `<name>.rejected[-N]` name. Never overwrites an existing file.
+    /// The raw bytes are kept, so a non-UTF-8 file is preserved too; a file
+    /// that exists but cannot be read is never overwritten.
     fn preserve_rejected(path: &Path) -> Result<Option<PathBuf>> {
-        let Ok(text) = fs::read_to_string(path) else {
-            return Ok(None);
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("cannot read {} to keep it before saving", path.display())
+                })
+            }
         };
-        if Self::parse(&text).is_ok() {
+        if std::str::from_utf8(&bytes).is_ok_and(|text| Self::parse(text).is_ok()) {
             return Ok(None);
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -239,7 +247,7 @@ impl Settings {
                 .open(&backup)
             {
                 Ok(mut file) => {
-                    file.write_all(text.as_bytes())
+                    file.write_all(&bytes)
                         .and_then(|()| file.sync_all())
                         .with_context(|| format!("cannot back up {}", path.display()))?;
                     return Ok(Some(backup));
