@@ -185,6 +185,11 @@ Sessions are temporary unless Save session or --record is used. Saved recordings
             if let Some((path, entries)) = persisted_history {
                 command_editor::set_history_persistence(path, entries, cx);
             }
+            cx.on_app_quit(|cx| {
+                command_editor::flush_history_persistence(cx);
+                async {}
+            })
+            .detach();
             view::install(cx);
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {

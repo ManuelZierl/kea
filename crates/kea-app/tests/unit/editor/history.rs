@@ -239,3 +239,22 @@ fn the_append_only_file_is_compacted_to_recent_entries() {
     assert_eq!(loaded.len(), DEFAULT_CAPACITY);
     assert_eq!(loaded.last().map(String::as_str), Some("newest"));
 }
+
+#[test]
+fn an_oversized_draft_is_skipped_without_stopping_persistence() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("draft-history.txt");
+    let mut history = DraftHistory::default();
+    history.set_persisted_entries(path.clone(), Vec::new());
+    history.record("x".repeat(COMPACT_HISTORY_FILE_BYTES as usize + 1));
+    history.record("after".into());
+    history.flush();
+    let warning = history.take_persistence_warning().expect("visible skip");
+    assert!(warning.contains("not saved"), "{warning}");
+    // The writer kept running: the next draft reached disk.
+    assert_eq!(load_history_file(&path).unwrap(), vec!["after".to_owned()]);
+    history.record("later".into());
+    assert!(history.flush_within(std::time::Duration::from_secs(5)));
+    assert!(history.take_persistence_warning().is_none());
+    assert_eq!(load_history_file(&path).unwrap().last().unwrap(), "later");
+}

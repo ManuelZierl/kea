@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
+    time::{Duration, Instant},
 };
 
 const DEFAULT_CAPACITY: usize = 500;
@@ -74,12 +75,20 @@ impl DraftHistory {
     }
 
     fn poll_writer(&mut self) {
-        let error = self
+        while let Some(event) = self
             .writer
             .as_ref()
-            .and_then(|writer| writer.errors.try_recv().ok());
-        if let Some(error) = error {
-            self.stop_persistence(error);
+            .and_then(|writer| writer.errors.try_recv().ok())
+        {
+            match event {
+                WriterEvent::Failed(error) => self.stop_persistence(error),
+                // One oversized draft is not saved; later drafts still are.
+                WriterEvent::Skipped(reason) => {
+                    self.persistence_warning = Some(format!(
+                        "A draft was not saved to draft history: {reason}. It is still recallable in this session."
+                    ));
+                }
+            }
         }
     }
 
@@ -94,13 +103,28 @@ impl DraftHistory {
 
     /// Wait until every recorded entry reached the file (or failed).
     pub fn flush(&mut self) {
+        self.flush_within(Duration::MAX);
+    }
+
+    /// Wait at most `limit` for queued entries to reach the file; quitting must
+    /// not lose the last submissions, nor hang on a stalled disk. Returns
+    /// whether everything queued was written (or failed visibly).
+    pub fn flush_within(&mut self, limit: Duration) -> bool {
+        let mut complete = true;
         if let Some(writer) = &self.writer {
             let (done, wait) = mpsc::channel();
             if writer.tx.send(Message::Flush(done)).is_ok() {
-                let _ = wait.recv();
+                let deadline = Instant::now().checked_add(limit);
+                complete = match deadline {
+                    Some(deadline) => wait
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .is_ok(),
+                    None => wait.recv().is_ok(),
+                };
             }
         }
         self.poll_writer();
+        complete
     }
 
     /// Point recall at a plaintext file and seed it with previously saved entries
@@ -210,7 +234,15 @@ enum Message {
 struct Writer {
     path: PathBuf,
     tx: mpsc::Sender<Message>,
-    errors: mpsc::Receiver<String>,
+    errors: mpsc::Receiver<WriterEvent>,
+}
+
+#[derive(Debug)]
+enum WriterEvent {
+    /// Persistence stopped; nothing later is written.
+    Failed(String),
+    /// This entry alone was not written.
+    Skipped(String),
 }
 
 impl Writer {
@@ -222,8 +254,15 @@ impl Writer {
             for message in rx {
                 match message {
                     Message::Append(entry) => {
+                        let bytes = encoded_line_len(&entry);
+                        if bytes > COMPACT_HISTORY_FILE_BYTES {
+                            let _ = error_tx.send(WriterEvent::Skipped(format!(
+                                "it needs {bytes} bytes; the persistence maximum per draft is {COMPACT_HISTORY_FILE_BYTES}"
+                            )));
+                            continue;
+                        }
                         if let Err(error) = append_entry(&worker_path, &entry) {
-                            let _ = error_tx.send(error.to_string());
+                            let _ = error_tx.send(WriterEvent::Failed(error.to_string()));
                             // Stop after the first failure; the UI reports it.
                             return;
                         }
@@ -236,6 +275,10 @@ impl Writer {
         });
         Self { path, tx, errors }
     }
+}
+
+fn encoded_line_len(entry: &str) -> u64 {
+    encode_entry(entry).len() as u64 + 1
 }
 
 fn append_entry(path: &Path, entry: &str) -> std::io::Result<()> {
@@ -269,7 +312,11 @@ fn append_entry(path: &Path, entry: &str) -> std::io::Result<()> {
     }
     file.write_all(line.as_bytes())?;
     file.sync_data()?;
-    if file.metadata()?.len() > COMPACT_HISTORY_FILE_BYTES {
+    let len = file.metadata()?.len();
+    // Windows cannot replace a file that still has an open handle, so close
+    // the append handle before compaction swaps in the rewritten file.
+    drop(file);
+    if len > COMPACT_HISTORY_FILE_BYTES {
         compact(path)?;
     }
     Ok(())

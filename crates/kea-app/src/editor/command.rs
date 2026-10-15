@@ -275,6 +275,16 @@ pub fn set_history_persistence(path: PathBuf, entries: Vec<String>, cx: &mut App
     recall.persisted.set_persisted_entries(path, entries);
 }
 
+/// Give queued draft-history appends a bounded chance to reach disk before
+/// the process exits.
+pub fn flush_history_persistence(cx: &mut App) {
+    if cx.has_global::<DraftRecallGlobal>() {
+        cx.global_mut::<DraftRecallGlobal>()
+            .persisted
+            .flush_within(std::time::Duration::from_secs(2));
+    }
+}
+
 /// Take the first write-through failure for display by the owning workspace.
 /// Recall remains memory-authoritative after persistence stops.
 pub fn take_history_warning(cx: &mut App) -> Option<String> {
