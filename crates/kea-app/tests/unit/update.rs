@@ -129,9 +129,40 @@ fn installers_outside_this_repository_are_never_selected() {
 #[test]
 fn stale_staged_installers_are_removed_but_nothing_else() {
     let root = tempfile::tempdir().unwrap();
-    std::fs::write(root.path().join("kea-update-abc.exe"), b"old installer").unwrap();
+    let old = root.path().join("kea-update-abc.exe");
+    std::fs::write(&old, b"old installer").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - STALE_STAGED_AGE * 2)
+        .unwrap();
+    // Another running Kea may still need the installer it just staged.
+    std::fs::write(root.path().join("kea-update-fresh.exe"), b"fresh").unwrap();
     std::fs::write(root.path().join("notes.txt"), b"keep").unwrap();
-    remove_staged_in(root.path());
-    assert!(!root.path().join("kea-update-abc.exe").exists());
+    remove_staged_in(root.path(), STALE_STAGED_AGE);
+    assert!(!old.exists());
+    assert!(root.path().join("kea-update-fresh.exe").exists());
     assert!(root.path().join("notes.txt").exists());
+}
+
+#[test]
+fn download_urls_are_compared_after_parsing() {
+    let tag = "v0.0.2";
+    let asset = "kea-v0.0.2-windows-x86_64-setup.exe";
+    let good = format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/{asset}");
+    assert!(is_release_download(&good, tag, asset));
+    for bad in [
+        format!("https://github.com/ManuelZierl/kea/releases/download/../../../other/repo/releases/download/{tag}/{asset}"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/%2e%2e/{asset}"),
+        format!("https://github.com.evil.example/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("https://user@github.com/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("https://github.com:8443/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("http://github.com/ManuelZierl/kea/releases/download/{tag}/{asset}"),
+        format!("{good}?redirect=elsewhere"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/v0.0.3/{asset}"),
+        format!("https://github.com/ManuelZierl/kea/releases/download/{tag}/other.exe"),
+    ] {
+        assert!(!is_release_download(&bad, tag, asset), "{bad}");
+    }
 }

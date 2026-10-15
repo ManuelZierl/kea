@@ -19,7 +19,10 @@ use std::{
 const RELEASES_URL: &str = "https://api.github.com/repos/ManuelZierl/kea/releases?per_page=20";
 const MAX_INSTALLER_BYTES: u64 = 128 * 1024 * 1024;
 /// Installers are only fetched from this repository's release downloads.
-const DOWNLOAD_PREFIX: &str = "https://github.com/ManuelZierl/kea/releases/download/";
+const DOWNLOAD_HOST: &str = "github.com";
+const DOWNLOAD_PATH: [&str; 4] = ["ManuelZierl", "kea", "releases", "download"];
+/// Another running Kea may still need a recent staged installer.
+const STALE_STAGED_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// Staged installers live here, so stale ones can be found and removed.
 const STAGING_DIRECTORY: &str = "kea-updates";
 
@@ -135,23 +138,58 @@ fn staging_directory() -> std::path::PathBuf {
     std::env::temp_dir().join(STAGING_DIRECTORY)
 }
 
-/// Remove installers left by earlier update attempts. One that is still running
-/// cannot be deleted on Windows and is skipped. Never touches other files.
+/// Remove installers left by earlier update attempts. Only installers older
+/// than a day go, so another running Kea keeps the one it staged; one that is
+/// still running cannot be deleted on Windows and is skipped. Never touches
+/// other files.
 pub fn remove_stale_staged_updates() {
-    remove_staged_in(&staging_directory());
+    remove_staged_in(&staging_directory(), STALE_STAGED_AGE);
 }
 
-fn remove_staged_in(directory: &Path) {
+fn remove_staged_in(directory: &Path, older_than: Duration) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
+    let now = std::time::SystemTime::now();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with("kea-update-") && name.ends_with(".exe") {
+        if !(name.starts_with("kea-update-") && name.ends_with(".exe")) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| {
+                now.duration_since(modified)
+                    .is_ok_and(|age| age >= older_than)
+            });
+        if stale {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// Only this repository's release downloads for exactly this tag and asset.
+/// Compares the parsed URL, so `..` segments, ports, credentials, queries and
+/// look-alike prefixes cannot point elsewhere. Redirects (to GitHub's asset
+/// storage) are still followed; integrity rests on the release's SHA-256.
+fn is_release_download(url: &str, tag: &str, asset: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let Some(segments) = url.path_segments() else {
+        return false;
+    };
+    let expected = DOWNLOAD_PATH.iter().copied().chain([tag, asset]);
+    url.scheme() == "https"
+        && url.host_str() == Some(DOWNLOAD_HOST)
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && segments.eq(expected)
 }
 
 fn check_for_update() -> Result<Option<UpdateInfo>> {
@@ -191,7 +229,11 @@ fn select_update(current: &Version, releases: &[GithubRelease]) -> Option<Update
                 .find(|asset| asset.name == expected_name)?;
             if asset.size == 0
                 || asset.size > MAX_INSTALLER_BYTES
-                || !asset.browser_download_url.starts_with(DOWNLOAD_PREFIX)
+                || !is_release_download(
+                    &asset.browser_download_url,
+                    &release.tag_name,
+                    &expected_name,
+                )
             {
                 return None;
             }
@@ -233,8 +275,8 @@ fn prepare_update(update: &UpdateInfo) -> Result<StagedUpdate> {
     }
 
     let directory = staging_directory();
-    // Only one staged installer is ever useful; drop earlier attempts first.
-    remove_staged_in(&directory);
+    // Drop abandoned earlier attempts, never another instance's fresh one.
+    remove_staged_in(&directory, STALE_STAGED_AGE);
     std::fs::create_dir_all(&directory).context("cannot create the update staging folder")?;
     let mut staged = tempfile::Builder::new()
         .prefix("kea-update-")
