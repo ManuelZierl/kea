@@ -229,3 +229,77 @@ fn powershell_hooks_preserve_prompt_and_native_status_without_wrapping_input() {
         "{stdout}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn bash_hook_preserves_prompt_command_with_trailing_separator() {
+    use std::ffi::OsString;
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let installed = Command::new("bash")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !installed {
+        eprintln!("skipping: bash is not installed");
+        return;
+    }
+    // Common profile idiom: `PROMPT_COMMAND="history -a; $PROMPT_COMMAND"`
+    // leaves a trailing `; `, which a `;`-joined hook turns into `; ;`.
+    for user_hook in [
+        "echo user-hook; ",
+        "echo user-hook &>/dev/null; echo user-hook",
+        "echo user-hook\n",
+    ] {
+        let mut integration = ShellFlavor::Posix.integration(&[OsString::from("bash")]);
+        for byte in &mut integration {
+            if *byte == b'\r' {
+                *byte = b'\n';
+            }
+        }
+        let mut child = Command::new("bash")
+            .args(["--noprofile", "--norc", "-i"])
+            .env("HISTFILE", "/dev/null")
+            .env("PROMPT_COMMAND", user_hook)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn bash");
+        {
+            let stdin = child.stdin.as_mut().expect("piped bash stdin");
+            stdin.write_all(&integration).expect("feed hook");
+            stdin.write_all(b"true\nexit\n").expect("feed command");
+        }
+        let output = child.wait_with_output().expect("reap bash");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("syntax error"),
+            "hook broke PROMPT_COMMAND {user_hook:?}:\n{stderr}"
+        );
+        assert!(
+            stdout.contains("\x1b]779;kea;input;1;local;posix;ready\x07"),
+            "expected a ready report with PROMPT_COMMAND {user_hook:?}; got:\n{stdout}"
+        );
+        assert!(
+            stdout.matches("user-hook").count() >= 2,
+            "user PROMPT_COMMAND {user_hook:?} must keep running; got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn only_bash_bootstrap_is_unprefixed_for_explicit_history_deletion() {
+    use std::ffi::OsString;
+    let bash = ShellFlavor::Posix.integration_for(&[OsString::from("/bin/bash")], "local");
+    assert!(bash.starts_with(b"if "));
+    for shell in ["/bin/zsh", "/bin/sh", "/usr/bin/ksh"] {
+        let script = ShellFlavor::Posix.integration_for(&[OsString::from(shell)], "local");
+        assert!(
+            script.starts_with(b" if "),
+            "{shell} bootstrap must be space-prefixed"
+        );
+    }
+}

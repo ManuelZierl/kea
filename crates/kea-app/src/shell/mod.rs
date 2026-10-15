@@ -77,14 +77,21 @@ impl ShellFlavor {
                 let report = r#"__kea_context='@CONTEXT@'; __kea_before_prompt() { __kea_status=$?; printf '\033]777;kea;native-done;%s;%d\007' "$__kea_context" "$__kea_status"; return "$__kea_status"; }; __kea_prompt() { __kea_dir=$(printf '%s' "$PWD" | command base64 2>/dev/null | tr -d '\r\n'); __kea_path=$(printf '%s' "$PATH" | command base64 2>/dev/null | tr -d '\r\n'); printf '\033]777;kea;prompt;%s\007\033]778;kea;path;%s\007\033]779;kea;input;1;%s;posix;ready\007' "$__kea_dir" "$__kea_path" "$__kea_context"; return "${__kea_status:-0}"; }; "#;
                 let hook = match name {
                     "bash" => {
-                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND=(__kea_before_prompt "${PROMPT_COMMAND[@]}" __kea_prompt); else PROMPT_COMMAND="__kea_before_prompt; ${PROMPT_COMMAND:+$PROMPT_COMMAND; }__kea_prompt"; fi; PS0="${PS0-}"$(printf '\033]779;kea;input;1;%s;posix;busy\007\033]777;kea;native-start;%s\007' "$__kea_context" "$__kea_context"); history -d $HISTCMD 2>/dev/null"#
+                        r#"if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then PROMPT_COMMAND=(__kea_before_prompt "${PROMPT_COMMAND[@]}" __kea_prompt); else __kea_nl=$'\n'; PROMPT_COMMAND="__kea_before_prompt${__kea_nl}${PROMPT_COMMAND:+$PROMPT_COMMAND${__kea_nl}}__kea_prompt"; fi; PS0="${PS0-}"$(printf '\033]779;kea;input;1;%s;posix;busy\007\033]777;kea;native-start;%s\007' "$__kea_context" "$__kea_context"); history -d $HISTCMD 2>/dev/null"#
                     }
                     "zsh" => {
                         r#"precmd_functions=(__kea_before_prompt "${precmd_functions[@]}" __kea_prompt); __kea_preexec() { printf '\033]779;kea;input;1;%s;posix;busy\007\033]777;kea;native-start;%s\007' "$__kea_context" "$__kea_context"; }; preexec_functions+=(__kea_preexec)"#
                     }
                     _ => r#"PS1='$(__kea_before_prompt; __kea_prompt)'"${PS1:-$ }""#,
                 };
-                format!("if [ -z \"${{__kea_installed-}}\" ]; then __kea_installed=1; {report}{hook}; fi\n")
+                // Newline-joined PROMPT_COMMAND keeps user values ending in `;`,
+                // `&` or a newline valid. Bash deletes the bootstrap from history
+                // explicitly; that must stay unprefixed, because with
+                // `ignorespace` `history -d $HISTCMD` would delete the user's
+                // previous command instead. Other shells cannot delete the line,
+                // so a leading space lets HIST_IGNORE_SPACE/ignorespace skip it.
+                let prefix = if name == "bash" { "" } else { " " };
+                format!("{prefix}if [ -z \"${{__kea_installed-}}\" ]; then __kea_installed=1; {report}{hook}; fi\n")
                     .replace("@CONTEXT@", context).into_bytes()
             }
         }
