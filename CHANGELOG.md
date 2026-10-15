@@ -12,6 +12,11 @@
 - Overlay Ctrl-C confirmation without resizing the terminal or its child PTY.
 - Support bounded, newest-wins OSC 52 system-clipboard stores from the visible
   live terminal; hidden tabs and historical views cannot change the clipboard.
+- Copy text that scrolled out of view: **tmux history** reads a tmux tab's
+  pane history exactly through `capture-pane` (local or SSH), and **Capture
+  scroll** rebuilds a selected region while a full-screen app scrolls, marking
+  unalignable gaps instead of guessing. Both open a read-only review viewer;
+  nothing is copied without an explicit action.
 - Show composer drafts as **draft tabs** owned by their terminal tab: `---`,
   Split and **+** open a new tab; titles follow the draft's first line; tabs can
   be closed (reopenable) or moved to another terminal tab as text. New

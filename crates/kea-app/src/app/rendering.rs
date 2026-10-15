@@ -22,6 +22,7 @@ const TERMINAL_SELECTION_FOREGROUND: u32 = 0xffffff;
 impl Render for KeaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.validate_workflow(window, cx);
+        self.observe_scroll_capture();
         let editor = self.editor.clone();
         let enabled = self.session.input_allowed();
         self.reverse_search.update(cx, |search, cx| {
@@ -225,6 +226,7 @@ impl Render for KeaView {
                 )
             })
             .child(div().flex_1())
+            .child(self.scroll_capture_controls(terminal_selection_available, cx))
             .child(self.interrupt_toggle(cx))
             .when(!compact_chrome, |header| {
                 header.child(if terminal_display_offset == 0 {

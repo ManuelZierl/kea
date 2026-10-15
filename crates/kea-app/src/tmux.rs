@@ -32,6 +32,10 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const KILL_SUCCESS_MARKER: &str = "KEA_TMUX_KILL_CONFIRMED";
 const STALE_SESSION_MESSAGE: &str = "Kea: tmux session changed; refresh and retry";
 const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+/// Pane history is bounded in lines (tmux's own history-limit usually is lower)
+/// and bytes; exceeding the byte cap fails visibly instead of truncating.
+pub const MAX_HISTORY_LINES: usize = 50_000;
+pub const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
 
 /// A connection chosen by the user, never inferred from terminal output.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -265,6 +269,64 @@ pub fn attach_command(session: &TmuxSession) -> Result<Vec<std::ffi::OsString>> 
     }
 }
 
+/// Read the text history of the session's active pane through tmux's own API
+/// (`capture-pane`), guarded against a restarted server or replaced session.
+/// Wrapped lines are joined; nothing is inferred from terminal output.
+pub fn capture_history(session: &TmuxSession) -> Result<String> {
+    #[cfg(not(unix))]
+    {
+        let _ = session;
+        bail!("native tmux management is supported only on Unix")
+    }
+
+    #[cfg(unix)]
+    {
+        let command = session.host.command(capture_args(session)?, false);
+        let output = run_command_limited(
+            &command[0],
+            command[1..].iter().map(String::as_str),
+            session.host.timeout(),
+            None,
+            MAX_HISTORY_BYTES,
+        )
+        .with_context(|| format!("reading tmux history on {}", session.host.label()))?;
+        history_from_output(&output)
+    }
+}
+
+/// tmux argv (after the program) that prints the guarded pane history.
+fn capture_args(session: &TmuxSession) -> Result<Vec<String>> {
+    let target = validated_target(&session.id)?;
+    let mut args = vec!["-u".to_owned()];
+    #[cfg(unix)]
+    args.extend(guarded_command_args(
+        session,
+        &format!("capture-pane -p -J -S -{MAX_HISTORY_LINES} -t {target}"),
+        None,
+    ));
+    #[cfg(not(unix))]
+    let _ = target;
+    Ok(args)
+}
+
+fn history_from_output(output: &Output) -> Result<String> {
+    if !output.status.success() {
+        bail!("tmux capture-pane failed: {}", command_error(output))
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    if text.trim_end() == STALE_SESSION_MESSAGE {
+        bail!("The tmux session changed since this tab attached; nothing was read")
+    }
+    // -J keeps trailing cell padding, and the visible screen is padded with
+    // empty rows below the content; neither is part of the text.
+    let lines = text.lines().map(str::trim_end).collect::<Vec<_>>();
+    let end = lines
+        .iter()
+        .rposition(|line| !line.is_empty())
+        .map_or(0, |i| i + 1);
+    Ok(lines[..end].join("\n"))
+}
+
 fn parse_sessions(bytes: &[u8]) -> Result<Vec<TmuxSession>> {
     let text = std::str::from_utf8(bytes).context("tmux returned non-UTF-8 session metadata")?;
     let mut sessions = Vec::new();
@@ -390,11 +452,12 @@ struct NonblockingPipe<R> {
     reader: R,
     bytes: Vec<u8>,
     closed: bool,
+    limit: usize,
 }
 
 #[cfg(unix)]
 impl<R: AsRawFd> NonblockingPipe<R> {
-    fn new(reader: R) -> Result<Self> {
+    fn new(reader: R, limit: usize) -> Result<Self> {
         let fd = reader.as_raw_fd();
         let flags = OFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFL)?);
         fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
@@ -402,6 +465,7 @@ impl<R: AsRawFd> NonblockingPipe<R> {
             reader,
             bytes: Vec::new(),
             closed: false,
+            limit,
         })
     }
 }
@@ -417,8 +481,8 @@ fn drain_pipe<R: Read>(pipe: &mut NonblockingPipe<R>) -> Result<()> {
             }
             Ok(size) => {
                 pipe.bytes.extend_from_slice(&buffer[..size]);
-                if pipe.bytes.len() > MAX_COMMAND_OUTPUT {
-                    bail!("command output exceeds {MAX_COMMAND_OUTPUT} bytes")
+                if pipe.bytes.len() > pipe.limit {
+                    bail!("command output exceeds {} bytes", pipe.limit)
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -454,6 +518,20 @@ fn run_command_with_tmpdir<'a, I>(
 where
     I: IntoIterator<Item = &'a str>,
 {
+    run_command_limited(program, args, timeout, tmux_tmpdir, MAX_COMMAND_OUTPUT)
+}
+
+#[cfg(unix)]
+fn run_command_limited<'a, I>(
+    program: &str,
+    args: I,
+    timeout: Duration,
+    tmux_tmpdir: Option<&std::path::Path>,
+    limit: usize,
+) -> Result<Output>
+where
+    I: IntoIterator<Item = &'a str>,
+{
     let mut command = Command::new(program);
     command
         .args(args)
@@ -465,8 +543,14 @@ where
         command.env("TMUX_TMPDIR", tmux_tmpdir);
     }
     let mut child = command.spawn()?;
-    let stdout = NonblockingPipe::new(child.stdout.take().context("capturing command stdout")?)?;
-    let stderr = NonblockingPipe::new(child.stderr.take().context("capturing command stderr")?)?;
+    let stdout = NonblockingPipe::new(
+        child.stdout.take().context("capturing command stdout")?,
+        limit,
+    )?;
+    let stderr = NonblockingPipe::new(
+        child.stderr.take().context("capturing command stderr")?,
+        MAX_COMMAND_OUTPUT,
+    )?;
     run_command_loop(child, stdout, stderr, timeout)
 }
 

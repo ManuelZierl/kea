@@ -149,6 +149,30 @@ Some distinctions remain impossible in classic terminal protocols, and OS/window
 
 See [terminal compatibility gate](terminal-compatibility-alpha.md).
 
+## Copying long output from full-screen apps
+
+Kea's terminal selection copies only what you selected and never sends Ctrl-C to
+the app. Full-screen apps (agent TUIs, pagers, editors) draw on the alternate
+screen, which has no scrollback, and inside tmux the history belongs to tmux. Two
+tools cover text that scrolled out of view:
+
+- **tmux history** (top bar, shown for tmux tabs opened from the tmux manager)
+  reads the pane's history through tmux itself (`capture-pane`, wrapped lines
+  joined, at most 50,000 lines and 8 MiB), locally or over SSH. The text is
+  exact and opens in a read-only, searchable viewer: select and copy, or
+  **Copy all**.
+- **Capture scroll** rebuilds text an app scrolls through. Select the area to
+  capture first (Shift+Alt-drag makes a block selection, which leaves side
+  panels out), click **Capture scroll** in the terminal header, then scroll the
+  app as usual; wheel and keys still go to the app. Kea records the selected
+  rectangle whenever the screen changes. **Done** shows the rebuilt text for
+  review; **Cancel** discards it. Rows that stay fixed (headers, input boxes)
+  appear once. Snapshots are joined only where their overlap is unambiguous;
+  otherwise the viewer shows a marked gap rather than a guess. Scroll in small
+  steps and avoid capturing while the app streams new output.
+
+Nothing is copied until you select text in the viewer or click **Copy all**.
+
 ## Current directory and completion
 
 For supported interactive local shells, Kea installs a small prompt hook that preserves the user's prompt/profile and explicitly reports cwd/readiness plus the effective PATH.

@@ -40,6 +40,8 @@ enum TerminalBacking {
     Tmux {
         session_name: String,
         host: TmuxHost,
+        /// The exact session (id + server identity) this tab attached to.
+        session: TmuxSession,
     },
 }
 
@@ -50,6 +52,12 @@ struct TerminalTab {
     last_focus: InitialFocus,
     _events: Subscription,
     _changes: Subscription,
+}
+
+struct TmuxHistoryResult {
+    tab: TabId,
+    title: String,
+    text: Result<String, String>,
 }
 
 struct TmuxUiResult {
@@ -79,6 +87,8 @@ pub(super) struct KeaRoot {
     tmux_sessions: Vec<TmuxSession>,
     tmux_generation: u64,
     tmux_tx: Sender<TmuxUiResult>,
+    history_tx: Sender<TmuxHistoryResult>,
+    history_loading: Option<TabId>,
     _tmux_pump: Task<()>,
     tmux_host: TmuxHost,
     tmux_host_input: Entity<InputState>,
@@ -124,12 +134,17 @@ impl KeaRoot {
             }
         });
         let (tmux_tx, tmux_rx) = mpsc::channel::<TmuxUiResult>();
+        let (history_tx, history_rx) = mpsc::channel::<TmuxHistoryResult>();
         let tmux_pump = cx.spawn_in(window, async move |this, cx| loop {
             Timer::after(Duration::from_millis(50)).await;
             let disconnected = cx
-                .update(|_, cx| {
+                .update(|window, cx| {
                     this.update(cx, |this, cx| {
                         let mut changed = false;
+                        while let Ok(result) = history_rx.try_recv() {
+                            this.show_tmux_history(result, window, cx);
+                            changed = true;
+                        }
                         while let Ok(result) = tmux_rx.try_recv() {
                             if result.generation != this.tmux_generation {
                                 continue;
@@ -187,6 +202,8 @@ impl KeaRoot {
             tmux_sessions: Vec::new(),
             tmux_generation: 0,
             tmux_tx,
+            history_tx,
+            history_loading: None,
             _tmux_pump: tmux_pump,
             tmux_host: TmuxHost::default(),
             tmux_host_input,
@@ -321,6 +338,7 @@ impl KeaRoot {
         self.held_keys = Some(tab.view.update(cx, |view, cx| {
             let held = HeldWorkflowKeys::take(view);
             view.visible = false;
+            view.scroll_capture = None;
             view.cancel_workflow();
             view.pending_run = None;
             view.composer_enter_down = false;
@@ -440,6 +458,60 @@ impl KeaRoot {
         );
         self.notice = None;
         self.focus_selected(window, cx);
+    }
+
+    /// Read the active tmux tab's pane history off the UI thread.
+    fn request_tmux_history(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.tabs.active_id() else {
+            return;
+        };
+        let Some(TerminalBacking::Tmux { session, .. }) =
+            self.tabs.get(id).map(|tab| tab.backing.clone())
+        else {
+            return;
+        };
+        if self.history_loading.is_some() {
+            return;
+        }
+        self.history_loading = Some(id);
+        let tx = self.history_tx.clone();
+        let title = format!(
+            "tmux history · {} on {}",
+            session.name(),
+            session.host().label()
+        );
+        std::thread::spawn(move || {
+            let text = tmux::capture_history(&session).map_err(|error| format!("{error:#}"));
+            let _ = tx.send(TmuxHistoryResult {
+                tab: id,
+                title,
+                text,
+            });
+        });
+        cx.notify();
+    }
+
+    fn show_tmux_history(
+        &mut self,
+        result: TmuxHistoryResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_loading = None;
+        // A result for a tab that is no longer shown is dropped, not misattributed.
+        if self.tabs.active_id() != Some(result.tab) {
+            return;
+        }
+        match result.text {
+            Ok(text) => text_viewer::open(
+                result.title,
+                text_viewer::TextSource::Exact,
+                text,
+                window,
+                cx,
+            ),
+            Err(error) => self.notice = Some(format!("Could not read tmux history: {error}")),
+        }
     }
 
     fn next_tmux_generation(&mut self) -> u64 {
@@ -592,6 +664,7 @@ impl KeaRoot {
         let backing = TerminalBacking::Tmux {
             session_name: tmux_session.name().into(),
             host: tmux_session.host().clone(),
+            session: tmux_session.clone(),
         };
         self.attach(view, title, backing, focus, window, cx);
         self.tmux_open = false;
@@ -688,7 +761,9 @@ impl KeaRoot {
                 format!("Close {}?", tab.title),
                 "Closing ends this terminal's process and discards its draft and temporary history. Saved recordings remain on disk. Other terminals keep running.".to_string(),
             ),
-            TerminalBacking::Tmux { session_name, host } => (
+            TerminalBacking::Tmux {
+                session_name, host, ..
+            } => (
                 format!("Detach from tmux session {session_name} on {}?", host.label()),
                 format!(
                     "Closing ends only this Kea tmux client. The persistent tmux session {session_name} on {} keeps running and can be attached again from the tmux manager.", host.label()
@@ -1215,6 +1290,31 @@ impl Render for KeaRoot {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(strip)
+                    .when(
+                        matches!(
+                            self.tabs.active().map(|tab| &tab.backing),
+                            Some(TerminalBacking::Tmux { .. })
+                        ),
+                        |bar| {
+                            bar.child(
+                                Button::new("tmux-history-button")
+                                    .label(if self.history_loading.is_some() {
+                                        "Reading history…"
+                                    } else {
+                                        "tmux history"
+                                    })
+                                    .tooltip(
+                                        "Show this tmux pane's full history as exact text to select and copy",
+                                    )
+                                    .ghost()
+                                    .small()
+                                    .disabled(self.history_loading.is_some())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.request_tmux_history(cx)
+                                    })),
+                            )
+                        },
+                    )
                     .child(
                         Button::new("tmux-manager-button")
                             .label("tmux")
