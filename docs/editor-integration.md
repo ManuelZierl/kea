@@ -28,7 +28,7 @@ Copy, Cut, Paste, Undo, Redo, Select All and Find are semantic actions dispatche
 
 Submit applies only to the focused command editor, not a block, filter, embedded find field or terminal. Explicit ready input submits immediately; other states require confirmation. Submission never wraps the draft in shell source. While composition is active it does nothing. Enter remains the editor's newline/candidate-confirmation key; no shell command is sent until an explicit execution action succeeds.
 
-A successful submission replaces the draft editor with a fresh entity and fresh undo history. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
+A successful submission replaces the draft editor with a fresh, empty entity whose only undo step restores the submitted text as an unsent draft. It never mutates a historical command. Edit as new copies a prior command into a fresh draft, requires the existing draft to be empty, and never executes automatically. Undo cannot undo a shell side effect.
 
 The terminal and editor are separated by a draggable platform-component divider. Resizing changes presentation and the measured PTY dimensions; it does not create another session or execution mode.
 

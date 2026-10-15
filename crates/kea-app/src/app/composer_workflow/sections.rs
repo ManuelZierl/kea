@@ -311,6 +311,7 @@ impl KeaView {
 
     pub(in crate::app) fn finish_section_submission(
         &mut self,
+        submitted: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -320,10 +321,10 @@ impl KeaView {
         let mut editors = self.composer_workflow.sections.clone();
         editors.remove(index);
         if index == editors.len() {
-            editors.push(command_editor::new_draft(
+            editors.push(command_editor::draft_after_submission(
                 self.shell,
                 &self.settings,
-                "",
+                submitted,
                 window,
                 cx,
             ));

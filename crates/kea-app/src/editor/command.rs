@@ -184,6 +184,26 @@ pub fn new_draft(
     editor
 }
 
+/// The empty draft that replaces a successfully submitted one. Its only undo
+/// step restores `submitted` as an unsent draft, so input a receiver silently
+/// ignored (for example a TUI that was not reading text) costs one Undo rather
+/// than a retype. Undo only edits this draft; it never re-sends anything.
+pub fn draft_after_submission(
+    shell: Option<ShellFlavor>,
+    settings: &Settings,
+    submitted: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    let editor = new_draft(shell, settings, submitted, window, cx);
+    if !submitted.is_empty() {
+        editor.update(cx, |state, cx| {
+            state.replace_text_in_range(Some(0..submitted.encode_utf16().count()), "", window, cx);
+        });
+    }
+    editor
+}
+
 /// Apply presentation-only composer settings without replacing the entity, text,
 /// selection, or undo history.
 pub fn apply_settings(

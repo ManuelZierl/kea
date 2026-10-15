@@ -67,7 +67,7 @@ fn structural_splits_keep_other_entities_and_undo_restores_literal_marker(cx: &m
             assert_eq!(this.editor.read(cx).value().as_ref(), text);
             this.undo_composer_layout(true, window, cx);
             let second = this.composer_workflow.sections[1].clone();
-            this.finish_section_submission(window, cx);
+            this.finish_section_submission("first", window, cx);
             assert_eq!(this.editor, second);
             assert_eq!(this.composer_workflow.sections.len(), 1);
             assert!(this.composer_workflow.undo.is_empty());
@@ -99,7 +99,7 @@ fn failed_send_preserves_all_sections(cx: &mut TestAppContext) {
             this.navigate_composer(true, window, cx);
             assert_eq!(this.editor, sections[1]);
             assert_eq!(this.editor.read(cx).value().as_ref(), "second");
-            this.finish_section_submission(window, cx);
+            this.finish_section_submission("second", window, cx);
             assert_eq!(this.composer_workflow.sections[0], sections[0]);
             assert!(this.editor.read(cx).value().is_empty());
             assert!(this.has_pending_sections(cx));

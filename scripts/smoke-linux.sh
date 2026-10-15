@@ -753,8 +753,15 @@ for _ in $(seq 1 60); do
   sleep .1
 done
 [[ -n "$found" ]] || { cat smoke-artifacts/document.log; exit 1; }
+# Undo in the fresh draft restores the exact submitted text as an unsent draft
+# (for input a receiver ignored); it must not execute anything again.
+key ctrl+z ctrl+a ctrl+c
+assert_clipboard $'printf "kea_doc_one ä\\n";\nprintf "kea_doc_two\\n"'
+sleep .5
+fkey F10
+[[ "$(grep -c 'kea_doc_one ä' <(clipboard))" == "$(grep -c 'kea_doc_one ä' smoke-artifacts/document.txt)" ]] || { echo 'Undo re-executed a submission'; exit 1; }
 put_clipboard KEEP
-key ctrl+z ctrl+a ctrl+c; assert_clipboard KEEP
+key ctrl+shift+z ctrl+a ctrl+c; assert_clipboard KEEP
 smoke_click "$((WIDTH-320))" 234
 sleep .3
 key ctrl+a ctrl+c
