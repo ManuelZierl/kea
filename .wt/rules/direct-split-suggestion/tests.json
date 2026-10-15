@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "menu-only-suggestion",
+      "files": [{ "path": "crates/kea-app/src/app/composer_workflow/rendering.rs", "content": "fn render() { button(\"composer-recommendation\", \"Split here\").on_click(cx.listener(|this, _, window, cx| this.open_composer_actions(window, cx))); }" }],
+      "expect": [{ "path": "crates/kea-app/src/app/composer_workflow/rendering.rs", "code": "menu-only-suggestion", "kind": "violation" }]
+    },
+    {
+      "name": "dispatch-split-with-menu-for-other-hints",
+      "files": [{ "path": "crates/kea-app/src/app/composer_workflow/rendering.rs", "content": "fn render() { button(\"composer-recommendation\", label).on_click(cx.listener(move |this, _, window, cx| { if let Some(plan) = &split_plan { this.accept_split_recommendation(&target, plan.clone(), window, cx); } else { this.open_composer_actions(window, cx); } })); }" }],
+      "expect": []
+    }
+  ]
+}

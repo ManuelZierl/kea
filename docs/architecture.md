@@ -106,9 +106,10 @@ Kea does not install remotely, infer prompt text, or treat SSH specially.
 ### Persistent terminal resources
 
 Kea tabs own terminal clients, not every resource reached through those clients.
-The first explicit resource integration is local tmux: `kea-app::tmux` queries
-the local tmux server through bounded subprocess output and exposes sessions to
-the workspace UI. A tmux-backed tab directly launches `tmux attach-session`
+The first explicit resource integration is tmux: `kea-app::tmux` queries
+the local or explicitly selected SSH host's tmux server through bounded subprocess
+output and exposes sessions to the workspace UI. A tmux-backed tab launches
+`tmux attach-session` locally or through the system SSH client
 through the existing PTY path. Dropping the tab therefore drops the client while
 the tmux server/session remains authoritative and persistent. Session destruction
 is a separate confirmed tmux operation.
@@ -116,9 +117,10 @@ is a separate confirmed tmux operation.
 tmux discovery and lifecycle commands run off the UI thread. The manager uses
 tmux session IDs as operation targets and names only as presentation. It does not
 change `kea-core`, `kea-document`, the PTY protocol, input-context semantics,
-or terminal-output parsing. The initial integration is local/default-server only;
-future SSH support should provide an explicit connection/host layer rather than
-detecting SSH or remote tmux from terminal content.
+or terminal-output parsing. Each session carries its chosen host; remote command
+operands are shell-quoted for SSH, and discovery never prompts or falls back to a
+different host. SSH contexts come from explicit picker choices or Kea-created
+tmux tab ownership, never terminal content or process-name guesses.
 
 ## Text services and key routing
 

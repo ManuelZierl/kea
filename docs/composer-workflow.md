@@ -38,10 +38,15 @@ metadata, not an atomic guarantee that the foreground process cannot change.
 
 ## Independent pending drafts
 
-**Split at cursor** (`Ctrl+Alt+Enter`) creates a structural boundary. The active
-section is visibly identified. `Alt+PageUp` / `Alt+PageDown` focus the previous or
+**Split at cursor** (`Ctrl+Alt+Enter`) creates a structural boundary and puts the
+caret at the start of the following draft. The active section is visibly
+identified. Click a draft's header to focus it, or use `Alt+PageUp` /
+`Alt+PageDown` to focus the previous or
 next section. **Merge with previous** inserts a newline between the two drafts;
 Kea does not infer shell operators, command boundaries or dependencies.
+The **Merge ↑** control on each draft joins it to the previous one. Editor heights
+scale with your font size; clicking inside a draft preserves the list's reading
+position, while explicit draft navigation reveals its header.
 
 Ctrl+Enter always submits the whole active section through the existing guarded
 submission path, even if some of its text is selected. After successful delivery,
@@ -95,6 +100,11 @@ Typing and pasting use the same passive recognition. A suggestion never changes
 text, intercepts Enter/Tab, removes a marker or sends bytes. Ignoring it submits
 the original input under the normal submission policy. Pasted YAML separators,
 Markdown prompts, here-documents and literal templates are not special syntax.
+
+Click **Split here** on a `---` suggestion to split immediately, remove that
+marker and focus the following draft. No menu or preview is required. This is an
+explicit, undoable edit, never a submission; ignoring the suggestion still leaves
+the marker literal.
 
 Use **Actions** or `Ctrl+.` to deliberately open the action menu. Only that menu
 owns Up/Down, Enter and Escape. Transformations show the proposed replacement

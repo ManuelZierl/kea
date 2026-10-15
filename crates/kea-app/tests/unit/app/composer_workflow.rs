@@ -1,6 +1,6 @@
 use super::{workflow, EditPlan, KeaView};
 use crate::app::InitialFocus;
-use gpui::{App, AppContext as _, Context, Entity, TestAppContext, Window};
+use gpui::{App, AppContext as _, Context, Entity, Focusable as _, TestAppContext, Window};
 use gpui_component::{input::RopeExt as _, Root};
 use kea_app::config::{keybindings::Keymap, settings::Settings};
 use kea_app::editor::command as command_editor;
@@ -90,8 +90,12 @@ fn failed_send_preserves_all_sections(cx: &mut TestAppContext) {
             let sections = this.composer_workflow.sections.clone();
             this.run_shell(window, cx); // demo/history rejects live input
             assert_eq!(this.composer_workflow.sections, sections);
-            assert_eq!(this.editor.read(cx).value().as_ref(), "first\n");
+            assert_eq!(this.editor, sections[1]);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "second");
             assert!(this.has_pending_sections(cx));
+            this.navigate_composer(false, window, cx);
+            assert_eq!(this.editor, sections[0]);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "first\n");
             this.navigate_composer(true, window, cx);
             assert_eq!(this.editor, sections[1]);
             assert_eq!(this.editor.read(cx).value().as_ref(), "second");
@@ -145,4 +149,91 @@ fn opening_and_cancelling_actions_keeps_literal_input(cx: &mut TestAppContext) {
         Root::new(view, window, cx)
     });
     window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn split_suggestion_applies_once_without_a_menu_and_focuses_following_draft(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let view = make_view(window, cx);
+        view.update(cx, |this, cx| {
+            let text = "écho first\n---\nsecond";
+            let cursor = text.find("---").unwrap() + 3;
+            write_at(this, text, cursor, window, cx);
+            let target = this.editor.clone();
+            let events = this.session.recording().events().len();
+            let rec = this.composer_recommendations(cx).remove(0);
+            let plan = EditPlan::for_recommendation(text, cursor, &rec, None).unwrap();
+            this.accept_split_recommendation(&target, plan.clone(), window, cx);
+            assert!(this.composer_workflow.menu.is_none());
+            assert_eq!(this.composer_workflow.sections.len(), 2);
+            assert_eq!(
+                this.composer_workflow.sections[0].read(cx).value().as_ref(),
+                "écho first"
+            );
+            assert_eq!(this.editor.read(cx).value().as_ref(), "second");
+            assert_eq!(this.composer_workflow.active, 1);
+            assert_eq!(this.editor.read(cx).cursor(), 0);
+            assert!(this.editor.focus_handle(cx).is_focused(window));
+            assert_eq!(this.session.recording().events().len(), events);
+            // A second queued click cannot split the newly focused editor.
+            this.accept_split_recommendation(&target, plan, window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 2);
+            this.undo_composer_layout(false, window, cx);
+            assert_eq!(this.editor, target);
+            assert_eq!(this.editor.read(cx).value().as_ref(), text);
+        });
+        Root::new(view, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[gpui::test]
+fn split_suggestion_rejects_changed_text_caret_and_section_limit(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let window = cx.add_window(|window, cx| {
+        let view = make_view(window, cx);
+        view.update(cx, |this, cx| {
+            let text = "first\n---\nsecond";
+            let cursor = 9;
+            write_at(this, text, cursor, window, cx);
+            let target = this.editor.clone();
+            let rec = this.composer_recommendations(cx).remove(0);
+            let plan = EditPlan::for_recommendation(text, cursor, &rec, None).unwrap();
+            write_at(this, text, 0, window, cx);
+            this.accept_split_recommendation(&target, plan.clone(), window, cx);
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            write_at(this, "edited", 6, window, cx);
+            this.accept_split_recommendation(&target, plan.clone(), window, cx);
+            assert_eq!(this.editor.read(cx).value().as_ref(), "edited");
+            assert_eq!(this.composer_workflow.sections.len(), 1);
+            write_at(this, text, cursor, window, cx);
+            for _ in 1..workflow::MAX_SECTIONS {
+                let editor =
+                    command_editor::new_draft(this.shell, &this.settings, "keep", window, cx);
+                this.composer_workflow.sections.push(editor);
+            }
+            this.accept_split_recommendation(&target, plan, window, cx);
+            assert_eq!(
+                this.composer_workflow.sections.len(),
+                workflow::MAX_SECTIONS
+            );
+            assert_eq!(this.editor.read(cx).value().as_ref(), text);
+            assert!(this.composer_workflow.undo.is_empty());
+        });
+        Root::new(view, window, cx)
+    });
+    window.update(cx, |_, _, _| {}).unwrap();
+}
+
+#[test]
+fn split_editor_height_scales_with_font_and_counts_trailing_empty_lines() {
+    use super::rendering::section_editor_height;
+    use gpui::px;
+    assert_eq!(section_editor_height("", 16.), px(72.));
+    assert_eq!(section_editor_height("one\ntwo\nthree\n", 16.), px(92.));
+    assert_eq!(section_editor_height("one\ntwo\nthree\n", 32.), px(172.));
+    assert_eq!(section_editor_height(&"line\n".repeat(100), 16.), px(212.));
 }

@@ -66,7 +66,6 @@ impl KeaView {
         self.composer_workflow.active = index;
         self.editor = editor;
         self.observe_composer(cx);
-        self.composer_workflow.scroll.scroll_to_item(index);
         cx.notify();
     }
 
@@ -87,6 +86,7 @@ impl KeaView {
             (active + count - 1) % count
         };
         self.select_composer_section(index, cx);
+        self.composer_workflow.scroll.scroll_to_top_of_item(index);
         self.focus_editor(window, cx);
     }
 
@@ -126,6 +126,7 @@ impl KeaView {
         self.composer_workflow.subscriptions =
             observe_sections(&self.composer_workflow.sections, cx);
         self.select_composer_section(active, cx);
+        self.composer_workflow.scroll.scroll_to_top_of_item(active);
         self.focus_editor(window, cx);
     }
 
@@ -149,7 +150,7 @@ impl KeaView {
         let text = self.editor.read(cx).value();
         let cursor = self.editor.read(cx).cursor();
         if let Some(plan) = EditPlan::split(&text, cursor) {
-            self.apply_composer_plan(plan, window, cx);
+            self.apply_composer_split(plan, window, cx);
         } else {
             self.notice = Some(
                 "This draft exceeds the 256 KiB editor-action limit; it was not changed.".into(),
@@ -161,6 +162,25 @@ impl KeaView {
     pub(in crate::app) fn apply_composer_plan(
         &mut self,
         plan: EditPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_composer_plan_at(plan, 0, window, cx);
+    }
+
+    pub(in crate::app) fn apply_composer_split(
+        &mut self,
+        plan: EditPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_composer_plan_at(plan, 1, window, cx);
+    }
+
+    fn apply_composer_plan_at(
+        &mut self,
+        plan: EditPlan,
+        active_offset: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -211,8 +231,17 @@ impl KeaView {
                 .iter()
                 .map(|text| command_editor::new_draft(self.shell, &self.settings, text, window, cx))
                 .collect::<Vec<_>>();
+            if active_offset == 1 {
+                replacements[1].update(cx, |state, cx| {
+                    state.set_cursor_position(
+                        gpui_component::input::Position::default(),
+                        window,
+                        cx,
+                    );
+                });
+            }
             editors.splice(index..index + 1, replacements);
-            self.install_layout(editors, index, window, cx);
+            self.install_layout(editors, index + active_offset, window, cx);
             self.retain_layout_change(before, cx);
         }
         self.composer_workflow.menu = None;

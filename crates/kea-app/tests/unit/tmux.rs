@@ -9,6 +9,7 @@ fn parses_and_sorts_tmux_sessions() {
         sessions,
         vec![
             TmuxSession {
+                host: TmuxHost::default(),
                 id: "$2".into(),
                 name: "qaiva".into(),
                 windows: 3,
@@ -18,6 +19,7 @@ fn parses_and_sorts_tmux_sessions() {
                 session_created: 301,
             },
             TmuxSession {
+                host: TmuxHost::default(),
                 id: "$8".into(),
                 name: "rml".into(),
                 windows: 1,
@@ -35,6 +37,123 @@ fn rejects_malformed_session_ids_and_counts() {
     assert!(parse_sessions(b"qaiva\tqaiva\t1\t0\t100\t200\t300\n").is_err());
     assert!(parse_sessions(b"$1\tqaiva\tmany\t0\t100\t200\t300\n").is_err());
     assert!(parse_sessions(b"$1\tqaiva\t1\n").is_err());
+}
+
+#[test]
+fn ssh_destinations_are_single_operands_not_commands_or_options() {
+    for destination in [
+        "work",
+        "manuel@server.example",
+        "192.0.2.1",
+        "[::1]",
+        "user@2001:db8::1",
+    ] {
+        assert_eq!(
+            TmuxHost::ssh(destination).unwrap().destination(),
+            Some(destination)
+        );
+    }
+    for destination in [
+        "",
+        "-oProxyCommand=touch",
+        "ssh work",
+        "work;touch /tmp/x",
+        "$(id)",
+        "work\nother",
+        "ssh://work",
+        "work'",
+        "user@host/path",
+    ] {
+        assert!(
+            TmuxHost::ssh(destination).is_err(),
+            "accepted {destination:?}"
+        );
+    }
+    assert!(TmuxHost::ssh(&"x".repeat(256)).is_err());
+}
+
+#[test]
+fn ssh_discovery_is_noninteractive_and_attach_allocates_a_remote_pty() {
+    let host = TmuxHost::ssh("user@work").unwrap();
+    let query = host.command(LIST_ARGS.map(String::from).into(), false);
+    assert!(query
+        .last()
+        .unwrap()
+        .starts_with("'tmux' '-u' 'list-sessions'"));
+    assert_eq!(query[0], "ssh");
+    for option in [
+        "BatchMode=yes",
+        "StrictHostKeyChecking=yes",
+        "ConnectTimeout=5",
+        "ClearAllForwardings=yes",
+        "ForwardAgent=no",
+        "-T",
+    ] {
+        assert!(query.iter().any(|arg| arg == option), "missing {option}");
+    }
+    assert_eq!(
+        &query[query.len() - 3..query.len() - 1],
+        ["--", "user@work"]
+    );
+    let attach = host.command(
+        vec!["attach-session".into(), "-t".into(), "$1".into()],
+        true,
+    );
+    assert!(attach.iter().any(|arg| arg == "-tt"));
+    assert!(!attach.iter().any(|arg| arg == "BatchMode=yes"));
+    assert_eq!(host.timeout(), SSH_COMMAND_TIMEOUT);
+    assert_eq!(TmuxHost::default().timeout(), COMMAND_TIMEOUT);
+}
+
+#[test]
+#[cfg(unix)]
+fn ssh_remote_shell_preserves_every_tmux_operand_and_guard() {
+    let mut selected = session("$12", "name is display only; $(false)", 100, 200, 300);
+    selected.host = TmuxHost::ssh("work").unwrap();
+    let command = attach_command(&selected).unwrap();
+    let remote = command.last().unwrap().to_str().unwrap();
+    // Simulate SSH's remote shell parsing, not just matching quote spelling.
+    let script = format!("tmux() {{ printf '%s\\0' \"$@\"; }}; {remote}");
+    let output = run_command("sh", ["-c", &script], Duration::from_secs(1)).unwrap();
+    assert!(output.status.success());
+    let expected = guarded_command_args(&selected, "attach-session -t $12", None);
+    let mut bytes = Vec::new();
+    for arg in expected {
+        bytes.extend(arg.as_bytes());
+        bytes.push(0);
+    }
+    assert_eq!(output.stdout, bytes);
+}
+
+#[test]
+#[cfg(unix)]
+fn ssh_errors_are_not_empty_local_results_and_sessions_keep_their_host() {
+    use std::os::unix::process::ExitStatusExt as _;
+    let host = TmuxHost::ssh("work").unwrap();
+    let output = |code, stdout: &[u8], stderr: &[u8]| Output {
+        status: std::process::ExitStatus::from_raw(code << 8),
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    };
+    assert!(sessions_from_output(
+        &host,
+        &output(255, b"", b"identity file: No such file or directory")
+    )
+    .is_err());
+    assert!(
+        sessions_from_output(&host, &output(127, b"", b"tmux: No such file or directory")).is_err()
+    );
+    assert!(
+        sessions_from_output(&host, &output(1, b"", b"no server running"))
+            .unwrap()
+            .is_empty()
+    );
+    let sessions =
+        sessions_from_output(&host, &output(0, b"$1\twork\t1\t0\t10\t20\t30\n", b"")).unwrap();
+    assert_eq!(sessions[0].host(), &host);
+    let mut local = sessions[0].clone();
+    local.host = TmuxHost::default();
+    assert_ne!(sessions[0], local);
 }
 
 #[test]
@@ -165,6 +284,25 @@ fn isolated_tmux_fresh_kill_and_stale_attach_are_guarded() {
     .status
     .success());
     let attach_session = discover_isolated_session(tempdir.path(), &socket);
+    let mut locale_args = vec![
+        "LC_ALL=C".to_owned(),
+        format!("TMUX_TMPDIR={}", tempdir.path().display()),
+        "tmux".to_owned(),
+        "-L".to_owned(),
+        socket.clone(),
+    ];
+    locale_args.extend(LIST_ARGS.map(String::from));
+    let c_locale = run_command(
+        "env",
+        locale_args.iter().map(String::as_str),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert!(c_locale.status.success());
+    assert_eq!(
+        parse_sessions(&c_locale.stdout).unwrap(),
+        vec![attach_session.clone()]
+    );
     if std::process::Command::new("script")
         .arg("--version")
         .output()
@@ -320,7 +458,7 @@ where
 
 #[cfg(unix)]
 fn discover_isolated_session(root: &std::path::Path, socket: &str) -> TmuxSession {
-    let output = isolated_tmux(root, socket, ["list-sessions", "-F", LIST_FORMAT]);
+    let output = isolated_tmux(root, socket, LIST_ARGS);
     assert!(output.status.success());
     let sessions = parse_sessions(&output.stdout).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -340,6 +478,7 @@ fn session(
     session_created: u64,
 ) -> TmuxSession {
     TmuxSession {
+        host: TmuxHost::default(),
         id: id.into(),
         name: name.into(),
         windows: 1,
